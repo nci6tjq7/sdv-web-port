@@ -1,6 +1,6 @@
 # Stardew Valley Web Port — Design Document
 
-**Status**: Self-reviewed v2, awaiting user review
+**Status**: Self-reviewed v3 (with test/dev/open-source sections), awaiting user review
 **Date**: 2026-07-03
 **Author**: Brainstorming session output
 **Project root**: `/home/z/my-project/`
@@ -542,9 +542,18 @@ KNI 后端初始化挪到 Phase 1 开始阶段验证。
 │   ├── xnb-pack.sh
 │   └── smapi-mod-smoke-test.sh
 ├── tests/
-│   ├── harmony-shim-tests/
-│   └── mod-compat-matrix/
+│   ├── harmony-shim-tests/          # Harmony shim 单元测试
+│   ├── mod-compat-matrix/           # Mod 兼容性自动化测试
+│   ├── vfs-tests/                   # VFS 单元测试
+│   └── e2e-tests/                   # 端到端浏览器测试（Playwright）
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                   # 构建单测
+│       ├── e2e.yml                  # Playwright E2E
+│       └── mod-smoke.yml            # 定期跑 Top 100 mod 冒烟
 ├── README.md
+├── CONTRIBUTING.md                  # 贡献指南
+├── CHANGELOG.md                     # 版本变更
 ├── LICENSE                          # MIT（项目自身代码）
 ├── .gitignore
 └── download/                        # 用户可下载交付物
@@ -552,13 +561,250 @@ KNI 后端初始化挪到 Phase 1 开始阶段验证。
 
 ---
 
-## 14. 待确认事项（给 Review 者）
+## 14. 测试策略
+
+### 14.1 测试全字塔
+
+```
+        ▲
+        │
+    E2E │       Playwright (浏览器跑完整游戏流)
+        │
+    Int │     Integration (VFS + KNI + 运行时集成)
+        │
+    Unit│   xUnit (Harmony shim / VFS / 适配层)
+        │
+        └────────────────────────────────
+              数量多              数量少
+```
+
+**比例目标**：Unit 70% / Integration 20% / E2E 10%
+
+### 14.2 单元测试
+
+| 范围 | 工具 | 覆盖率目标 |
+|---|---|---|
+| Harmony → RuntimeDetour shim | xUnit + MonoMod 测试包 | ≥ 80% |
+| IVirtualFileSystem 两条实现 | xUnit + 内存模拟 | ≥ 90% |
+| Assembly.Load 适配层 | xUnit + 模拟 DLL byte[] | ≥ 70% |
+| Mono.Cecil 读取层 | xUnit + 示例 mod DLL | ≥ 60% |
+
+**命名规范**：`SdvWebPort.{Module}.Tests` 项目，`{Class}_{Method}_{Scenario}` 测试方法名。
+
+### 14.3 集成测试
+
+| 场景 | 验证点 |
+|---|---|
+| VFS × KNI Content Pipeline | 能从 OPFS 读取并加载 .xnb |
+| VFS × SMAPI | mod 加载能读到 mod 目录 |
+| KNI × WASM 运行时 | SpriteBatch.Draw 不端 |
+| Harmony shim × RuntimeDetour | Prefix patch 在真实 mod 上生效 |
+
+运行环境：本地 dotnet test + headless Chrome（via PuppeteerSharp）。
+
+### 14.4 端到端测试（Playwright）
+
+| 场景 | 步骤 | 验收 |
+|---|---|---|
+| 冷启动 | 加载页面 → 启动运行时 → 进标题界面 | ≤ 30 秒，帧率 ≥ 25 FPS |
+| GOG 上传 | 拖入 ZIP → OPFS 写入 → 启动 | 进度条走完，游戏启动 |
+| GOG 直读 | showDirectoryPicker → 加载 | 零拷贝路径成功 |
+| 存档读写 | 新建角色 → 保存 → 重启 → 加载 | 存档数据不丢 |
+| SMAPI 加载 mod | 启动 SMAPI → 加载 CJB Cheats | mod 菜单可弹出 |
+
+### 14.5 CI 集成
+
+```yaml
+# .github/workflows/ci.yml 示意
+on: [push, pull_request]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build
+      - run: dotnet test --collect:"XPlat Code Coverage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: '**/coverage.cobertura.xml'
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - run: dotnet publish -c Release
+      - run: npx playwright install chromium
+      - run: dotnet test tests/e2e-tests
+
+  mod-smoke:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'  # 每日跑
+    steps:
+      - run: ./scripts/smapi-mod-smoke-test.sh
+```
+
+### 14.6 手动测试清单（每次 release 前）
+
+- [ ] 冷启动 ≤ 30 秒
+- [ ] 农场场景连续玩 30 分钟不崩溃
+- [ ] Top 5 T1 mod 全部可用
+- [ ] Top 5 T2 mod 至少 4 个可用
+- [ ] 存档可从 PC 版导入导出
+- [ ] Chrome/Edge/Firefox 三浏览器冒烟通过
+
+---
+
+## 15. 开发环境要求
+
+### 15.1 必需工具链
+
+| 工具 | 最低版本 | 推荐版本 | 说明 |
+|---|---|---|---|
+| .NET SDK | 10.0.100 | 最新 10.0.x LTS | 项目主语言 |
+| Node.js | 20 LTS | 22 LTS | 构建 JS glue、跑 Playwright |
+| 浏览器（开发） | Chrome 120+ | Chrome 最新稳定版 | File System Access API + OPFS 全支持 |
+| 浏览器（测试矩阵） | Chrome / Edge / Firefox | 各最新版 | 跨浏览器 E2E |
+| Git | 2.40+ | 最新 | 标准工具 |
+| Make 或 just | 任意 | just | 任务运行器（可选） |
+
+### 15.2 推荐开发环境
+
+| 组件 | 推荐选择 |
+|---|---|
+| OS | Windows 11 / macOS 14+ / Ubuntu 24.04+ |
+| IDE | Visual Studio 2026 或 Rider 2025.3+ |
+| 调试器 | Chrome DevTools + dotnet-dsroute |
+| 性能分析 | dotnet-trace + Chrome Performance tab |
+| 包管理 | NuGet（C#）+ npm（JS） |
+| 容器 | Docker（用于跨浏览器 E2E 测试） |
+
+### 15.3 本地启动步骤
+
+```bash
+# 1. 克隆仓库
+git clone <repo-url> sdv-web-port
+cd sdv-web-port
+
+# 2. 恢复依赖
+dotnet restore
+npm install
+
+# 3. 启动开发服务器（带热重载）
+dotnet watch run --project src/SdvWebPort.Runtime
+
+# 4. 浏览器访问
+# http://localhost:5000
+```
+
+### 15.4 调试技巧
+
+- **C# 代码**：`dotnet watch` + Visual Studio/Rider attach
+- **WASM 运行时**：Chrome DevTools → Sources → WASM 模块
+- **JS interop**：Chrome DevTools Console
+- **KNI 渲染**：Canvas Inspector + WebGL2 Inspector 扩展
+- **SMAPI 日志**：浏览器 Console + SMAPI 自带日志面板
+
+### 15.5 常见问题排查
+
+| 症状 | 可能原因 | 解决 |
+|---|---|---|
+| WASM 加载失败 | .NET SDK 版本不对 | 检查 `dotnet --version` 是否 10.0.x |
+| OPFS 写入失败 | Chrome 版本 <102 | 升级浏览器 |
+| SMAPI 加载崩溃 | IL Emit 在 WASM 不工作 | 退回 interpreter-only 模式 |
+| 帧率 < 15 FPS | 启用了 BlazorGL 后端 | 检查 csproj 是否用 WebGL 后端 |
+
+---
+
+## 16. 开源与发布策略
+
+### 16.1 开源时机
+
+| Phase | 开源状态 | 说明 |
+|---|---|---|
+| Phase 0 | 私有 | 验证技术可行性，避免过度曝光 |
+| Phase 1 完成 | **公开** | 标题界面跑通是项目可信度门槛 |
+| Phase 2+ | 持续公开 | 接受社区贡献 |
+
+### 16.2 License 选择
+
+| 组件 | License | 说明 |
+|---|---|---|
+| 项目自身代码（src/） | MIT | 最大兼容性 |
+| Harmony shim | MIT | 与 Harmony 主线一致 |
+| SMAPI fork | MIT（原 SMAPI license） | 保留 upstream |
+| 文档（docs/） | CC-BY-4.0 | 允许社区引用 |
+| 第三方依赖 | 各自 license | 在 NOTICE.md 中声明 |
+
+### 16.3 贡献指南
+
+**CONTRIBUTING.md** 包含：
+
+- 代码风格：`.editorconfig` 强制
+- 提交规范：Conventional Commits（feat/fix/docs/chore）
+- PR 流程：fork → feature branch → PR → 1 reviewer → CI 通过 → merge
+- 分支策略：`main`（稳定） / `develop`（活跃开发） / `feature/*`
+- Issue 模板：bug report / feature request / mod compat report
+
+### 16.4 发布渠道
+
+| 渠道 | 用途 | 优先级 |
+|---|---|---|
+| GitHub Releases | 源码包 + 可运行 zip | P0 |
+| GitHub Pages | 在线文档 | P1 |
+| Nexus Mods | 不发布 | 与 SDV mod 生态区分，避免混淆 |
+| Docker Hub | 容器化内网部署镜像 | P2 |
+| npm | 不发布 | 项目不是 npm 包 |
+
+### 16.5 版本号策略
+
+**SemVer 2.0**：`MAJOR.MINOR.PATCH`
+
+- `0.x.x`：Phase 0-2 期间，API 不稳定
+- `1.0.0`：Phase 3 完成（SMAPI 可用）
+- `1.x.x`：Phase 4-5 功能完善
+- `2.0.0`：破坏性变更（如换运行时、换渲染后端）
+
+### 16.6 社区建设
+
+- README 顶部加项目状态徽章（build / coverage / version）
+- 开 GitHub Discussions 分区：Announcements / Q&A / Mod Compat / Show & Tell
+- 每月发开发进度博客
+- 与 SMAPI / KNI / Uno Platform 上游保持沟通
+
+### 16.7 法律声明
+
+README 必须包含：
+
+```
+## Legal Notice
+
+This project is an interoperative runtime emulator for Stardew Valley.
+It does NOT distribute any Stardew Valley game files or code.
+Users must provide their own legally-obtained GOG copy.
+
+Stardew Valley is © ConcernedApe LLC. All rights reserved.
+This project is not affiliated with or endorsed by ConcernedApe or Chucklefish.
+
+Use of this project is at your own risk. The maintainers are not responsible
+for any misuse that violates the GOG EULA or applicable copyright law.
+```
+
+---
+
+## 17. 待确认事项（给 Review 者）
 
 1. **是否接受"激进 SMAPI 路线"**（策略 S1-S6 全启用）？
-2. **是否接受 25-40 FPS 性能区间**（不追求 60 FPS）？
+2. **是否接受 20-40 FPS 性能区间**（不追求 60 FPS）？
 3. **是否接受仅桌面端 Chrome/Edge 全支持**（Firefox/Safari 降级路径）？
 4. **是否接受 Phase 0 末 PoC 失败时的"停止项目"决策**？
 5. **项目目录结构是否需要调整**？
+6. **测试覆盖率目标（Harmony shim ≥80% / VFS ≥90%）是否合理**？
+7. **开源时机（Phase 1 完成后公开）是否合适**？
 
 ---
 
