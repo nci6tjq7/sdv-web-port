@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SdvWebPort PoC — SMAPI Load</title>
+  <style>
+    body {
+      margin: 0; padding: 20px;
+      background: #1a1a1a; color: #eee;
+      font-family: sans-serif;
+    }
+    #log {
+      padding: 10px;
+      background: #2a2a2a; border-radius: 4px;
+      font-family: monospace; font-size: 12px;
+      max-height: 600px; overflow-y: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h2>SdvWebPort PoC — SMAPI Assembly Load</h2>
+  <div id="log">[boot] Loading WASM runtime...</div>
+
+  <script>
+    // Capture all console.log into on-page log div for headless Chrome capture
+    const logEl = document.getElementById('log');
+    const origLog = console.log;
+    console.log = function(...args) {
+      origLog.apply(console, args);
+      try {
+        const line = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n';
+        logEl.textContent += line;
+        logEl.scrollTop = logEl.scrollHeight;
+      } catch (e) {}
+    };
+    window.addEventListener('error', (e) => {
+      logEl.textContent += '[error] ' + (e.message || e.error) + '\n';
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      logEl.textContent += '[unhandledrejection] ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n';
+    });
+
+    // C# [JSImport("globalThis.getCurrentBaseUrl")] calls this
+    globalThis.getCurrentBaseUrl = function() {
+      return window.location.href;
+    };
+  </script>
+
+  <!-- Uno.Wasm.Bootstrap loader -->
+  <script type="module">
+    try {
+      console.log('[boot] importing dotnet.js...');
+      const { dotnet } = await import('./_framework/dotnet.js');
+      console.log('[boot] dotnet.js imported, calling create()...');
+      const runtime = await dotnet.create();
+      console.log('[boot] dotnet.create() done. runtime=' + (runtime ? 'yes' : 'no'));
+      // Uno.Wasm.Bootstrap auto-runs Main on create() (per mainAssemblyName in dotnet.boot.js)
+      if (runtime && typeof runtime.runMain === 'function') {
+        try {
+          const exitCode = await runtime.runMain();
+          console.log('[boot] runMain exitCode=' + exitCode);
+        } catch (e) {
+          console.log('[boot] runMain threw: ' + e.message);
+        }
+      }
+    } catch (e) {
+      console.log('[boot] FATAL: ' + e.message);
+      console.log('[boot] stack: ' + e.stack);
+    }
+  </script>
+</body>
+</html>

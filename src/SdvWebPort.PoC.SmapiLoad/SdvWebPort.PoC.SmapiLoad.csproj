@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Uno.Wasm.Bootstrap config (same as Task 2's working setup) -->
+    <WasmShellMonoRuntimeExecutionMode>Interpreter</WasmShellMonoRuntimeExecutionMode>
+    <WasmShellEnableJiterpreter>true</WasmShellEnableJiterpreter>
+    <WasmShellIndexHtmlPath>wwwroot/index.html</WasmShellIndexHtmlPath>
+    <WasmShellOPFSEnabled>false</WasmShellOPFSEnabled>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Uno.Wasm.Bootstrap" Version="10.0.96" />
+  </ItemGroup>
+
+  <!--
+    SMAPI.dll placed manually by user from their local SMAPI install.
+    Gitignored — never commit game files.
+    See README.md in this directory for instructions.
+  -->
+  <ItemGroup>
+    <None Include="StardewModdingAPI.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('StardewModdingAPI.dll')" />
+    <None Include="Stardew Valley.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Stardew Valley.dll')" />
+  </ItemGroup>
+
+</Project>
