@@ -1,0 +1,27 @@
+=== Superpowers z.ai Package Manifest ===
+Version: v0.0.0-zai.25
+Built: 2026-06-24 22:19:18 UTC
+Commit: 6d54ce4b224277aa78a3f9e46636149905b79fa0
+Upstream: https://github.com/obra/superpowers.git
+
+Skills:
+  brainstorming (8 files)
+  dispatching-parallel-agents (1 files)
+  executing-plans (1 files)
+  finishing-a-development-branch (1 files)
+  receiving-code-review (1 files)
+  requesting-code-review (2 files)
+  subagent-driven-development (6 files)
+  systematic-debugging (5 files)
+  test-driven-development (2 files)
+  using-git-worktrees (1 files)
+  using-superpowers (8 files)
+  verification-before-completion (1 files)
+  writing-plans (2 files)
+  writing-skills (7 files)
+
+Other:
+  AGENTS.md
+  install.sh
+  VERSION
+  MANIFEST.txt

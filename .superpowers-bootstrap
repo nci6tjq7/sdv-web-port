@@ -1,0 +1,5 @@
+# Superpowers Bootstrap
+# Created by install.sh. Presence indicates superpowers is installed.
+# The using-superpowers skill references this file as a first action.
+# If you are reading this, superpowers is installed and ready.
+# Invoke the skill system: Skill tool -> command="using-superpowers"
