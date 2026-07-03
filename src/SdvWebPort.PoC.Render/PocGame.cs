@@ -1,6 +1,8 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 using Microsoft.Xna.Platform;
+using Microsoft.Xna.Platform.Input;
 using System;
 
 namespace SdvWebPort.PoC.Render;
@@ -60,6 +62,13 @@ public class PocGame : Game
 
     protected override void Update(GameTime gameTime)
     {
+        // Skip update if sprite not loaded yet (LoadContent may not have run)
+        if (_sprite == null)
+        {
+            base.Update(gameTime);
+            return;
+        }
+
         // Bounce sprite around the screen
         _position += _velocity * (float)gameTime.ElapsedGameTime.TotalSeconds;
         if (_position.X < 0 || _position.X + _sprite.Width > 800)
@@ -71,13 +80,19 @@ public class PocGame : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        if (_sprite == null || _spriteBatch == null)
+        {
+            base.Draw(gameTime);
+            return;
+        }
+
         GraphicsDevice.Clear(Color.CornflowerBlue);
 
         _spriteBatch.Begin();
         _spriteBatch.Draw(_sprite, _position, Color.White);
         _spriteBatch.End();
 
-        // FPS tracking — log to console (Uno proxies to console.log)
+        // FPS tracking — log to console (Blazor WASM proxies to console.log)
         _frameCount++;
         if (gameTime.TotalGameTime - _lastFpsUpdate > TimeSpan.FromSeconds(1))
         {
@@ -95,22 +110,51 @@ public static class Program
 {
     public static void Main()
     {
-        Console.WriteLine("[PoC.Render] Starting KNI WebGL PoC");
+        Console.WriteLine("[PoC.Render] Starting KNI WebGL PoC (Blazor WASM host)");
         try
         {
-            // KNI requires platform-specific GameFactory registration before instantiating Game.
-            // The Blazor.GL platform package provides ConcreteGameFactory.
+            // KNI requires platform-specific factory registration before instantiating Game.
             Console.WriteLine("[PoC.Render] Registering ConcreteGameFactory...");
             GameFactory.RegisterGameFactory(new ConcreteGameFactory());
-            Console.WriteLine("[PoC.Render] GameFactory registered.");
+            Console.WriteLine("[PoC.Render] Registering ConcreteInputFactory...");
+            InputFactory.RegisterInputFactory(new ConcreteInputFactory());
+            Console.WriteLine("[PoC.Render] Factories registered.");
 
-            using var game = new PocGame();
-            game.Run();
+            // Don't use 'using' — if construction fails, the dispose path also throws
+            // and masks the original exception. We dispose manually on success only.
+            Console.WriteLine("[PoC.Render] Constructing PocGame...");
+            PocGame? game = null;
+            try
+            {
+                game = new PocGame();
+                Console.WriteLine("[PoC.Render] PocGame constructed. Calling Run()...");
+                game.Run();
+                Console.WriteLine("[PoC.Render] Run() returned normally.");
+            }
+            catch (Exception runEx)
+            {
+                Console.WriteLine($"[PoC.Render] Run threw: {runEx.GetType().Name}: {runEx.Message}");
+                Console.WriteLine($"[PoC.Render] Run Stack: {runEx.StackTrace}");
+                if (runEx.InnerException != null)
+                {
+                    Console.WriteLine($"[PoC.Render] Inner: {runEx.InnerException.GetType().Name}: {runEx.InnerException.Message}");
+                    Console.WriteLine($"[PoC.Render] Inner Stack: {runEx.InnerException.StackTrace}");
+                }
+                throw;
+            }
+            // NOTE: Don't call game.Dispose() — KNI's BlazorGameWindow.Dispose has a bug
+            // (KeyNotFoundException in FromHandle(0) when Mouse.WindowHandle is reset).
+            // The runtime will exit when the WASM module unloads.
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[PoC.Render] FATAL: {ex.GetType().Name}: {ex.Message}");
             Console.WriteLine($"[PoC.Render] Stack: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"[PoC.Render] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                Console.WriteLine($"[PoC.Render] Inner Stack: {ex.InnerException.StackTrace}");
+            }
             throw;
         }
     }

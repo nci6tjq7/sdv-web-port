@@ -3,30 +3,39 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SdvWebPort PoC — KNI WebGL Render</title>
+  <title>SdvWebPort PoC — KNI WebGL Render (Blazor WASM)</title>
   <style>
-    body {
-      margin: 0; padding: 20px;
-      background: #1a1a1a; color: #eee;
-      font-family: sans-serif;
-    }
+    body { margin: 0; padding: 20px; background: #1a1a1a; color: #eee; font-family: sans-serif; }
     canvas { display: block; border: 1px solid #444; background: #000; }
-    #log {
-      margin-top: 10px; padding: 10px;
-      background: #2a2a2a; border-radius: 4px;
-      font-family: monospace; font-size: 12px;
-      max-height: 200px; overflow-y: auto;
-      white-space: pre-wrap;
-    }
+    #log { margin-top: 10px; padding: 10px; background: #2a2a2a; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
   </style>
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
 </head>
 <body>
-  <h2>SdvWebPort PoC — KNI WebGL Rendering</h2>
-  <canvas id="monogame-canvas" width="800" height="600"></canvas>
+  <h2>SdvWebPort PoC — KNI WebGL Rendering (Blazor WASM host)</h2>
+  <canvas id="theCanvas" width="800" height="600"></canvas>
   <div id="log">[boot] Loading WASM runtime...</div>
 
+  <!--
+    KNI's Blazor.GL platform depends on the nkast.Wasm.* JS interop layer.
+    These scripts must load BEFORE main.js so that globalThis.window.nkJSObject,
+    nkWindow, nkDocument, nkCanvas, etc. are available when C# code calls into them.
+    Served from _content/{PackageName}/js/{File}.js via Static Web Assets.
+  -->
+  <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Window.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Document.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Media.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.XHR/js/XHR.8.0.11.js"></script>
+  <script src="_content/nkast.Wasm.Audio/js/Audio.8.0.11.js"></script>
+
   <script>
-    // Capture console.log into on-page log div for headless Chrome capture
     const logEl = document.getElementById('log');
     const origLog = console.log;
     console.log = function(...args) {
@@ -37,38 +46,11 @@
         logEl.scrollTop = logEl.scrollHeight;
       } catch (e) {}
     };
-    window.addEventListener('error', (e) => {
-      logEl.textContent += '[error] ' + (e.message || e.error) + '\n';
-    });
-    window.addEventListener('unhandledrejection', (e) => {
-      logEl.textContent += '[unhandledrejection] ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n';
-    });
+    window.addEventListener('error', (e) => { logEl.textContent += '[error] ' + (e.message || e.error) + '\n'; });
+    window.addEventListener('unhandledrejection', (e) => { logEl.textContent += '[unhandledrejection] ' + (e.reason && e.reason.message ? e.reason.message : e.reason) + '\n'; });
   </script>
 
-  <!-- Uno.Wasm.Bootstrap loader: imports dotnet.js, calls dotnet.create() -->
-  <!-- mainAssemblyName in dotnet.boot.js is "SdvWebPort.PoC.Render.dll" -->
-  <!-- so Main auto-runs after create() completes -->
-  <script type="module">
-    try {
-      console.log('[boot] importing dotnet.js...');
-      const { dotnet } = await import('./_framework/dotnet.js');
-      console.log('[boot] dotnet.js imported, calling create()...');
-      const runtime = await dotnet.create();
-      console.log('[boot] dotnet.create() done. runtime=' + (runtime ? 'yes' : 'no'));
-      // Uno.Wasm.Bootstrap auto-invokes mainAssemblyName's Main on create()
-      // If not, try runMain explicitly:
-      if (runtime && typeof runtime.runMain === 'function') {
-        try {
-          const exitCode = await runtime.runMain();
-          console.log('[boot] runMain exitCode=' + exitCode);
-        } catch (e) {
-          console.log('[boot] runMain threw: ' + e.message);
-        }
-      }
-    } catch (e) {
-      console.log('[boot] FATAL: ' + e.message);
-      console.log('[boot] stack: ' + e.stack);
-    }
-  </script>
+  <!-- SDK fingerprinted main.js (single quotes required for placeholder rewrite) -->
+  <script type='module' src="main#[.{fingerprint}].js"></script>
 </body>
 </html>
