@@ -1,6 +1,6 @@
 # Stardew Valley Web Port — Design Document
 
-**Status**: Self-reviewed v3 (with test/dev/open-source sections), awaiting user review
+**Status**: Pivoted to Blazor WebAssembly host (v3.1, 2026-07-04)
 **Date**: 2026-07-03
 **Author**: Brainstorming session output
 **Project root**: `/home/z/my-project/`
@@ -97,7 +97,8 @@
                           ↕
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 1: .NET 10 WASM Runtime                           │
-│   Uno.Wasm.Bootstrap (Mixed-Mode + Jiterpreter)         │
+│   Blazor WebAssembly (Microsoft.NET.Sdk.WebAssembly)    │
+│   Jiterpreter + Mixed-Mode AOT                          │
 │   OPFS / File System Access API 虚拟 FS                 │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -200,12 +201,14 @@ class OpfsVfs : IVirtualFileSystem { ... }                  // A1，JS interop �
 
 ## 5. 运行时层（L1）
 
+> **2026-07-04 修订**：Phase 0 PoC 发现 KNI Blazor.GL 平台与 Uno.Wasm.Bootstrap 不兼容（KNI 依赖 Blazor WASM host 的 `nkast.Wasm.*` interop 栈）。从 Uno.Wasm.Bootstrap 转为官方 Blazor WebAssembly SDK。Blazor WASM 在 .NET 10 同样支持 Jiterpreter + Mixed-Mode，性能与 Uno 相当。
+
 ### 5.1 技术选型
 
 | 组件 | 选择 | 理由 |
 |---|---|---|
 | .NET 版本 | .NET 10 (LTS, 2025-11) | WASM 改进最完整，Jiterpreter 成熟 |
-| WASM 引导器 | Uno.Wasm.Bootstrap | 细粒度运行时模式控制，KNI 已验证 |
+| WASM SDK | `Microsoft.NET.Sdk.WebAssembly`（官方 Blazor WASM） | KNI Blazor.GL 平台原生支持此 host；Jiterpreter + Mixed-Mode 同样可用 |
 | 执行模式 | Mixed-Mode（Interpreter + AOT + Jiterpreter） | 兼顾启动速度与运行性能 |
 | AOT 范围 | KNI/游戏冷启动代码 | SMAPI 全 interpreter 保证 IL Emit 兼容 |
 | 内存上限 | 4GB（启用 `--max-memory=4GB`） | SDV PC 版占 1.2GB + 运行时开销 |
@@ -235,19 +238,28 @@ class OpfsVfs : IVirtualFileSystem { ... }                  // A1，JS interop �
 ### 5.4 关键配置示例
 
 ```xml
-<!-- Uno.Wasm.Bootstrap 的 csproj 关键参数 -->
-<PropertyGroup>
-  <TargetFramework>net10.0</TargetFramework>
-  <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
-  <WasmShellMonoRuntimeExecutionMode>InterpreterAndAOT</WasmShellMonoRuntimeExecutionMode>
-  <WasmShellEnableJiterpreter>true</WasmShellEnableJiterpreter>
-  <WasmShellIndexHtmlPath>wwwroot/index.html</WasmShellIndexHtmlPath>
-  <WasmShellOPFSEnabled>true</WasmShellOPFSEnabled>
-  <WasmShellFileDescriptorsEnabled>true</WasmShellFileDescriptorsEnabled>
-</PropertyGroup>
+<!-- Blazor WebAssembly csproj 关键参数 -->
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0-browser</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- 运行时模式（Blazor WASM 标准 SDK 属性） -->
+    <RunAOTCompilation>false</RunAOTCompilation>  <!-- Phase 1+2 用 Interpreter，Phase 3+ 按需启用 AOT -->
+    <WasmRuntimeExecutionMode>InterpreterAndJiterpreter</WasmRuntimeExecutionMode>
+
+    <!-- 资源与服务 -->
+    <ServiceWorkerEnabled>false</ServiceWorkerEnabled>
+    <PwaEnabled>false</PwaEnabled>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>
 ```
 
-注：Uno.Wasm.Bootstrap 使用 `WasmShell*` 前缀的属性，与 Blazor WASM 的 `Wasm*` 前缀不同。具体参数名以 [Uno.Wasm.Bootstrap 文档](https://github.com/unoplatform/Uno.Wasm.Bootstrap) 为准。
+注：Blazor WASM 使用 `Microsoft.NET.Sdk.WebAssembly` SDK 与 `net10.0-browser` TFM。运行时模式属性为 `RunAOTCompilation`、`WasmRuntimeExecutionMode`（与 Uno.Wasm.Bootstrap 的 `WasmShell*` 前缀不同）。详见 [ASP.NET Core Blazor WebAssembly build tools and AOT](https://learn.microsoft.com/aspnet/core/blazor/webassembly-build-tools-and-aot)。
 
 ---
 

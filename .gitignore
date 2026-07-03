@@ -1,2 +1,41 @@
-skills/
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Node
 node_modules/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+# NEVER commit game files (Stardew Valley.dll, .xnb, etc.)
+StardewValley/
+*.xnb
+Stardew Valley.dll
+StardewModdingAPI.dll
+# Exception: allowed to commit tiny test fixtures in tests/fixtures/
+!tests/fixtures/*.xnb
+
+# Build output
+download/
+*.wasm
+*.wasm.map
+
+# Secrets
+.env
+.env.local
+
+# Sandbox overlay (z.ai superpowers infrastructure — not part of the project)
+skills/
+.superpowers/
+scripts/extracted/
+tool-results/
