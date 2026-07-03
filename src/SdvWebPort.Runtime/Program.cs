@@ -2,30 +2,67 @@ using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
 using System.Threading.Tasks;
+using SdvWebPort.Runtime.Vfs;
 
 namespace SdvWebPort.Runtime;
 
-public static class Program
+public static partial class Program
 {
+    private static IVirtualFileSystem? _vfs;
+
     private static async Task<int> Main(string[] args)
     {
-        Console.WriteLine("[SdvWebPort] Runtime initialized");
+        Console.WriteLine("[SdvWebPort] Runtime initialized (Phase 1a)");
         Console.WriteLine($"[SdvWebPort] .NET version: {Environment.Version}");
-        Console.WriteLine($"[SdvWebPort] Runtime: {RuntimeInformation.FrameworkDescription}");
-
-        // Clear canvas to #336699 (RGB: 0x33, 0x66, 0x99) via JS interop
-        JsInterop.ClearCanvas(0x33, 0x66, 0x99);
-        Console.WriteLine("[SdvWebPort] Canvas cleared to #336699");
-        Console.WriteLine("[SdvWebPort] Phase 0 skeleton ready (Blazor WASM host).");
-
-        // Keep runtime alive for browser inspection
+        try
+        {
+            var caps = VfsJsInterop.VfsGetCapabilities();
+            Console.WriteLine($"[SdvWebPort] VFS capabilities: {caps}");
+            if (caps.Contains("\"fsa\":true"))
+            { VfsUiInterop.ShowElement("fsa-ui"); VfsUiInterop.HideElement("opfs-ui"); }
+            else if (caps.Contains("\"opfs\":true"))
+            { VfsUiInterop.HideElement("fsa-ui"); VfsUiInterop.ShowElement("opfs-ui"); }
+            else { VfsUiInterop.ShowElement("unsupported-ui"); }
+        }
+        catch (Exception ex)
+        { Console.WriteLine($"[SdvWebPort] VFS detection failed: {ex.Message}"); }
         await Task.Delay(-1);
         return 0;
     }
+
+    [JSExport]
+    public static async Task<bool> InitializeVfsFromDirectory()
+    {
+        bool picked = VfsJsInterop.VfsPickDirectory();
+        if (!picked) return false;
+        _vfs = new FileSystemAccessApiVfs();
+        VfsUiInterop.SetStatus("GOG directory loaded (FSA)");
+        return true;
+    }
+
+    [JSExport]
+    public static async Task<bool> InitializeVfsFromOpfs()
+    {
+        _vfs = new OpfsVfs();
+        VfsUiInterop.SetStatus("Files uploaded to OPFS");
+        return true;
+    }
 }
 
-internal static partial class JsInterop
+internal static partial class VfsJsInterop
 {
-    [JSImport("globalThis.clearCanvas")]
-    internal static partial void ClearCanvas(int r, int g, int b);
+    [JSImport("globalThis.vfsGetCapabilities")]
+    internal static partial string VfsGetCapabilities();
+    [JSImport("globalThis.vfsPickDirectory")]
+    internal static partial bool VfsPickDirectory();
+}
+
+internal static partial class VfsUiInterop
+{
+    [JSImport("globalThis.showElement")]
+    internal static partial void ShowElement(string id);
+    [JSImport("globalThis.hideElement")]
+    internal static partial void HideElement(string id);
+    [JSImport("globalThis.setStatJs")]
+    internal static partial void SetStatus(string message);
 }
