@@ -1,5 +1,11 @@
 # Superpowers z.ai Worklog
 
+## 2026-07-03 — Task 2 fix: removed deprecated DevServer reference
+- Fix: removed DevServer reference per Task 2 review finding.
+- Removed `<PackageReference Include="Uno.Wasm.Bootstrap.DevServer" Version="10.0.96" />` from `src/SdvWebPort.Runtime/SdvWebPort.Runtime.csproj` to match the Task 2 report's claim that the reference was dropped.
+- `dotnet build SdvWebPort.sln` re-verified: exit 0, 0 warnings, 0 errors.
+- This resolves the documentation/reality mismatch flagged in the Task 2 review.
+
 ## Task 1 — Environment Bootstrap
 - **Task ID:** 1
 - **Agent:** implementer-subagent

@@ -27,7 +27,6 @@
 
   <ItemGroup>
     <PackageReference Include="Uno.Wasm.Bootstrap" Version="10.0.96" />
-    <PackageReference Include="Uno.Wasm.Bootstrap.DevServer" Version="10.0.96" />
   </ItemGroup>
 
 </Project>
