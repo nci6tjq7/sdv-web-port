@@ -83,3 +83,50 @@ Set up the Phase 0 solution skeleton and the `SdvWebPort.Runtime` WASM project:
 
 ### Report
 Full report at `/home/z/my-project/.superpowers/sdd/task-2-report.md`.
+
+---
+
+## Task 3 — VFS Abstraction Skeleton (interface + in-memory impl)
+- **Task ID:** 3
+- **Agent:** implementer-subagent
+- **Branch:** `feat/phase0-skeleton-poc`
+- **Commit:** `8eb38ec` — `feat: IVirtualFileSystem abstraction + InMemoryVfs impl with tests`
+- **Status:** DONE
+
+### Summary
+Implemented the VFS abstraction layer (interface + in-memory impl) using strict TDD discipline (RED → GREEN):
+- Created `src/SdvWebPort.Vfs/` classlib targeting `net10.0` with `IVirtualFileSystem` interface (30 lines, contract-frozen per the plan) and `InMemoryVfs` concrete impl (102 lines, `ConcurrentDictionary<string, byte[]>`-backed).
+- Created `tests/SdvWebPort.Vfs.Tests/` xUnit project targeting `net10.0` with 5 unit tests (70 lines, verbatim from the plan).
+- Both projects added to `SdvWebPort.sln`; test project references the Vfs project.
+- Added `System.Linq.Async` 7.0.1 to the Vfs project for `ToListAsync()` (used by tests) and the sync `Enumerates` bridge.
+
+### TDD Evidence
+- **RED** (`dotnet test` after writing tests, before writing impl): 5 × `error CS0246: The type or namespace name 'InMemoryVfs' could not be found` (one per test method). Build fails → 0 tests run. Expected: test file references `new InMemoryVfs()` but no such type exists yet.
+- **GREEN** (`dotnet test` after writing interface + impl + adding package):
+  - `Total tests: 5`
+  - `Passed: 5`
+  - `Test Run Successful.`
+- `dotnet build SdvWebPort.sln` → `0 Warning(s) 0 Error(s)` across all three projects (Vfs, Vfs.Tests, Runtime).
+
+### Deviations from plan (all minor, all justified in the full report)
+1. `dotnet new` invocations used `-o <dir>` to avoid creating nested `SdvWebPort.Vfs/SdvWebPort.Vfs/` directory (the `-n` flag sets project name, not output dir).
+2. Removed `[EnumeratorCancellation] CancellationToken ct = default` from `EnumerateFilesAsync` / `EnumerateDirectoriesAsync` — optional parameters do not satisfy interface matching in C# (CS0535), and the interface is contract-frozen.
+3. Used `.ToListAsync().GetAwaiter().GetResult()` instead of `.ToEnumerable()` in the sync `EnumerateFiles` bridge — `System.Linq.Async` 7.0.1 marks `ToEnumerable` as obsolete (CS0618). Same package, same result, no warning.
+4. Both `async IAsyncEnumerable` iterator methods end with `await Task.CompletedTask;` to avoid CS1998 ("async method lacks await") — this is the plan's option (a) per Critical Note 1.
+
+### Concerns flagged
+- **Critical Note 1 option (b) is incorrect.** The note suggests "use `[EnumeratorCancellation]` without the `async` keyword" — but `IAsyncEnumerable<T>` iterator methods (using `yield return`) *require* the `async` modifier in C# (compiler error CS8403). Option (a) is the only viable path.
+- **`System.Linq.Async` 7.0.1 marks `ToEnumerable` obsolete.** The plan's Critical Note 6 + Step 5 code uses `.ToEnumerable()`; this triggers CS0618 in v7.0.1. Used `.ToListAsync().GetAwaiter().GetResult()` to avoid the obsolete API. If preserving the literal `ToEnumerable()` call is desired, would need `#pragma warning disable CS0618`.
+- **Git branch state does not persist across separate Bash tool calls** in this sandbox (Task 1 concern, restated). All bash commands chained `git checkout feat/phase0-skeleton-poc && ...`. Additionally, the Read/Edit tools see a stale file-system snapshot from `main`, so `worklog.md` edits had to go through bash `cat >>` rather than the Edit tool.
+
+### Files
+- `SdvWebPort.sln` (modified — added 2 projects + tests solution folder)
+- `src/SdvWebPort.Vfs/SdvWebPort.Vfs.csproj` (new)
+- `src/SdvWebPort.Vfs/IVirtualFileSystem.cs` (new, verbatim from plan)
+- `src/SdvWebPort.Vfs/InMemoryVfs.cs` (new, minor deviations — see above)
+- `tests/SdvWebPort.Vfs.Tests/SdvWebPort.Vfs.Tests.csproj` (new)
+- `tests/SdvWebPort.Vfs.Tests/InMemoryVfsTests.cs` (new, verbatim from plan)
+- `.superpowers/sdd/task-3-report.md` (new — full report)
+
+### Report
+Full report at `/home/z/my-project/.superpowers/sdd/task-3-report.md`.
