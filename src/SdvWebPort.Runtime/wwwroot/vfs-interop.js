@@ -181,3 +181,15 @@ function globToRegex(pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp('^' + escaped + '$');
 }
+
+// ── UI helpers (called from C# via [JSImport]) ────────────────────────────
+globalThis.showElement = function(id) { document.getElementById(id)?.classList.remove('hidden'); };
+globalThis.hideElement = function(id) { document.getElementById(id)?.classList.add('hidden'); };
+globalThis.setStatJs = function(msg) { const s = document.getElementById('status'); if (s) s.innerText = msg; };
+globalThis.clearCanvas = function(r, g, b) {
+  const canvas = document.getElementById('game-canvas');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  if (gl && gl.clearColor) { gl.clearColor(r/255, g/255, b/255, 1.0); gl.clear(gl.COLOR_BUFFER_BIT); }
+  else { const ctx = canvas.getContext('2d'); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+};
