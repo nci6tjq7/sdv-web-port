@@ -13,25 +13,17 @@ public static class Program
         Console.WriteLine($"[SdvWebPort] .NET version: {Environment.Version}");
         Console.WriteLine($"[SdvWebPort] Runtime: {RuntimeInformation.FrameworkDescription}");
 
-        // Call JS to clear canvas to a solid color.
-        // [JSImport] is .NET 8+'s official WASM JS interop; it resolves
-        // "globalThis.clearCanvas" at runtime to a JS function on the
-        // global scope (see wwwroot/index.html).
-        JsInterop.ClearCanvas(0x33, 0x66, 0x99); // RGB = #336699
-
+        // Clear canvas to #336699 (RGB: 0x33, 0x66, 0x99) via JS interop
+        JsInterop.ClearCanvas(0x33, 0x66, 0x99);
         Console.WriteLine("[SdvWebPort] Canvas cleared to #336699");
-        Console.WriteLine("[SdvWebPort] Phase 0 skeleton ready. Runtime will stay alive.");
+        Console.WriteLine("[SdvWebPort] Phase 0 skeleton ready (Blazor WASM host).");
 
-        // Keep runtime alive so the browser tab stays interactive.
-        await Task.Delay(Timeout.Infinite);
+        // Keep runtime alive for browser inspection
+        await Task.Delay(-1);
         return 0;
     }
 }
 
-/// <summary>
-/// JS interop via [JSImport] (.NET 8+ WASM JS interop).
-/// The runtime resolves the import path to a JS function on the global scope.
-/// </summary>
 internal static partial class JsInterop
 {
     [JSImport("globalThis.clearCanvas")]
