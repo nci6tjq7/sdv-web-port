@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Uno.Wasm.Bootstrap configuration -->
+    <WasmShellMonoRuntimeExecutionMode>InterpreterAndAOT</WasmShellMonoRuntimeExecutionMode>
+    <WasmShellEnableJiterpreter>true</WasmShellEnableJiterpreter>
+    <WasmShellIndexHtmlPath>wwwroot/index.html</WasmShellIndexHtmlPath>
+    <WasmShellOPFSEnabled>true</WasmShellOPFSEnabled>
+    <WasmShellFileDescriptorsEnabled>true</WasmShellFileDescriptorsEnabled>
+    <WasmShellGenerateCompressedFiles>true</WasmShellGenerateCompressedFiles>
+
+    <!-- Memory & threading -->
+    <WasmShellEmccLinkOptimizationLevel>O2</WasmShellEmccLinkOptimizationLevel>
+    <EmccLinkOptimizationLevel>O2</EmccLinkOptimizationLevel>
+
+    <!-- AOT profile (Phase 1+) -->
+    <WasmShellAOTProfile>false</WasmShellAOTProfile>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Uno.Wasm.Bootstrap" Version="10.0.96" />
+    <PackageReference Include="Uno.Wasm.Bootstrap.DevServer" Version="10.0.96" />
+  </ItemGroup>
+
+</Project>

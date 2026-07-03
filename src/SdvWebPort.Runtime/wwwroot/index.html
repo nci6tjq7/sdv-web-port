@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SdvWebPort — Phase 0 Skeleton</title>
+  <style>
+    body { margin: 0; padding: 0; background: #1a1a1a; color: #eee; font-family: sans-serif; }
+    .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+    canvas { display: block; width: 800px; height: 600px; border: 1px solid #444; }
+    #status { margin-top: 10px; padding: 10px; background: #2a2a2a; border-radius: 4px; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Stardew Valley Web Port — Phase 0</h1>
+    <canvas id="game-canvas" width="800" height="600"></canvas>
+    <div id="status">Initializing WASM runtime...</div>
+  </div>
+
+  <!-- Uno.Wasm.Bootstrap injects the WASM runtime loader here at build time
+       (it rewrites index.html based on WasmShellIndexHtmlPath). -->
+
+  <script>
+    // JS interop target for C# [JSImport("globalThis.clearCanvas")].
+    // .NET 8+'s [JSImport] resolves the import path at runtime to a property
+    // on the global scope, so we register clearCanvas on globalThis here.
+    globalThis.clearCanvas = function(r, g, b) {
+      try {
+        const canvas = document.getElementById('game-canvas');
+        if (!canvas) { console.warn('[clearCanvas] canvas not found'); return; }
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+        if (gl && typeof gl.clearColor === 'function') {
+          gl.clearColor(r / 255, g / 255, b / 255, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        } else {
+          // Fallback: 2D canvas
+          const ctx2d = canvas.getContext('2d');
+          if (ctx2d) {
+            ctx2d.fillStyle = `rgb(${r},${g},${b})`;
+            ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+        const status = document.getElementById('status');
+        if (status) status.innerText = `Canvas cleared to rgb(${r}, ${g}, ${b})`;
+        console.log(`[clearCanvas] cleared to rgb(${r}, ${g}, ${b})`);
+      } catch (e) {
+        console.error('[clearCanvas] error:', e);
+      }
+    };
+  </script>
+</body>
+</html>
