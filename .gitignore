@@ -37,3 +37,4 @@ download/
 # Sandbox overlay (z.ai superpowers infrastructure — not part of the project)
 skills/
 .superpowers/
+scripts/extracted/
