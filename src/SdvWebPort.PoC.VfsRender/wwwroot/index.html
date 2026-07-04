@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SdvWebPort PoC — VFS Render</title>
+  <style>
+    body { margin: 0; padding: 20px; background: #1a1a1a; color: #eee; font-family: sans-serif; }
+    canvas { display: block; border: 1px solid #444; background: #000; }
+    #log { margin-top: 10px; padding: 10px; background: #2a2a2a; border-radius: 4px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+</head>
+<body>
+  <h2>SdvWebPort PoC — VFS Render (Texture2D.FromStream from MemoryStream)</h2>
+  <canvas id="theCanvas" width="800" height="600"></canvas>
+  <div id="log">[boot] Loading WASM runtime...</div>
+  <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Window.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Document.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Media.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.0.js"></script>
+  <script src="_content/nkast.Wasm.XHR/js/XHR.8.0.11.js"></script>
+  <script src="_content/nkast.Wasm.Audio/js/Audio.8.0.11.js"></script>
+  <script>
+    const logEl = document.getElementById('log');
+    const origLog = console.log;
+    console.log = function(...args) {
+      origLog.apply(console, args);
+      try { logEl.textContent += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n'; logEl.scrollTop = logEl.scrollHeight; } catch (e) {}
+    };
+    window.addEventListener('error', (e) => { logEl.textContent += '[error] ' + (e.message || e.error) + '\n'; });
+  </script>
+  <script type='module' src="main#[.{fingerprint}].js"></script>
+</body>
+</html>
