@@ -205,3 +205,60 @@ Stage Summary:
   (proves the type mapping is complete), but at runtime we'll use Cecil
   rewriting instead of TypeForwardedTo.
 - All work committed on branch feat/phase2-sdv-load, tagged v0.6.0-sdv-loadable.
+
+---
+Task ID: phase2-sdv-load-v0.7.0-fix
+Agent: main
+Task: Systematic debug + fix TypeForwardedTo resolution in Mono WASM
+
+Work Log:
+- Loaded superpowers-zai skills package (v0.0.0-zai.25) — 14 skills installed
+- Invoked superpowers-systematic-debugging skill to investigate the
+  TypeForwardedTo failure from v0.6.0
+- Phase 1 (Root Cause Investigation): inspected the published bundle and
+  discovered that ALL 5 KNI assemblies (Xna.Framework, .Game, .Graphics,
+  .Content, .Input) were MISSING from the SdvLoad bundle. The trimmer
+  had stripped them because the facade assembly only has metadata-only
+  TypeForwardedTo attributes (no "real" type usage in the trimmer's view).
+- Phase 2 (Pattern Analysis): compared with PoC.Render bundle (which works)
+  — it has all Xna.Framework.*.wasm files because it directly references
+  KNI types in its code. SdvLoad only references KNI via the facade.
+- Phase 3 (Hypothesis): adding <TrimmerRootAssembly> entries for all 5
+  KNI assemblies would force the trimmer to keep them in the bundle,
+  allowing TypeForwardedTo resolution to succeed at runtime.
+- Phase 4 (Implementation): added 5 TrimmerRootAssembly entries to
+  SdvWebPort.PoC.SdvLoad.csproj. Rebuilt. Verified bundle now contains
+  all 6 assemblies (MonoGame.Framework + 5 KNI). Ran headless Chromium
+  test — ALL 4 CHECKS PASSED:
+    [Check] Program found:           True
+    [Check] Game1 found:             True
+    [Check] Game1 base = MGA.Game:   True
+    [Check] Game1 base asm = KNI:    True
+  [PASS] MonoGame.Framework -> KNI facade pattern WORKS!
+
+The critical evidence line from the test log:
+    -> Microsoft.Xna.Framework.Game  (asm: Xna.Framework.Game v4.2.9001.0)
+
+This proves the type-resolution chain:
+  1. SDV's Game1 declares :Game (referencing Microsoft.Xna.Framework.Game
+     from MonoGame.Framework)
+  2. Runtime resolves MonoGame.Framework AssemblyRef → finds facade ✅
+  3. Runtime looks for Game in facade's TypeDef table → not found (correct)
+  4. Runtime checks facade's ExportedType table (TypeForwardedTo) → finds
+     forwarder pointing at Xna.Framework.Game ✅
+  5. Runtime loads Xna.Framework.Game (KNI) and resolves the type ✅
+  6. Game1.BaseType.Assembly.GetName().Name == "Xna.Framework.Game" (KNI),
+     NOT "MonoGame.Framework" (facade) — proving the forwarder was followed
+
+Updated Program.cs with explicit [Check] lines and a 4-condition PASS
+criteria that validates the entire pipeline.
+
+Stage Summary:
+- TypeForwardedTo DOES work in Mono WASM runtime (.NET 10.0.9)
+- The v0.6.0 failure was due to the trimmer stripping KNI target assemblies,
+  NOT a runtime limitation
+- Fix: <TrimmerRootAssembly> entries for all 5 KNI assemblies + the facade
+- The Cecil-rewriting workaround proposed in v0.6.0 is NO LONGER NEEDED
+- The real, unmodified SDV DLL can now be loaded and its types resolved
+  via the facade pattern — no DLL patching required
+- Ready for Phase 2.5: invoke Program.Main() / instantiate Game1

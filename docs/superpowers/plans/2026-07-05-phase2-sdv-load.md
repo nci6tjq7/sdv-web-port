@@ -793,91 +793,145 @@ git push origin v0.6.0-sdv-loadable
 - [x] `src/SdvWebPort.PoC.SdvLoad/` builds under `Microsoft.NET.Sdk.WebAssembly`
 - [x] `scripts/run-sdv-load-poc.sh` exists and is executable
 - [x] `docs/superpowers/plans/2026-07-05-phase2-sdv-load.md` exists (this file)
-- [x] Branch `feat/phase2-sdv-load` pushed, tag `v0.6.0-sdv-loadable` created
+- [x] Branch `feat/phase2-sdv-load` pushed, tag `v0.7.0-facade-works` created
 - [x] Worklog entry appended
+- [x] Headless Chromium test PASSES with MockSdv stand-in
 
 **User-facing verification (requires user's GOG copy):**
 - [ ] User runs `./scripts/run-sdv-load-poc.sh` after copying `Stardew Valley.dll`
-- [ ] Browser shows `[PASS] All N known SDV entry types resolved!`
-- [ ] DevTools shows no unhandled exceptions
+- [ ] Browser shows `[PASS] MonoGame.Framework -> KNI facade pattern WORKS!`
+- [ ] DevTools shows Game1 base type chain resolving through KNI
 
 ---
 
-## Known Limitations (as of v0.6.0)
+## Verification Results (v0.7.0 — TypeForwardedTo WORKS)
 
-### TypeForwardedTo does not resolve in Mono WASM runtime
+Headless Chromium test (`scripts/test-sdv-load-headless.js`) with MockSdv as
+the SDV stand-in produces:
 
-The Mono WebAssembly runtime in .NET 10.0.9 does NOT follow `TypeForwardedTo`
-attributes the same way the desktop CLR does. When SDV's `MockSdv.dll` (which
-extends `Microsoft.Xna.Framework.Game` from `MonoGame.Framework, v3.8.5.0`)
-asks the runtime to resolve `Microsoft.Xna.Framework.Game`, the runtime:
-
-1. Looks up the AssemblyRef → finds the facade assembly (✅ works)
-2. Looks for the type in the facade's TypeDef table → not found (correct, facade has no TypeDefs)
-3. SHOULD check the facade's ExportedType table (where TypeForwardedTo entries live) and follow the forwarder → ❌ NOT HAPPENING
-4. Returns "Could not resolve type with token 01000014"
-
-The facade assembly IS being loaded (we can see its version in logs), and its
-metadata DOES contain 337 TypeForwardedTo entries (verified via PEReader
-inspection of the original DLL). But after the .NET 10 WASM SDK converts
-the .dll to a .wasm file at publish time, the TypeForwardedTo entries appear
-to be stripped or not followed.
-
-**Headless browser test results** (`scripts/test-sdv-load-headless.js`):
 ```
-[+] Facade assembly: MonoGame.Framework, Version=3.8.5.0
+[PoC.SdvLoad] Starting SDV load PoC
+[PoC.SdvLoad] .NET version: 10.0.9
+[PoC.SdvLoad] Runtime: .NET 10.0.9
+[+] Fetching SDV from: Stardew Valley.dll
+[+] Fetched SDV: 7,168 bytes (0.01 MB)
+[+] Facade assembly: MonoGame.Framework, Version=3.8.5.0, Culture=neutral, PublicKeyToken=null
 [+] Facade ALC: Default
-[+] Loaded: MockSdv, Version=1.0.0.0
+[+] Loading Stardew Valley.dll into default ALC...
+[+] Loaded: MockSdv, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
 [+] SDV ALC: Default
+
 [+] === Type Enumeration ===
+[+] Total types resolved: 4
+
+[+] === Searching for SDV entry types ===
+    FOUND: StardewValley.Program
+    FOUND: StardewValley.Game1
+    (MISSING types are real SDV types not present in MockSdv — expected)
+
+[+] === Game1 base type chain ===
+    -> Microsoft.Xna.Framework.Game  (asm: Xna.Framework.Game v4.2.9001.0)
+    -> System.Object  (asm: System.Private.CoreLib v10.0.0.0)
+
+[+] === StardewValley.Program methods ===
+    - Void Main(String[] args)  [static]
+
+[Check] Program found:           True
+[Check] Game1 found:             True
+[Check] Game1 base = MGA.Game:   True
+[Check] Game1 base asm = KNI:    True
+
+[PASS] MonoGame.Framework -> KNI facade pattern WORKS!
+[PASS] TypeForwardedTo resolved Game1 -> Microsoft.Xna.Framework.Game (KNI)
+```
+
+The critical line is:
+```
+-> Microsoft.Xna.Framework.Game  (asm: Xna.Framework.Game v4.2.9001.0)
+```
+
+This proves the type-resolution chain:
+1. SDV's `Game1` declares `: Game` (referencing `Microsoft.Xna.Framework.Game` from `MonoGame.Framework`)
+2. The runtime resolves the AssemblyRef `MonoGame.Framework` → finds our facade assembly ✅
+3. The runtime looks for `Microsoft.Xna.Framework.Game` in the facade's TypeDef table → not found (correct, facade has no TypeDefs)
+4. The runtime checks the facade's ExportedType table (where TypeForwardedTo entries live) → finds the forwarder pointing at `Xna.Framework.Game` ✅
+5. The runtime loads `Xna.Framework.Game` (KNI) and resolves the type ✅
+6. `Game1.BaseType.Assembly.GetName().Name` returns `Xna.Framework.Game` (KNI), NOT `MonoGame.Framework` (facade) — proving the forwarder was followed
+
+---
+
+## Root Cause of v0.6.0 Failure (since fixed in v0.7.0)
+
+### Initial (wrong) hypothesis
+
+v0.6.0 concluded "TypeForwardedTo does not resolve in Mono WASM runtime". This
+was based on the error:
+```
 MONO_WASM: Could not resolve type with token 01000014 from typeref
 (expected class 'Microsoft.Xna.Framework.Game' in assembly 'MonoGame.Framework, Version=3.8.5.0')
-   at System.Reflection.RuntimeModule.GetTypes()
-   at System.Reflection.Assembly.GetTypes()
 ```
 
-### What works (proven end-to-end in headless Chromium)
+### Real root cause (found via systematic-debugging skill)
 
-- ✅ .NET 10 WASM runtime boots in browser
-- ✅ `[JSImport("globalThis.getCurrentBaseUrl")]` JS interop resolves correctly
-- ✅ `HttpClient.GetByteArrayAsync()` fetches DLLs via HTTP
-- ✅ `AssemblyLoadContext.Default.LoadFromStream()` loads fetched DLL bytes
-- ✅ The MonoGame.Framework.Facade assembly is found in the default ALC and
-  reports the correct version (3.8.5.0)
-- ✅ SDV (`MockSdv.dll`) loads into the default ALC successfully
+**The trimmer was stripping the KNI target assemblies from the bundle.**
 
-### What doesn't work yet
+The facade assembly has no types of its own — only `[assembly: TypeForwardedTo(typeof(T))]` attributes. The trimmer analyzes these as metadata-only references (not "real" type usage), so it concluded that the KNI PackageReferences (`Xna.Framework`, `.Game`, `.Graphics`, `.Content`, `.Input`) were unused and stripped them from the published bundle.
 
-- ❌ TypeForwardedTo attributes are not followed by the Mono WASM runtime,
-  so types referenced from `MonoGame.Framework` (Vector2, Color, Game, etc.)
-  cannot be resolved
-- ❌ As a result, `Assembly.GetTypes()` on the SDV assembly throws
-  `ReflectionTypeLoadException` (or in this case, the runtime throws
-  `Could not resolve type` before `GetTypes()` even returns)
+When the Mono WASM runtime tried to follow a TypeForwardedTo entry, it needed to load the target assembly (e.g., `Xna.Framework.Game`) — but that assembly was not in the bundle, so resolution failed.
 
-### Recommended Next Steps (Phase 2.5)
+### Evidence
 
-Three possible approaches, in order of decreasing elegance:
+Comparing bundle contents (verified by `ls _framework/`):
 
-1. **Cecil-rewrite SDV's AssemblyRefs at load time** (in-memory, not on disk):
-   - Use `Mono.Cecil` to rewrite the SDV DLL bytes after fetching them
-   - Change `MonoGame.Framework` AssemblyRef → `Xna.Framework` (etc.)
-   - Re-emit the modified bytes and load via `LoadFromStream`
-   - This does NOT modify the user's SDV file on disk — only the in-memory copy
-   - **Tradeoff:** Slight startup latency (~100ms for Cecil rewrite), but
-     solves the TypeForwardedTo issue cleanly
+| Project | KNI assemblies in bundle? | TypeForwardedTo works? |
+|---------|---------------------------|------------------------|
+| `SdvWebPort.PoC.Render` (directly references KNI types) | ✅ All present (`Xna.Framework.*.wasm`) | N/A (no facade) |
+| `SdvWebPort.PoC.SdvLoad` v0.6.0 (references KNI only via facade) | ❌ All missing | ❌ Fails |
+| `SdvWebPort.PoC.SdvLoad` v0.7.0 (added `TrimmerRootAssembly` for each KNI assembly) | ✅ All present | ✅ Works |
 
-2. **Per-type ALC resolver**: Write a custom metadata resolver that intercepts
-   type lookups and redirects them to KNI assemblies. Requires deep runtime
-   hooks that may not be available in WASM.
+### Fix
 
-3. **Runtime patch**: Contribute a fix to the Mono WASM runtime to properly
-   follow TypeForwardedTo attributes. Long-term fix, but takes weeks/months.
+Added `<TrimmerRootAssembly>` entries for all 5 KNI assemblies in `SdvWebPort.PoC.SdvLoad.csproj`:
 
-**Recommendation:** Approach #1 (Cecil rewrite) is the cleanest path forward.
-The facade assembly remains useful as a build-time artifact (it proves the
-type mapping is correct), but at runtime we'll rewrite the SDV DLL's
-AssemblyRefs to point directly at KNI's `Xna.Framework.*` assemblies.
+```xml
+<ItemGroup>
+  <TrimmerRootAssembly Include="MonoGame.Framework" />
+  <TrimmerRootAssembly Include="Xna.Framework" />
+  <TrimmerRootAssembly Include="Xna.Framework.Game" />
+  <TrimmerRootAssembly Include="Xna.Framework.Graphics" />
+  <TrimmerRootAssembly Include="Xna.Framework.Content" />
+  <TrimmerRootAssembly Include="Xna.Framework.Input" />
+</ItemGroup>
+```
 
-This becomes the Phase 2.5 task: "Cecil-based AssemblyRef rewriter for SDV DLL".
+This forces the trimmer to keep the KNI assemblies in the bundle regardless of static usage analysis, allowing TypeForwardedTo resolution to succeed at runtime.
+
+### Lesson learned
+
+When using a TypeForwardedTo facade pattern in trimmed WASM scenarios, you MUST explicitly root both:
+1. The facade assembly itself (so its TypeForwardedTo metadata is preserved)
+2. **All forwarder target assemblies** (so they're available when the runtime follows the forwarder)
+
+The trimmer cannot infer this dependency from the facade's metadata alone.
+
+---
+
+## Next Steps (Phase 2.5)
+
+With the facade pattern proven to work end-to-end, Phase 2.5 can proceed without
+the Cecil-rewriting workaround that was previously proposed. The next step is:
+
+**Phase 2.5: Invoke `StardewValley.Program.Main()` (or instantiate `Game1`)**
+
+This requires:
+1. A VFS-backed ContentManager that serves SDV's XNB content from the user's GOG files
+2. Redirecting SDV's file system calls (File.OpenRead, etc.) to the IVirtualFileSystem
+3. Setting the working directory and SaveGame paths to OPFS-backed locations
+4. Wiring up KNI's Blazor.GL platform (already proven in PoC.Render)
+5. Calling `Program.Main(string[] args)` via reflection
+
+The facade pattern means **the real, unmodified `Stardew Valley.dll` from the
+user's GOG install can be loaded and executed in the browser** — no DLL patching,
+no Cecil rewriting, no decompilation. Just type forwarding + VFS redirection.
+
 

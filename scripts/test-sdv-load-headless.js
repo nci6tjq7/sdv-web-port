@@ -75,6 +75,11 @@ const URL = `http://localhost:${PORT}/`;
             await browser.close();
             process.exit(0);
         }
+        if (fullText.includes('[FAIL] One or more checks failed')) {
+            console.log('\n[RESULT] FAIL — checks did not pass');
+            await browser.close();
+            process.exit(1);
+        }
         console.log('\n[RESULT] FAIL — see logs above');
         await browser.close();
         process.exit(1);

@@ -18,11 +18,21 @@
     <ProjectReference Include="..\MonoGame.Framework.Facade\MonoGame.Framework.Facade.csproj" />
   </ItemGroup>
 
-  <!-- Prevent the trimmer from removing the MonoGame.Framework facade.
+  <!-- Prevent the trimmer from removing the MonoGame.Framework facade AND
+       the KNI assemblies that the facade forwards to.
+
        The facade has no types of its own (only [assembly: TypeForwardedTo]
-       attributes), so without this it would be trimmed as "unused". -->
+       attributes), so the trimmer sees its KNI PackageReferences as "unused"
+       and strips them — which breaks TypeForwardedTo resolution at runtime.
+       Adding TrimmerRootAssembly for each KNI assembly forces the trimmer
+       to keep them in the bundle. -->
   <ItemGroup>
     <TrimmerRootAssembly Include="MonoGame.Framework" />
+    <TrimmerRootAssembly Include="Xna.Framework" />
+    <TrimmerRootAssembly Include="Xna.Framework.Game" />
+    <TrimmerRootAssembly Include="Xna.Framework.Graphics" />
+    <TrimmerRootAssembly Include="Xna.Framework.Content" />
+    <TrimmerRootAssembly Include="Xna.Framework.Input" />
   </ItemGroup>
 
   <!-- User-supplied SDV DLL — gitignored, copied to wwwroot at build time if present -->

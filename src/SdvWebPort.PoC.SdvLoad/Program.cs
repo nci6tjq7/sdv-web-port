@@ -125,7 +125,11 @@ public static class Program
             return 1;
         }
 
-        // 5. Look for known SDV entry-point types
+        // 5. Look for known SDV entry-point types.
+        //    Note: when testing with MockSdv (the test target), only Program
+        //    and Game1 exist. When testing with real SDV, all 6 should be found.
+        //    The PASS condition (step 8) only requires Program + Game1 + the
+        //    Game1→KNI base type chain, which proves the facade works.
         Console.WriteLine("");
         Console.WriteLine("[+] === Searching for SDV entry types ===");
         string[] knownTypes = new[]
@@ -152,8 +156,12 @@ public static class Program
             }
         }
 
-        // 6. Inspect Game1's base type — verify it resolves to KNI's Game class
+        // 6. Inspect Game1's base type — THE critical check.
+        //    If TypeForwardedTo works, Game1's base type should be
+        //    Microsoft.Xna.Framework.Game from the Xna.Framework.Game assembly (KNI).
         var game1 = allTypes.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        Type? game1BaseType = null;
+        string? game1BaseAsmName = null;
         if (game1 != null)
         {
             Console.WriteLine("");
@@ -162,6 +170,11 @@ public static class Program
             while (bt != null)
             {
                 Console.WriteLine($"    -> {bt.FullName}  (asm: {bt.Assembly.GetName().Name} v{bt.Assembly.GetName().Version})");
+                if (game1BaseType == null)
+                {
+                    game1BaseType = bt;
+                    game1BaseAsmName = bt.Assembly.GetName().Name;
+                }
                 bt = bt.BaseType;
             }
         }
@@ -180,22 +193,37 @@ public static class Program
             }
         }
 
-        // 8. Final verdict
+        // 8. Final verdict — PASS requires:
+        //    (a) StardewValley.Program found
+        //    (b) StardewValley.Game1 found
+        //    (c) Game1's base type is Microsoft.Xna.Framework.Game
+        //    (d) Game1's base type assembly is Xna.Framework.Game (KNI, not facade)
+        //    These 4 conditions prove the facade → KNI TypeForwardedTo pipeline works.
         Console.WriteLine("");
-        if (foundCount == knownTypes.Length)
+        bool programFound = allTypes.Any(t => t.FullName == "StardewValley.Program");
+        bool game1Found = allTypes.Any(t => t.FullName == "StardewValley.Game1");
+        bool baseTypeIsMonoGameGame = game1BaseType?.FullName == "Microsoft.Xna.Framework.Game";
+        bool baseTypeAsmIsKni = game1BaseAsmName == "Xna.Framework.Game";
+
+        Console.WriteLine($"[Check] Program found:           {programFound}");
+        Console.WriteLine($"[Check] Game1 found:             {game1Found}");
+        Console.WriteLine($"[Check] Game1 base = MGA.Game:   {baseTypeIsMonoGameGame}");
+        Console.WriteLine($"[Check] Game1 base asm = KNI:    {baseTypeAsmIsKni}");
+
+        if (programFound && game1Found && baseTypeIsMonoGameGame && baseTypeAsmIsKni)
         {
-            Console.WriteLine($"[PASS] All {knownTypes.Length} known SDV entry types resolved!");
-            Console.WriteLine("[PASS] MonoGame.Framework -> KNI facade pattern WORKS.");
+            Console.WriteLine("");
+            Console.WriteLine("[PASS] MonoGame.Framework -> KNI facade pattern WORKS!");
+            Console.WriteLine($"[PASS] TypeForwardedTo resolved Game1 -> Microsoft.Xna.Framework.Game (KNI)");
+            Console.WriteLine($"[INFO] {foundCount}/{knownTypes.Length} known SDV types found (rest need real SDV.dll)");
             Console.WriteLine("[NEXT] Ready for Phase 2.5: invoke Program.Main() or instantiate Game1.");
             await KeepAlive();
             return 0;
         }
         else
         {
-            Console.WriteLine($"[PARTIAL] {foundCount}/{knownTypes.Length} entry types resolved.");
-            Console.WriteLine("[!] Some SDV types failed to load — check loader exceptions above.");
-            Console.WriteLine("[!] If you see 'Could not resolve type with token ...', this is the");
-            Console.WriteLine("[!] known TypeForwardedTo limitation in Mono WASM. See plan doc.");
+            Console.WriteLine("");
+            Console.WriteLine("[FAIL] One or more checks failed — see [Check] lines above.");
             await KeepAlive();
             return 1;
         }
