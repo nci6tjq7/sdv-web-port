@@ -9,10 +9,37 @@ globalThis.getCurrentBaseUrl = function() {
     return window.location.href;
 };
 
+// SHIM: KNI's nkast.Wasm.* JS layer (JSObject.10.0.0.js, CanvasGLContext.10.0.0.js, etc.)
+// references `Blazor.platform.getArrayEntryPtr(arr, ...)` and `Blazor.runtime.Module`
+// unconditionally. In .NET 10's Microsoft.NET.Sdk.WebAssembly, the `Blazor` global
+// does NOT exist — only the `dotnet` runtime API does. We provide a minimal shim
+// that routes these calls to the .NET 10 runtime equivalents.
+//
+// Blazor.platform.getArrayEntryPtr(arr, startIndex, elementSize):
+//   In old Blazor WASM, `arr` was a JS wrapper around a .NET array, and this
+//   returned the raw WASM memory pointer to the array's data. In .NET 10,
+//   the KNI JS code passes `arr` as an integer pointer (read from HEAP32),
+//   so we just return it as-is. The caller then uses
+//   `new Uint8Array(module.HEAPU8.buffer, arrPtr + offset, length)` to read.
+//
+// Blazor.runtime.Module: the WASM Module object (has HEAP8/HEAP16/HEAP32/etc.).
+//   In .NET 10 this is `runtime.Module` from `dotnet.create()`.
+globalThis.Blazor = {
+    platform: {
+        getArrayEntryPtr: function(arr, startIndex, elementSize) {
+            // `arr` is already a raw pointer (integer) in KNI's usage.
+            // Just return it — the caller indexes into HEAPU8 with it.
+            return arr;
+        }
+    },
+    // Will be set after dotnet.create() resolves.
+    runtime: { Module: null }
+};
+
 // Expose a function to read canvas pixels (for headless verification).
 // Returns a compact summary: total pixels + non-black pixel count + sample color.
 globalThis.readCanvasPixels = function() {
-    const canvas = document.getElementById('game-canvas');
+    const canvas = document.getElementById('theCanvas');
     if (!canvas) return JSON.stringify({ error: 'canvas not found' });
     try {
         const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('2d');
@@ -71,12 +98,37 @@ statusEl.textContent = 'Loading WASM runtime...';
 
 try {
     const runtime = await dotnet.create();
+    const { runMain } = runtime;
+
+    // KNI's Blazor.GL platform (via nkast.Wasm.JSInterop) expects either
+    // globalThis.Module or Blazor.runtime.Module to access WASM memory (HEAP32, HEAPU16, etc).
+    // The new .NET 10 Microsoft.NET.Sdk.WebAssembly exposes Module via the runtime API
+    // (api.Module is assigned in setRuntimeGlobals via Object.assign(e.api, {Module: e.module, ...e.module}))
+    // but not on globalThis. Bridge it here so KNI's JSObject.js can find it.
+    // (Same fix as PoC.Render — proven working.)
+    if (typeof globalThis.Module === 'undefined') {
+        if (runtime.Module) {
+            globalThis.Module = runtime.Module;
+            console.log('[boot] globalThis.Module set from runtime.Module: ' + (globalThis.Module.HEAPU16 ? 'has HEAPU16' : 'no HEAPU16'));
+        } else {
+            console.log('[boot] WARN: runtime.Module not found. KNI JSObject.js will fail.');
+            console.log('[boot] runtime keys: ' + Object.keys(runtime).join(', '));
+        }
+    }
+
+    // Also populate the Blazor.runtime.Module shim (for KNI JSObject.js line 85 etc.
+    // that use `Blazor.runtime.Module` instead of `globalThis.Module`).
+    if (runtime.Module) {
+        globalThis.Blazor.runtime.Module = runtime.Module;
+        console.log('[boot] Blazor.runtime.Module shim set');
+    }
+
     statusEl.textContent = 'Runtime ready. Invoking Main...';
     logEl.textContent = '';
     // runMain runs Main and returns. Main calls game.Run() which blocks — but KNI's Blazor.GL
     // platform uses requestAnimationFrame so the loop continues even after
     // Main returns. We use runMain so Main can keep alive via Task.Delay(-1).
-    const exitCode = await runtime.runMain('SdvWebPort.PoC.SdvLoad.dll', []);
+    const exitCode = await runMain('SdvWebPort.PoC.SdvLoad.dll', []);
     statusEl.textContent = `Main returned (exit ${exitCode}) — game loop should be running`;
     if (exitCode === 0) statusEl.classList.add('pass');
     else statusEl.classList.add('fail');

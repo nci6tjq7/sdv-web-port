@@ -20,13 +20,33 @@
     <p class="status">Status: <span id="status">Starting...</span></p>
 
     <div id="canvas-container">
-        <label for="game-canvas">Game Canvas (KNI renders here via WebGL2):</label>
-        <!-- KNI's Blazor.GL platform looks for a canvas with id 'game-canvas' by default. -->
+        <label for="theCanvas">Game Canvas (KNI renders here via WebGL2):</label>
+        <!-- KNI's Blazor.GL platform looks for a canvas with id 'theCanvas' by default.
+             (Same ID as PoC.Render — proven working.) -->
         <!-- The 800x600 matches MockSdv.Game1's PreferredBackBufferWidth/Height. -->
-        <canvas id="game-canvas" width="800" height="600"></canvas>
+        <canvas id="theCanvas" width="800" height="600"></canvas>
     </div>
 
     <pre id="log">Loading runtime...</pre>
+
+    <!--
+      KNI's Blazor.GL platform depends on the nkast.Wasm.* JS interop layer.
+      These scripts must load BEFORE main.js so that globalThis.window.nkJSObject,
+      nkWindow, nkDocument, nkCanvas, etc. are available when C# code calls into them.
+      Served from _content/{PackageName}/js/{File}.js via Static Web Assets.
+      (Same pattern as PoC.Render — proven working.)
+    -->
+    <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Window.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Document.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Media.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.XHR/js/XHR.8.0.11.js"></script>
+    <script src="_content/nkast.Wasm.Audio/js/Audio.8.0.11.js"></script>
 
     <script type="module" src="main.js"></script>
 </body>
