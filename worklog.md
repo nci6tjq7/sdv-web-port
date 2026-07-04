@@ -262,3 +262,60 @@ Stage Summary:
 - The real, unmodified SDV DLL can now be loaded and its types resolved
   via the facade pattern — no DLL patching required
 - Ready for Phase 2.5: invoke Program.Main() / instantiate Game1
+
+---
+Task ID: v0.7.1-memory-infrastructure
+Agent: main
+Task: Establish persistent project memory across session resets
+
+Work Log:
+- User reported that long-term project context was being lost across session
+  resets (the conversation summary at the start of this session was ~500
+  lines and still missed critical details like the facade assembly work).
+- Investigated environment persistence:
+  - /home/z/my-project/upload/ is tmpfs (ephemeral, wiped on reset)
+  - /tmp/my-project is PolarFS (persistent but separate from active project)
+  - /home/z/my-project/ survives reset BUT uncommitted files are lost
+  - git checkout -f reverts uncommitted changes
+  - GitHub remote is the only fully durable layer
+- Decision: store project memory in committed files, pushed to GitHub.
+- Created MEMORY.md (422 lines) at project root:
+  - Session bootstrap instructions (9 steps to resume work)
+  - Project identity + legal posture (non-negotiable)
+  - Tech stack (pinned versions)
+  - 5-layer architecture + facade pattern explanation
+  - Phase status table (Phase 0-2 done, 2.5 next, 3-5 planned)
+  - Next steps for Phase 2.5
+  - Full project structure
+  - 10 'Critical Knowledge' entries (things not to rediscover)
+  - Environment setup quick reference
+  - Git workflow
+  - Superpowers skills list
+  - Condensed phase history
+  - Known issues + future concerns
+- Replaced default AGENTS.md (superpowers contributor guide) with
+  project-specific agent guidelines (115 lines):
+  - Required reading order (MEMORY.md first)
+  - Legal posture (refuse game files / decompilation / public deploy)
+  - Environment setup
+  - Persistence rules (CRITICAL — uncommitted = lost)
+  - Tech stack (pinned)
+  - Git workflow
+  - 7 common traps (pointer to MEMORY.md for full list)
+  - 'When asked to continue' instructions
+- Updated .superpowers-bootstrap to point to MEMORY.md as first reading
+- Created .session-resume (ASCII-art hint file) at project root, visible
+  in any 'ls' output, directing agents to MEMORY.md
+- Committed (1a41bb2) + tagged v0.7.1-memory + pushed to GitHub
+
+Stage Summary:
+- Project memory now survives session resets via git + GitHub
+- 4 files form the persistence layer:
+  1. MEMORY.md — comprehensive project memory (the main file)
+  2. AGENTS.md — agent guidelines
+  3. worklog.md — chronological work log (append-only)
+  4. .session-resume — visible hint file
+- Future agents resuming this project read MEMORY.md first, which contains
+  everything needed to understand current state and resume work
+- The conversation-summary problem is solved: even if a session starts
+  with zero context, MEMORY.md + worklog.md + git log provide full state
