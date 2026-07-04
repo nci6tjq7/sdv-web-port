@@ -1,0 +1,9 @@
+# Build artifacts
+bin/
+obj/
+
+# User-supplied game files — NEVER commit
+Stardew Valley.dll
+StardewModdingAPI.dll
+*.xnb
+Content/

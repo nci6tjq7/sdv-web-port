@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- CRITICAL: The output assembly MUST be named MonoGame.Framework
+         and have version 3.8.0.1641 so the CLR matches it to SDV's
+         AssemblyRef. SDV was compiled against MonoGame.Framework v3.8.0.1641. -->
+    <AssemblyName>MonoGame.Framework</AssemblyName>
+    <AssemblyVersion>3.8.0.1641</AssemblyVersion>
+    <FileVersion>3.8.0.1641</FileVersion>
+    <Version>3.8.0.1641</Version>
+
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- The facade emits [TypeForwardedTo] metadata only — it has no
+         code of its own. Disable the resulting "no code" warning. -->
+    <NoWarn>$(NoWarn);CS8019;CS0436</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference KNI to pull in the actual type implementations.
+         At build time, the compiler resolves typeof(...) for each
+         TypeForwardedTo attribute, then emits the forward into the
+         facade's metadata. -->
+    <PackageReference Include="nkast.Xna.Framework" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Game" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Graphics" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Content" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Input" Version="4.2.9001" />
+  </ItemGroup>
+</Project>

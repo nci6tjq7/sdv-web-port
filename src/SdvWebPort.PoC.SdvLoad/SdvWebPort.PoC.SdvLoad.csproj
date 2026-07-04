@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Critical: do NOT trim TypeForwardedTo metadata; do NOT trim reflection.
+         SDV relies on reflection at runtime. -->
+    <TrimMode>partial</TrimMode>
+    <!-- Inline the boot config into dotnet.js so we don't need a separate
+         dotnet.boot.js file (which the SDK does NOT generate by default
+         in Microsoft.NET.Sdk.WebAssembly). -->
+    <WasmInlineBootConfig>true</WasmInlineBootConfig>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MonoGame.Framework.Facade\MonoGame.Framework.Facade.csproj" />
+  </ItemGroup>
+
+  <!-- Prevent the trimmer from removing the MonoGame.Framework facade.
+       The facade has no types of its own (only [assembly: TypeForwardedTo]
+       attributes), so without this it would be trimmed as "unused". -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="MonoGame.Framework" />
+  </ItemGroup>
+
+  <!-- User-supplied SDV DLL — gitignored, copied to wwwroot at build time if present -->
+  <ItemGroup>
+    <None Include="Stardew Valley.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Stardew Valley.dll')" />
+  </ItemGroup>
+</Project>

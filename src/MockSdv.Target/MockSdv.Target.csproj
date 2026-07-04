@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Mock SDV: simulates what real SDV does.
+         - References MonoGame.Framework v3.8.0.1641 (same as real SDV)
+         - Has a Program.Main() and Game1 class that extends MonoGame's Game
+         - No KNI references — pure compile-time dependency on MonoGame.Framework
+         - Built as a regular .NET 10 library (NOT WASM) — output DLL is what
+           SdvLoad PoC fetches at runtime. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Compile against MonoGame.Framework v3.8.0.1641.
+         We use the REAL MonoGame.Framework NuGet package here (NOT KNI, NOT facade)
+         to faithfully simulate SDV's compile-time AssemblyRef.
+         The output DLL will then carry an AssemblyRef to "MonoGame.Framework, v3.8.0.1641",
+         which our facade assembly satisfies at runtime in WASM. -->
+    <AssemblyName>MockSdv</AssemblyName>
+    <RootNamespace>StardewValley</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Use the latest preview version of MonoGame.Framework. The AssemblyRef
+         version in the output DLL will be 3.8.5.x, which differs from our
+         facade's 3.8.0.1641. This is fine because:
+         1. Both are unsigned (PublicKeyToken=null), so version is not enforced.
+         2. Our ALC.Load() callback returns the facade regardless of version.
+         Real SDV uses v3.8.0.1641 — same unsigned pattern, same lack of
+         version enforcement. -->
+    <PackageReference Include="MonoGame.Framework" Version="3.8.5-preview.6" />
+  </ItemGroup>
+</Project>

@@ -130,3 +130,78 @@ Implemented the VFS abstraction layer (interface + in-memory impl) using strict 
 
 ### Report
 Full report at `/home/z/my-project/.superpowers/sdd/task-3-report.md`.
+
+---
+Task ID: phase2-sdv-load
+Agent: main
+Task: Load real Stardew Valley.dll in browser via MonoGame.Framework facade → KNI
+
+Work Log:
+- Created src/MonoGame.Framework.Facade/ — assembly named "MonoGame.Framework"
+  (v3.8.0.1641 by default, configurable to 3.8.5.0 for MockSdv test target)
+  with 337 [assembly: TypeForwardedTo(typeof(T))] attributes forwarding every
+  public non-generic type from the 5 KNI assemblies (Xna.Framework,
+  Xna.Framework.Game, Xna.Framework.Graphics, Xna.Framework.Content,
+  Xna.Framework.Input) to satisfy SDV's MonoGame.Framework AssemblyRef.
+- Created src/SdvWebPort.PoC.SdvLoad/ — Blazor WASM PoC that fetches
+  "Stardew Valley.dll" via HttpClient, loads it into
+  AssemblyLoadContext.Default via LoadFromStream, and enumerates types via
+  reflection. Built under Microsoft.NET.Sdk.WebAssembly with
+  <WasmInlineBootConfig>true</WasmInlineBootConfig> and
+  <TrimmerRootAssembly Include="MonoGame.Framework" />.
+- Created src/MockSdv.Target/ — tiny classlib that mimics SDV's structure
+  (references MonoGame.Framework via NuGet, has StardewValley.Program +
+  StardewValley.Game1 : Game + 4 other namespaces). Used for headless
+  Chromium testing without requiring the user's GOG files.
+- Wrote scripts/generate-facade-types.sh — auto-generates AssemblyInfo.cs
+  by enumerating all public types in the 5 KNI assemblies via reflection.
+  Re-run after KNI upgrades to pick up new types. Outputs ~337 forwards.
+- Wrote scripts/run-sdv-load-poc.sh — builds + serves PoC on :8000,
+  copying fingerprinted dotnet.*.js and MonoGame.Framework.*.wasm to
+  stable non-fingerprinted paths for easy HTTP fetch.
+- Wrote scripts/test-sdv-load-headless.js — Playwright + Chromium script
+  that navigates to the served PoC, captures console.log + pageerror,
+  and exits 0 on PASS or expected-fail (no SDV.dll).
+- Wrote scripts/verify-sdv-load-bundle.sh — static structure check that
+  verifies the published wwwroot has index.html, dotnet.js, dotnet.native.wasm,
+  MonoGame.Framework.*.wasm, and SdvWebPort.PoC.SdvLoad.*.wasm.
+- Wrote docs/superpowers/plans/2026-07-05-phase2-sdv-load.md — full Phase 2
+  plan with architecture diagram, task breakdown, risks, definition of done,
+  and known limitations (TypeForwardedTo does not resolve in Mono WASM).
+
+Headless Chromium verification (with MockSdv as stand-in for SDV):
+- [PASS] .NET 10.0.9 WASM runtime boots
+- [PASS] [JSImport("globalThis.getCurrentBaseUrl")] resolves correctly
+- [PASS] HttpClient.GetByteArrayAsync fetches "Stardew Valley.dll" via HTTP
+- [PASS] AssemblyLoadContext.Default.LoadFromStream loads SDV bytes
+- [PASS] MonoGame.Framework facade assembly found in default ALC
+  (Version=3.8.5.0, Culture=neutral, PublicKeyToken=null)
+- [PASS] MockSdv.dll loads successfully (Version=1.0.0.0)
+- [FAIL] Assembly.GetTypes() throws "Could not resolve type with token
+  01000014 from typeref (expected class 'Microsoft.Xna.Framework.Game'
+  in assembly 'MonoGame.Framework, Version=3.8.5.0')"
+
+Known Limitation: TypeForwardedTo does not resolve in Mono WASM runtime.
+The Mono WebAssembly runtime in .NET 10.0.9 does NOT follow
+TypeForwardedTo attributes the same way the desktop CLR does. The facade
+assembly loads correctly (we see its version in logs), but when SDV code
+references types like Microsoft.Xna.Framework.Game, the runtime looks for
+them in the facade's TypeDef table (which is empty — the facade only has
+TypeForwardedTo entries), and doesn't follow the forwarder to KNI's
+Xna.Framework.Game assembly.
+
+Stage Summary:
+- MonoGame.Framework.Facade project compiles, producing a tiny
+  MonoGame.Framework.dll (~14KB) with 337 TypeForwardedTo attributes.
+- SdvWebPort.PoC.SdvLoad builds cleanly under Microsoft.NET.Sdk.WebAssembly.
+- MockSdv.Target provides a faithful test target for headless verification.
+- The full HTTP fetch + ALC.LoadFromStream + assembly-load pipeline works.
+- The blocker for full SDV type enumeration is the Mono WASM runtime's
+  lack of TypeForwardedTo support.
+- Recommended Phase 2.5 next step: Cecil-based AssemblyRef rewriter that
+  rewrites the SDV DLL's "MonoGame.Framework" AssemblyRef → "Xna.Framework"
+  (etc.) at load time, IN MEMORY ONLY (the user's SDV file is untouched).
+- The facade assembly remains useful as a build-time correctness check
+  (proves the type mapping is complete), but at runtime we'll use Cecil
+  rewriting instead of TypeForwardedTo.
+- All work committed on branch feat/phase2-sdv-load, tagged v0.6.0-sdv-loadable.
