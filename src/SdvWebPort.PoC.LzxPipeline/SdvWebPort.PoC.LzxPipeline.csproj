@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SdvWebPort.Vfs\SdvWebPort.Vfs.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="nkast.Xna.Framework" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Game" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Graphics" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Content" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Input" Version="4.2.9001" />
+    <PackageReference Include="nkast.Kni.Platform.Blazor.GL" Version="4.2.9001.2" />
+    <PackageReference Include="nkast.Wasm.Canvas" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Content\**\*" />
+  </ItemGroup>
+</Project>
