@@ -3,19 +3,29 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SdvWebPort PoC — SDV Load</title>
+    <title>SdvWebPort PoC — Phase 2.5 Game1 Invoke</title>
     <style>
         body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; margin: 20px; }
         h1 { color: #569cd6; }
-        pre { background: #000; padding: 10px; border-radius: 5px; max-height: 600px; overflow: auto; white-space: pre-wrap; word-wrap: break-word; }
+        pre { background: #000; padding: 10px; border-radius: 5px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-wrap: break-word; }
+        canvas { border: 2px solid #569cd6; background: #000; display: block; margin: 10px 0; }
         .status { color: #4ec9b0; }
         .fail { color: #f44747; }
         .pass { color: #6a9955; }
+        #canvas-container { display: flex; flex-direction: column; align-items: flex-start; }
     </style>
 </head>
 <body>
-    <h1>SdvWebPort PoC — Stardew Valley DLL Load</h1>
+    <h1>SdvWebPort PoC — Phase 2.5: Game1 Invoke + Render</h1>
     <p class="status">Status: <span id="status">Starting...</span></p>
+
+    <div id="canvas-container">
+        <label for="game-canvas">Game Canvas (KNI renders here via WebGL2):</label>
+        <!-- KNI's Blazor.GL platform looks for a canvas with id 'game-canvas' by default. -->
+        <!-- The 800x600 matches MockSdv.Game1's PreferredBackBufferWidth/Height. -->
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+    </div>
+
     <pre id="log">Loading runtime...</pre>
 
     <script type="module" src="main.js"></script>
