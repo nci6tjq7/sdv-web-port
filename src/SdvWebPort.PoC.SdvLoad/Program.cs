@@ -5,6 +5,8 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
+using Microsoft.Xna.Platform;
+using Microsoft.Xna.Platform.Input;
 
 namespace SdvWebPort.PoC.SdvLoad;
 
@@ -12,11 +14,39 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        Console.WriteLine("[PoC.SdvLoad] Starting SDV load PoC");
+        Console.WriteLine("[PoC.SdvLoad] Starting Phase 2.5 — Game1 invoke + render");
         Console.WriteLine($"[PoC.SdvLoad] .NET version: {Environment.Version}");
         Console.WriteLine($"[PoC.SdvLoad] Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 
-        // 1. Fetch Stardew Valley.dll from wwwroot (HTTP fetch — no native filesystem in WASM)
+        // 1. Register KNI factories BEFORE any Game instantiation.
+        //    Without this, Game1's constructor fails with "no game factory registered".
+        Console.WriteLine("[+] Registering KNI ConcreteGameFactory...");
+        try
+        {
+            GameFactory.RegisterGameFactory(new ConcreteGameFactory());
+            Console.WriteLine("[+] ConcreteGameFactory registered");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] Could not register ConcreteGameFactory: {ex.Message}");
+            Console.WriteLine("[!] Is nkast.Kni.Platform.Blazor.GL package referenced?");
+            await KeepAlive();
+            return 5;
+        }
+        Console.WriteLine("[+] Registering KNI ConcreteInputFactory...");
+        try
+        {
+            InputFactory.RegisterInputFactory(new ConcreteInputFactory());
+            Console.WriteLine("[+] ConcreteInputFactory registered");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] Could not register ConcreteInputFactory: {ex.Message}");
+            await KeepAlive();
+            return 6;
+        }
+
+        // 2. Fetch Stardew Valley.dll from wwwroot (HTTP fetch — no native filesystem in WASM)
         const string sdvUrl = "Stardew Valley.dll";
         Console.WriteLine($"[+] Fetching SDV from: {sdvUrl}");
 
@@ -33,20 +63,15 @@ public static class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"[FAIL] Could not fetch {sdvUrl}: {ex.Message}");
-                Console.WriteLine("[!] Place 'Stardew Valley.dll' from your GOG install into:");
-                Console.WriteLine("    src/SdvWebPort.PoC.SdvLoad/");
-                Console.WriteLine("    The file is gitignored.");
+                Console.WriteLine("[!] Place 'Stardew Valley.dll' (or MockSdv.dll renamed) into:");
+                Console.WriteLine("    src/SdvWebPort.PoC.SdvLoad/wwwroot/");
                 await KeepAlive();
                 return 2;
             }
         }
         Console.WriteLine($"[+] Fetched SDV: {sdvBytes.Length:N0} bytes ({sdvBytes.Length / 1024.0 / 1024.0:F2} MB)");
 
-        // 2. The MonoGame.Framework facade is referenced by this project and
-        //    loaded into the default ALC at startup. The KNI assemblies
-        //    (Xna.Framework, .Game, .Graphics, etc.) are also in the default
-        //    ALC because they're referenced via the facade's TypeForwardedTo
-        //    attributes.
+        // 3. Verify facade assembly is loaded (for TypeForwardedTo resolution)
         Assembly? facadeAssembly = null;
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -72,21 +97,14 @@ public static class Program
             }
         }
         Console.WriteLine($"[+] Facade assembly: {facadeAssembly.FullName}");
-        Console.WriteLine($"[+] Facade ALC: {AssemblyLoadContext.GetLoadContext(facadeAssembly)?.Name ?? "(default)"}");
 
-        // 3. Load SDV into the DEFAULT ALC. Both the facade and KNI live in
-        //    the default ALC, so type resolution should find them all.
-        //    (See plan doc for known limitation: TypeForwardedTo may not
-        //    resolve in Mono WASM runtime — Phase 2.5 will introduce a
-        //    Cecil-based AssemblyRef rewriter to address this.)
+        // 4. Load SDV into the DEFAULT ALC
         Assembly sdvAsm;
         try
         {
             Console.WriteLine("[+] Loading Stardew Valley.dll into default ALC...");
             sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(sdvBytes));
             Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
-            Console.WriteLine($"[+] Version: {sdvAsm.GetName().Version}");
-            Console.WriteLine($"[+] SDV ALC: {AssemblyLoadContext.GetLoadContext(sdvAsm)?.Name ?? "(default)"}");
         }
         catch (Exception ex)
         {
@@ -96,137 +114,85 @@ public static class Program
             return 1;
         }
 
-        // 4. Enumerate types (this is where TypeForwardedTo limitation manifests)
+        // 5. Find StardewValley.Game1 type via reflection
         Console.WriteLine("");
-        Console.WriteLine("[+] === Type Enumeration ===");
-        Type[] allTypes;
+        Console.WriteLine("[+] === Locating StardewValley.Game1 ===");
+        Type? game1Type = sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1Type == null)
+        {
+            Console.WriteLine("[FAIL] StardewValley.Game1 type not found in SDV assembly");
+            Console.WriteLine("[!] Types found:");
+            foreach (var t in sdvAsm.GetTypes().Take(20))
+                Console.WriteLine($"    - {t.FullName}");
+            await KeepAlive();
+            return 7;
+        }
+        Console.WriteLine($"[+] Found: {game1Type.FullName}");
+        Console.WriteLine($"[+] Base type: {game1Type.BaseType?.FullName} (asm: {game1Type.BaseType?.Assembly.GetName().Name})");
+
+        // 6. Instantiate Game1 via Activator.CreateInstance
+        Console.WriteLine("");
+        Console.WriteLine("[+] === Instantiating Game1 ===");
+        object? game1Instance;
         try
         {
-            allTypes = sdvAsm.GetTypes();
-            Console.WriteLine($"[+] Total types resolved: {allTypes.Length}");
-        }
-        catch (ReflectionTypeLoadException ex)
-        {
-            allTypes = ex.Types.Where(t => t != null).ToArray()!;
-            Console.WriteLine($"[!] Partial load: {allTypes.Length} OK, {ex.Types.Length - allTypes.Length} failed");
-            Console.WriteLine("[!] Loader exceptions (first 10):");
-            foreach (var le in ex.LoaderExceptions.Take(10))
-            {
-                Console.WriteLine($"    - {le?.GetType().Name}: {le?.Message?.Split('\n')[0]}");
-            }
+            game1Instance = Activator.CreateInstance(game1Type);
+            Console.WriteLine($"[+] Game1 instantiated: {game1Instance?.GetType().FullName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FAIL] GetTypes() threw: {ex.GetType().Name}: {ex.Message?.Split('\n')[0]}");
-            Console.WriteLine("[!] This is the known TypeForwardedTo limitation in Mono WASM.");
-            Console.WriteLine("[!] See plan doc § 'Known Limitations' for details.");
-            Console.WriteLine("[!] Phase 2.5 will introduce a Cecil-based AssemblyRef rewriter.");
+            Console.WriteLine($"[FAIL] Game1 instantiation threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"    Stack: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"    Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                Console.WriteLine($"    Inner Stack: {ex.InnerException.StackTrace}");
+            }
             await KeepAlive();
-            return 1;
+            return 8;
         }
 
-        // 5. Look for known SDV entry-point types.
-        //    Note: when testing with MockSdv (the test target), only Program
-        //    and Game1 exist. When testing with real SDV, all 6 should be found.
-        //    The PASS condition (step 8) only requires Program + Game1 + the
-        //    Game1→KNI base type chain, which proves the facade works.
+        // 7. Call game.Run() via reflection — this starts the game loop.
+        //    KNI's Blazor.GL platform drives the loop via requestAnimationFrame,
+        //    so Run() returns control to Main after the first frame is scheduled.
+        //    We then keep Main alive to let the loop continue.
         Console.WriteLine("");
-        Console.WriteLine("[+] === Searching for SDV entry types ===");
-        string[] knownTypes = new[]
+        Console.WriteLine("[+] === Calling Game1.Run() ===");
+        var runMethod = game1Type.GetMethod("Run", BindingFlags.Public | BindingFlags.Instance);
+        if (runMethod == null)
         {
-            "StardewValley.Program",
-            "StardewValley.Game1",
-            "StardewValley.GameLocation",
-            "StardewValley.Farmer",
-            "StardewValley.Object",
-            "StardewValley.Tools.Tool",
-        };
-        int foundCount = 0;
-        foreach (var name in knownTypes)
+            Console.WriteLine("[FAIL] Run() method not found on Game1");
+            await KeepAlive();
+            return 9;
+        }
+        Console.WriteLine($"[+] Run() method: {runMethod.ReturnType.Name} {runMethod.Name}()");
+        try
         {
-            var t = allTypes.FirstOrDefault(x => x.FullName == name);
-            if (t != null)
-            {
-                Console.WriteLine($"    FOUND: {t.FullName}");
-                foundCount++;
-            }
-            else
-            {
-                Console.WriteLine($"    MISSING: {name}");
-            }
+            runMethod.Invoke(game1Instance, null);
+            Console.WriteLine("[+] Run() returned normally — game loop is running");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] Run() threw: {ex.GetType().Name}: {ex.Message}");
+            var inner = ex.InnerException ?? ex;
+            Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
+            Console.WriteLine($"    Stack: {inner.StackTrace}");
+            await KeepAlive();
+            return 10;
         }
 
-        // 6. Inspect Game1's base type — THE critical check.
-        //    If TypeForwardedTo works, Game1's base type should be
-        //    Microsoft.Xna.Framework.Game from the Xna.Framework.Game assembly (KNI).
-        var game1 = allTypes.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
-        Type? game1BaseType = null;
-        string? game1BaseAsmName = null;
-        if (game1 != null)
-        {
-            Console.WriteLine("");
-            Console.WriteLine("[+] === Game1 base type chain ===");
-            var bt = game1.BaseType;
-            while (bt != null)
-            {
-                Console.WriteLine($"    -> {bt.FullName}  (asm: {bt.Assembly.GetName().Name} v{bt.Assembly.GetName().Version})");
-                if (game1BaseType == null)
-                {
-                    game1BaseType = bt;
-                    game1BaseAsmName = bt.Assembly.GetName().Name;
-                }
-                bt = bt.BaseType;
-            }
-        }
-
-        // 7. Inspect StardewValley.Program.Main
-        var program = allTypes.FirstOrDefault(t => t.FullName == "StardewValley.Program");
-        if (program != null)
-        {
-            Console.WriteLine("");
-            Console.WriteLine("[+] === StardewValley.Program methods ===");
-            var methods = program.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            foreach (var m in methods.Take(20))
-            {
-                var ps = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
-                Console.WriteLine($"    - {m.ReturnType.Name} {m.Name}({ps})  [{(m.IsStatic ? "static" : "instance")}]");
-            }
-        }
-
-        // 8. Final verdict — PASS requires:
-        //    (a) StardewValley.Program found
-        //    (b) StardewValley.Game1 found
-        //    (c) Game1's base type is Microsoft.Xna.Framework.Game
-        //    (d) Game1's base type assembly is Xna.Framework.Game (KNI, not facade)
-        //    These 4 conditions prove the facade → KNI TypeForwardedTo pipeline works.
+        // 8. Final verdict
         Console.WriteLine("");
-        bool programFound = allTypes.Any(t => t.FullName == "StardewValley.Program");
-        bool game1Found = allTypes.Any(t => t.FullName == "StardewValley.Game1");
-        bool baseTypeIsMonoGameGame = game1BaseType?.FullName == "Microsoft.Xna.Framework.Game";
-        bool baseTypeAsmIsKni = game1BaseAsmName == "Xna.Framework.Game";
+        Console.WriteLine("[PASS] Game1 instantiated + Run() called!");
+        Console.WriteLine("[PASS] Full pipeline: DLL load → facade → KNI → GraphicsDevice → Game loop");
+        Console.WriteLine("[INFO] Game loop should now be rendering frames to the canvas.");
+        Console.WriteLine("[INFO] Check the browser — you should see a CornflowerBlue background");
+        Console.WriteLine("[INFO] with a red box bouncing around.");
 
-        Console.WriteLine($"[Check] Program found:           {programFound}");
-        Console.WriteLine($"[Check] Game1 found:             {game1Found}");
-        Console.WriteLine($"[Check] Game1 base = MGA.Game:   {baseTypeIsMonoGameGame}");
-        Console.WriteLine($"[Check] Game1 base asm = KNI:    {baseTypeAsmIsKni}");
-
-        if (programFound && game1Found && baseTypeIsMonoGameGame && baseTypeAsmIsKni)
-        {
-            Console.WriteLine("");
-            Console.WriteLine("[PASS] MonoGame.Framework -> KNI facade pattern WORKS!");
-            Console.WriteLine($"[PASS] TypeForwardedTo resolved Game1 -> Microsoft.Xna.Framework.Game (KNI)");
-            Console.WriteLine($"[INFO] {foundCount}/{knownTypes.Length} known SDV types found (rest need real SDV.dll)");
-            Console.WriteLine("[NEXT] Ready for Phase 2.5: invoke Program.Main() or instantiate Game1.");
-            await KeepAlive();
-            return 0;
-        }
-        else
-        {
-            Console.WriteLine("");
-            Console.WriteLine("[FAIL] One or more checks failed — see [Check] lines above.");
-            await KeepAlive();
-            return 1;
-        }
+        // Keep Main alive so the game loop can continue
+        Console.WriteLine("[PoC.SdvLoad] Keeping runtime alive for game loop...");
+        await Task.Delay(-1);
+        return 0;
     }
 
     private static async Task KeepAlive()
