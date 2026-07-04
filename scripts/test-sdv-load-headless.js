@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// Headless browser test for SdvLoad PoC.
-// Verifies the runtime boots, the facade assembly loads, and the PoC's
-// Main() runs to completion (or fails gracefully without SDV.dll).
+// Headless browser test for SdvLoad PoC (Phase 2.5).
+// Verifies:
+//   1. Runtime boots
+//   2. MockSdv.dll loads
+//   3. Game1 instantiates
+//   4. Run() is called
+//   5. Canvas has non-black pixels (WebGL2 rendering happened)
 //
 // Usage:
 //   node scripts/test-sdv-load-headless.js [port]
@@ -17,7 +21,7 @@ const URL = `http://localhost:${PORT}/`;
     let browser;
     try {
         browser = await chromium.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--use-gl=swiftshader'],
         });
         const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
@@ -35,20 +39,20 @@ const URL = `http://localhost:${PORT}/`;
         console.log(`[+] Navigating to ${URL}`);
         await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // Wait for either "PASS" or "FAIL" or "ERROR" to appear in the status
-        console.log('[+] Waiting for runtime to boot (up to 60s)...');
+        // Wait for "Run() returned" or "FAIL" or "ERROR"
+        console.log('[+] Waiting for Game1.Run() to be called (up to 90s)...');
         try {
             await page.waitForFunction(
                 () => {
                     const s = document.getElementById('status');
-                    return s && (s.textContent.includes('exited with code') ||
+                    return s && (s.textContent.includes('returned') ||
                                  s.textContent.includes('ERROR') ||
-                                 s.textContent.includes('PASS'));
+                                 s.textContent.includes('FAIL'));
                 },
-                { timeout: 60000 }
+                { timeout: 90000 }
             );
         } catch (err) {
-            console.log('[!] Timeout waiting for runtime to boot');
+            console.log('[!] Timeout waiting for Run() — checking current state');
         }
 
         const statusText = await page.textContent('#status');
@@ -57,30 +61,49 @@ const URL = `http://localhost:${PORT}/`;
         console.log('=== Final Status ===');
         console.log(`status: ${statusText}`);
         console.log('');
-        console.log('=== Page Log ===');
-        console.log(logText);
+        console.log('=== Page Log (last 30 lines) ===');
+        const logLines = logText.split('\n').filter(l => l.trim());
+        console.log(logLines.slice(-30).join('\n'));
+
+        // Give the game loop a few seconds to render frames
+        console.log('');
+        console.log('[+] Waiting 3s for game loop to render frames...');
+        await page.waitForTimeout(3000);
+
+        // Check canvas pixels
+        console.log('[+] Reading canvas pixels...');
+        const pixelResult = await page.evaluate(() => {
+            return globalThis.readCanvasPixels();
+        });
+        console.log(`[+] Canvas pixel result: ${pixelResult}`);
+
+        let pixelData;
+        try { pixelData = JSON.parse(pixelResult); } catch { pixelData = { error: 'parse failed' }; }
 
         // Decide pass/fail
         const fullText = statusText + '\n' + logText;
-        if (fullText.includes('[PASS]') && fullText.includes('facade pattern WORKS')) {
-            console.log('\n[RESULT] PASS');
+        const logPass = fullText.includes('[PASS]') && fullText.includes('Run() returned normally');
+        const pixelPass = pixelData && pixelData.nonBlackSamples > 0 && !pixelData.error;
+
+        console.log('');
+        console.log('=== Verdict ===');
+        console.log(`Log check (Run() succeeded): ${logPass ? 'PASS' : 'FAIL'}`);
+        console.log(`Pixel check (non-black pixels): ${pixelPass ? 'PASS' : 'FAIL'}`);
+        if (pixelData) {
+            console.log(`  Pixel details: nonBlackSamples=${pixelData.nonBlackSamples}, sampleColor=${JSON.stringify(pixelData.sampleColor)}`);
+        }
+
+        if (logPass && pixelPass) {
+            console.log('\n[RESULT] PASS — Game1 instantiated, Run() called, canvas has rendered pixels');
             await browser.close();
             process.exit(0);
         }
         if (fullText.includes('[FAIL] Could not fetch Stardew Valley.dll')) {
             console.log('\n[RESULT] EXPECTED FAIL (no SDV.dll) — runtime + facade bootstrap verified');
-            // This is actually a partial success: the runtime booted, the facade
-            // assembly loaded, the Main() method ran, and it correctly detected
-            // that SDV.dll is missing. The infrastructure works.
             await browser.close();
             process.exit(0);
         }
-        if (fullText.includes('[FAIL] One or more checks failed')) {
-            console.log('\n[RESULT] FAIL — checks did not pass');
-            await browser.close();
-            process.exit(1);
-        }
-        console.log('\n[RESULT] FAIL — see logs above');
+        console.log('\n[RESULT] FAIL — see checks above');
         await browser.close();
         process.exit(1);
     } catch (err) {
