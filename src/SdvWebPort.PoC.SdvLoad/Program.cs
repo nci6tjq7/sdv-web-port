@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Runtime.InteropServices.JavaScript;
 using System.Threading.Tasks;
-using Mono.Cecil;
 
 namespace SdvWebPort.PoC.SdvLoad;
 
@@ -14,99 +13,78 @@ public static partial class Program
 {
     public static async Task<int> Main()
     {
-        Console.WriteLine("[SdvLoad] Starting — Cecil type-forward rewrite");
+        Console.WriteLine("[SdvLoad] Starting — stub deps + Main() attempt");
         try
         {
             using var http = new HttpClient();
             var baseUrl = JsInterop.GetCurrentBaseUrl();
 
-            byte[] sdvBytes = await http.GetByteArrayAsync(baseUrl + "sdv-dlls/Stardew Valley.dll");
-            byte[] kniBytes = await http.GetByteArrayAsync(baseUrl + "sdv-dlls/Xna.Framework.dll");
-            Console.WriteLine($"[SdvLoad] SDV: {sdvBytes.Length:N0}, KNI: {kniBytes.Length:N0} ✓");
-
-            // Rewrite KNI: rename + add type forwards for Game types
-            Console.WriteLine("[SdvLoad] Rewriting KNI with type forwards...");
-            var kniDef = AssemblyDefinition.ReadAssembly(new MemoryStream(kniBytes));
-            kniDef.Name.Name = "MonoGame.Framework";
-            kniDef.Name.Version = new Version(3, 8, 0, 1641);
-            foreach (var ar in kniDef.MainModule.AssemblyReferences)
-            {
-                if (ar.Name.StartsWith("Xna.Framework.")) ar.Name = ar.Name.Replace("Xna.Framework", "MonoGame.Framework");
-            }
-            // Add type forwards: tell CLR "these types live in MonoGame.Framework.Game"
-            var gameRef = new AssemblyNameReference("MonoGame.Framework.Game", new Version(3, 8, 0, 1641));
-            kniDef.MainModule.AssemblyReferences.Add(gameRef);
-            var gameTypes = new[] { "DrawableGameComponent", "Game", "GameServiceContainer", "GameComponent", "GameTime" };
-            foreach (var typeName in gameTypes)
-            {
-                var ts = new TypeReference("Microsoft.Xna.Framework", typeName, kniDef.MainModule, gameRef);
-                kniDef.MainModule.ExportedTypes.Add(new ExportedType(ts.Namespace, ts.Name, kniDef.MainModule)
-                {
-                    Implementation = ts,
-                });
-            }
-            var kniMs = new MemoryStream();
-            kniDef.Write(kniMs);
-            byte[] kniAliased = kniMs.ToArray();
-            Console.WriteLine($"[SdvLoad] KNI rewritten with type forwards: {kniAliased.Length:N0} bytes ✓");
-
-            // Load aliased KNI
-            var alc = new AssemblyLoadContext("SdvLoad", isCollectible: true);
-            alc.LoadFromStream(new MemoryStream(kniAliased));
-            Console.WriteLine("[SdvLoad] Aliased KNI loaded ✓");
-
-            // Load other KNI assemblies
-            Assembly.Load("Xna.Framework.Game");
-            Assembly.Load("Xna.Framework.Graphics");
-            Assembly.Load("Xna.Framework.Content");
-
-            // Resolving: redirect MonoGame.Framework.* → Xna.Framework.*
-            alc.Resolving += (ctx, name) =>
-            {
-                var map = new[] { "MonoGame.Framework.Game", "MonoGame.Framework.Graphics", "MonoGame.Framework.Content",
-                                  "Microsoft.Xna.Framework.Game", "Microsoft.Xna.Framework.Graphics", "Microsoft.Xna.Framework.Content" };
-                if (map.Contains(name.Name))
-                {
-                    var kniName = name.Name.Replace("MonoGame.Framework", "Xna.Framework").Replace("Microsoft.Xna.Framework", "Xna.Framework");
-                    var found = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == kniName);
-                    if (found != null) { Console.WriteLine($"[SdvLoad] {name.Name} → {found.GetName().Name}"); return found; }
-                }
-                return null;
+            var allDlls = new[] {
+                "MonoGame.Framework.dll", "Xna.Framework.dll", "Xna.Framework.Game.dll",
+                "Xna.Framework.Graphics.dll", "Xna.Framework.Content.dll",
+                "Xna.Framework.Input.dll", "Xna.Framework.Audio.dll",
+                "GalaxyCSharp.dll", "Steamworks.NET.dll",
+                "xTile.dll", "BmFont.dll", "CPExtBmFont.dll", "Lidgren.Network.dll",
+                "TMXTile.dll", "TextCopy.dll", "StardewValley.GameData.dll",
             };
 
+            var alc = new AssemblyLoadContext("SdvLoad", isCollectible: true);
+
+            // Load all DLLs
+            foreach (var name in allDlls) {
+                try {
+                    alc.LoadFromStream(new MemoryStream(await http.GetByteArrayAsync(baseUrl + "sdv-dlls/" + name)));
+                } catch (Exception ex) {
+                    Console.WriteLine($"[SdvLoad] Skip {name}: {ex.Message.Split('\n')[0]}");
+                }
+            }
+            Console.WriteLine("[SdvLoad] All deps loaded ✓");
+
+            alc.Resolving += (ctx, name) =>
+                ctx.Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name) ??
+                AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == name.Name);
+
             // Load SDV
-            Console.WriteLine("[SdvLoad] Loading SDV...");
-            var sdvAsm = alc.LoadFromStream(new MemoryStream(sdvBytes));
-            Console.WriteLine($"[SdvLoad] Loaded: {sdvAsm.FullName} ✓");
+            var sdvAsm = alc.LoadFromStream(new MemoryStream(await http.GetByteArrayAsync(baseUrl + "sdv-dlls/Stardew Valley.dll")));
+            Console.WriteLine($"[SdvLoad] SDV: v{sdvAsm.GetName().Version} ✓");
 
             // GetTypes
-            Console.WriteLine("[SdvLoad] Inspecting types...");
-            Type[] types = Array.Empty<Type>();
+            Type[] types;
             try { types = sdvAsm.GetTypes(); Console.WriteLine($"[SdvLoad] ALL {types.Length} types ✓"); }
-            catch (ReflectionTypeLoadException ex)
-            {
+            catch (ReflectionTypeLoadException ex) {
                 types = ex.Types.Where(t => t != null).ToArray()!;
                 Console.WriteLine($"[SdvLoad] Partial: {types.Length}/{ex.Types.Length}");
-                var errors = ex.LoaderExceptions
-                    .Where(le => le != null)
-                    .Select(le => le.Message?.Split('\n')[0] ?? "?")
-                    .GroupBy(m => m.Substring(0, Math.Min(80, m.Length)))
-                    .OrderByDescending(g => g.Count())
-                    .Take(5);
-                foreach (var g in errors) Console.WriteLine($"  {g.Count()}x: {g.Key}");
             }
 
+            // Find + call Program.Main
             var programType = types.FirstOrDefault(t => t?.Name == "Program");
-            var game1Type = types.FirstOrDefault(t => t?.Name == "Game1");
-            Console.WriteLine($"[SdvLoad] Program: {programType?.FullName ?? "not found"}");
-            Console.WriteLine($"[SdvLoad] Game1: {game1Type?.FullName ?? "not found"}");
-            Console.WriteLine($"[SdvLoad] Types: {types.Length}");
-            if (types.Length > 100) Console.WriteLine("[SdvLoad] === SDV DLL LOAD PASS ===");
+            if (programType != null) {
+                Console.WriteLine($"[SdvLoad] Program: {programType.FullName} ✓");
+                var mainMethod = programType.GetMethod("Main", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (mainMethod != null) {
+                    Console.WriteLine("[SdvLoad] === ATTEMPTING Program.Main() ===");
+                    try {
+                        mainMethod.Invoke(null, new object[] { new string[] { "" } });
+                        Console.WriteLine("[SdvLoad] === MAIN() PASS ===");
+                    }
+                    catch (TargetInvocationException tie) {
+                        var inner = tie.InnerException;
+                        Console.WriteLine($"[SdvLoad] Main() threw: {inner?.GetType().Name}: {inner?.Message}");
+                        if (inner?.StackTrace != null)
+                            foreach (var line in inner.StackTrace.Split('\n').Take(10))
+                                Console.WriteLine($"  {line.Trim()}");
+                        Console.WriteLine("[SdvLoad] === EXPECTED FAILURE ===");
+                    }
+                }
+            } else {
+                Console.WriteLine("[SdvLoad] Program type not found");
+            }
         }
-        catch (Exception ex)
-        {
+        catch (Exception ex) {
             Console.WriteLine($"[SdvLoad] FATAL: {ex.GetType().Name}: {ex.Message}");
-            Console.WriteLine(ex.StackTrace?.Split('\n').Take(5).Aggregate("", (a, b) => a + b + "\n"));
+            if (ex.StackTrace != null)
+                foreach (var line in ex.StackTrace.Split('\n').Take(5))
+                    Console.WriteLine($"  {line.Trim()}");
         }
         return 0;
     }
