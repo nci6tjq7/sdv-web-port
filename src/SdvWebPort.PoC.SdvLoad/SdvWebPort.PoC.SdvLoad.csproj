@@ -18,6 +18,16 @@
     <ProjectReference Include="..\MonoGame.Framework.Facade\MonoGame.Framework.Facade.csproj" />
   </ItemGroup>
 
+  <!-- KNI Blazor.GL platform — provides ConcreteGameFactory + ConcreteInputFactory.
+       Required BEFORE any Game instantiation. Without this, Game1's constructor
+       fails because there's no graphics backend registered. -->
+  <ItemGroup>
+    <PackageReference Include="nkast.Kni.Platform.Blazor.GL" Version="4.2.9001.2" />
+    <PackageReference Include="nkast.Wasm.Canvas" Version="10.0.0" />
+    <PackageReference Include="nkast.Xna.Framework.Audio" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Media" Version="4.2.9001" />
+  </ItemGroup>
+
   <!-- Prevent the trimmer from removing the MonoGame.Framework facade AND
        the KNI assemblies that the facade forwards to.
 
@@ -33,6 +43,7 @@
     <TrimmerRootAssembly Include="Xna.Framework.Graphics" />
     <TrimmerRootAssembly Include="Xna.Framework.Content" />
     <TrimmerRootAssembly Include="Xna.Framework.Input" />
+    <TrimmerRootAssembly Include="Kni.Platform" />
   </ItemGroup>
 
   <!-- User-supplied SDV DLL — gitignored, copied to wwwroot at build time if present -->
