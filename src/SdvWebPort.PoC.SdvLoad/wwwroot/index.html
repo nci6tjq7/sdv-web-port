@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SdvWebPort PoC — SDV DLL Load</title>
+  <style>
+    body { margin:0; padding:20px; background:#1a1a1a; color:#eee; font-family:sans-serif; }
+    #log { padding:10px; background:#2a2a2a; border-radius:4px; font-family:monospace; font-size:12px; max-height:600px; overflow-y:auto; white-space:pre-wrap; }
+  </style>
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+</head>
+<body>
+  <h2>SdvWebPort PoC — Load Real Stardew Valley.dll in Browser</h2>
+  <div id="log">[boot] Loading...</div>
+  <script>
+    const logEl = document.getElementById('log');
+    const origLog = console.log;
+    console.log = function(...args) { origLog.apply(console, args); try { logEl.textContent += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\n'; logEl.scrollTop = logEl.scrollHeight; } catch(e){} };
+    window.addEventListener('error', (e) => { logEl.textContent += '[error] ' + (e.message||e.error) + '\n'; });
+    globalThis.getCurrentBaseUrl = function() { return window.location.href; };
+  </script>
+  <script type='module' src="main#[.{fingerprint}].js"></script>
+</body>
+</html>
