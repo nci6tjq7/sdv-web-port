@@ -1,0 +1,17 @@
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  LONG-TERM PROJECT — READ MEMORY.md FIRST                       │
+# │                                                                 │
+# │  This is the SDV Web Port project (browser-based Stardew        │
+# │  Valley via WebAssembly). It is a multi-phase, long-running     │
+# │  effort. Before doing ANY work, read:                           │
+# │                                                                 │
+# │    /home/z/my-project/MEMORY.md   ← project memory (required)   │
+# │    /home/z/my-project/worklog.md  ← chronological work log      │
+# │    /home/z/my-project/AGENTS.md   ← agent guidelines            │
+# │                                                                 │
+# │  These files are committed to git and pushed to GitHub, so      │
+# │  they survive session resets.                                   │
+# │                                                                 │
+# │  GitHub: https://github.com/nci6tjq7/sdv-web-port (private)     │
+# │  Latest tag: v0.7.0-facade-works                                │
+# └─────────────────────────────────────────────────────────────────┘
