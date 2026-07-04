@@ -4,14 +4,8 @@ if (typeof globalThis.Module === 'undefined' && api.Module) globalThis.Module = 
 if (typeof globalThis.Blazor === 'undefined') {
     globalThis.Blazor = {
         runtime: { Module: globalThis.Module },
-        platform: {
-            getArrayEntryPtr: function(arr, index, elemSize) {
-                // Return a pointer into the WASM heap for the array element
-                // In the new SDK, we use the Module's HEAP buffers
-                return arr.byteOffset + index * elemSize;
-            }
-        }
+        platform: { getArrayEntryPtr: function(arr, i, s) { return arr.byteOffset + i * s; } }
     };
 }
-console.log('[boot] Module + Blazor stub ready');
+console.log('[boot] Ready');
 await api.runMain();
