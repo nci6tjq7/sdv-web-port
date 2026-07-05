@@ -188,7 +188,10 @@ public static class SdvFileSystemRewriter
             };
             foreach (var asmRef in module.AssemblyReferences)
             {
-                if (asmRef.Version != null && asmRef.Version.Major < 8 &&
+                // Fix System.* v6 → v8 (facade redirect or version fix)
+                // BUT skip HashFunction — SDV references v1.8.2.2, NuGet has exact match
+                var isHashFunction = asmRef.Name.Contains("HashFunction");
+                if (!isHashFunction && asmRef.Version != null && asmRef.Version.Major < 8 &&
                     (asmRef.Name.StartsWith("System.") || asmRef.Name == "System" ||
                      asmRef.Name == "netstandard" || asmRef.Name == "mscorlib"))
                 {
@@ -197,10 +200,6 @@ public static class SdvFileSystemRewriter
 
                     if (facadeAssemblies.Contains(asmRef.Name))
                     {
-                        // Redirect facade → CoreLib (types are actually defined there)
-                        // Also fix PublicKeyToken: SDV's ref has b03f5f7f11d50a3a (System.Runtime's
-                        // token), but CoreLib uses 7cec85d7bea7798e. Without matching the token,
-                        // the WASM runtime rejects the assembly reference.
                         asmRef.Name = "System.Private.CoreLib";
                         asmRef.Version = new Version(8, 0, 0, 0);
                         asmRef.PublicKeyToken = new byte[] { 0x7c, 0xec, 0x85, 0xd7, 0xbe, 0xa7, 0x79, 0x8e };
@@ -208,12 +207,15 @@ public static class SdvFileSystemRewriter
                     }
                     else
                     {
-                        // Just fix version (standalone assembly with its own types)
                         asmRef.Version = new Version(8, 0, 0, 0);
                         Console.WriteLine($"[Rewriter] AssemblyRef: {oldName} v{oldVersion} → v8.0.0.0 (version fix)");
                     }
                     asmRefRewrites++;
                 }
+
+                // Fix HashFunction version: SDV references v1.8.2.2 / v1.0.0.2,
+                // NuGet has exact matching versions. Fix version if different from what's installed.
+                // (No version change needed — using exact SDV-matching versions now)
             }
             if (asmRefRewrites > 0)
                 Console.WriteLine($"[Rewriter] Rewrote {asmRefRewrites} AssemblyRef entries");

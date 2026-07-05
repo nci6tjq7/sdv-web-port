@@ -4,11 +4,14 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Phase 2.8: Disable trimming — real SDV references many System.* assemblies
-         and rare generic types (Action`7) that the trimmer would strip. -->
-    <PublishTrimmed>false</PublishTrimmed>
-    <TrimMode>none</TrimMode>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
   </PropertyGroup>
+
+  <!-- ILLink XML file to preserve Action`7 in CoreLib -->
+  <ItemGroup>
+    <TrimmerRootDescriptor Include="ILLink.xml" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.18" />
@@ -65,7 +68,8 @@
        would otherwise strip. Add as PackageReferences so they're included in the bundle. -->
   <ItemGroup>
     <PackageReference Include="System.Xml.XmlSerializer" Version="4.3.0" />
-    <PackageReference Include="System.Data.HashFunction.xxHash" Version="2.0.0" />
+    <PackageReference Include="System.Data.HashFunction.xxHash" Version="1.8.2.2" />
+    <PackageReference Include="System.Data.HashFunction.Interfaces" Version="1.0.0.2" />
   </ItemGroup>
 
 </Project>
