@@ -129,16 +129,42 @@ public static class SdvFileSystemRewriter
             // 2. Other System.* → just fix version to 8.0.0.0 (these are standalone assemblies
             //    with their own type definitions; version fix is sufficient)
             int asmRefRewrites = 0;
-            // Known facade assemblies that forward ALL their types to CoreLib:
+            // Known facade assemblies that forward ALL their types to CoreLib.
+            // IMPORTANT: Only include assemblies that are TRUE facades (no type definitions
+            // of their own). System.Collections has Stack<T>, System.Threading has Thread, etc.
+            // — these are NOT facades and must NOT be redirected to CoreLib.
+            // Verified via: typeof(Stack<>).Assembly.GetName() → System.Collections (not CoreLib)
             var facadeAssemblies = new HashSet<string>
             {
-                "System.Runtime", "System.Collections", "System.Threading",
-                "System.Reflection", "System.Diagnostics.Debug", "System.Globalization",
-                "System.Resources.ResourceManager", "System.Runtime.Extensions",
-                "System.Runtime.InteropServices", "System.Text.Encoding",
-                "System.Text.Encoding.Extensions", "System.Threading.Tasks",
-                "System.Runtime.Loader", "System.Threading.ThreadPool",
-                "System.ObjectModel", "System.ComponentModel",
+                "System.Runtime",               // facade → CoreLib (all types forwarded)
+                "System.Runtime.Extensions",    // facade → CoreLib
+                "System.Runtime.InteropServices", // facade → CoreLib
+                "System.Runtime.Loader",        // facade → CoreLib
+                "System.Diagnostics.Debug",     // facade → CoreLib
+                "System.Diagnostics.StackTrace", // facade → CoreLib
+                "System.Diagnostics.Process",   // facade → CoreLib
+                "System.Globalization",         // facade → CoreLib
+                "System.Resources.ResourceManager", // facade → CoreLib
+                "System.Reflection",            // facade → CoreLib
+                "System.Reflection.Primitives", // facade → CoreLib
+                "System.Reflection.Emit",       // facade → CoreLib
+                "System.Reflection.Emit.Lightweight", // facade → CoreLib
+                "System.Reflection.Emit.ILGeneration", // facade → CoreLib
+                "System.Text.Encoding",         // facade → CoreLib
+                "System.Text.Encoding.Extensions", // facade → CoreLib
+                "System.Threading.ThreadPool",  // facade → CoreLib
+                // NOT facades (have own type definitions):
+                // System.Collections (Stack<T>, Dictionary<T> etc.)
+                // System.Threading (Thread, Monitor etc.)
+                // System.Threading.Tasks (Task etc.)
+                // System.Linq (Enumerable etc.)
+                // System.Text.RegularExpressions (Regex etc.)
+                // System.ObjectModel
+                // System.ComponentModel
+                // System.Console
+                // System.Net.Primitives
+                // System.Xml.* 
+                // System.Data.*
             };
             foreach (var asmRef in module.AssemblyReferences)
             {
@@ -152,9 +178,13 @@ public static class SdvFileSystemRewriter
                     if (facadeAssemblies.Contains(asmRef.Name))
                     {
                         // Redirect facade → CoreLib (types are actually defined there)
+                        // Also fix PublicKeyToken: SDV's ref has b03f5f7f11d50a3a (System.Runtime's
+                        // token), but CoreLib uses 7cec85d7bea7798e. Without matching the token,
+                        // the WASM runtime rejects the assembly reference.
                         asmRef.Name = "System.Private.CoreLib";
                         asmRef.Version = new Version(8, 0, 0, 0);
-                        Console.WriteLine($"[Rewriter] AssemblyRef: {oldName} v{oldVersion} → System.Private.CoreLib v8.0.0.0 (facade)");
+                        asmRef.PublicKeyToken = new byte[] { 0x7c, 0xec, 0x85, 0xd7, 0xbe, 0xa7, 0x79, 0x8e };
+                        Console.WriteLine($"[Rewriter] AssemblyRef: {oldName} v{oldVersion} → System.Private.CoreLib v8.0.0.0 (facade + PKT fix)");
                     }
                     else
                     {

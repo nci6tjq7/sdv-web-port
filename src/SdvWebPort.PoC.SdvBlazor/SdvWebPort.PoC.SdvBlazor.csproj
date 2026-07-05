@@ -4,6 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Phase 2.8: Disable trimming — real SDV references many System.* assemblies
+         that the trimmer would strip. Bundle is larger but SDV types resolve correctly. -->
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>
@@ -55,6 +58,13 @@
     <TrimmerRootAssembly Include="Xna.Framework.Content" />
     <TrimmerRootAssembly Include="Xna.Framework.Input" />
     <TrimmerRootAssembly Include="Kni.Platform" />
+  </ItemGroup>
+
+  <!-- Phase 2.8: Real SDV needs these System.* assemblies that Blazor's trimmer
+       would otherwise strip. Add as PackageReferences so they're included in the bundle. -->
+  <ItemGroup>
+    <PackageReference Include="System.Xml.XmlSerializer" Version="4.3.0" />
+    <PackageReference Include="System.Data.HashFunction.xxHash" Version="2.0.0" />
   </ItemGroup>
 
 </Project>

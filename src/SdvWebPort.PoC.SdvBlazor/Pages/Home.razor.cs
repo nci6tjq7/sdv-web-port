@@ -258,15 +258,51 @@ internal sealed class SdvLoadContext : AssemblyLoadContext
     {
         var name = assemblyName.Name ?? "";
 
-        // Framework assemblies: redirect to CoreLib (where types are actually defined)
+        // Framework assemblies: redirect facades to CoreLib, return runtime versions for others
         if (name.StartsWith("System.") || name == "System" || name == "mscorlib" || name == "netstandard")
         {
+            // First try CoreLib (for facade types like System.Guid, System.IComparable)
             var coreLib = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == "System.Private.CoreLib");
-            if (coreLib != null) return coreLib;
+            // For facade assemblies (System.Runtime etc.), return CoreLib directly
+            var facadeSet = new HashSet<string> {
+                "System.Runtime", "System.Runtime.Extensions", "System.Runtime.InteropServices",
+                "System.Runtime.Loader", "System.Diagnostics.Debug", "System.Diagnostics.StackTrace",
+                "System.Diagnostics.Process", "System.Globalization", "System.Resources.ResourceManager",
+                "System.Reflection", "System.Reflection.Primitives", "System.Reflection.Emit",
+                "System.Reflection.Emit.Lightweight", "System.Reflection.Emit.ILGeneration",
+                "System.Text.Encoding", "System.Text.Encoding.Extensions", "System.Threading.ThreadPool",
+                // Phase 2.8: these are also facades that forward to System.Private.Xml / System.Private.CoreLib
+                "System.Xml.ReaderWriter", "System.Xml.XmlSerializer", "System.Threading",
+                "System.Threading.Thread", "System.Threading.Tasks", "System.Linq",
+                "System.Linq.Expressions", "System.Net.Primitives", "System.Net.NameResolution",
+                "System.Console", "System.ComponentModel", "System.ObjectModel",
+                "System.Collections.Concurrent",
+            };
+            if (facadeSet.Contains(name) && coreLib != null)
+                return coreLib;
+
+            // For non-facade System.* (System.Collections, System.Xml.*, System.Linq, etc.)
+            // return the runtime's already-loaded version (matching by name, ignoring version)
             var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == name);
-            if (runtimeAsm != null) return runtimeAsm;
+            if (runtimeAsm != null)
+            {
+                Console.WriteLine($"[SdvLoadContext] {name} → runtime {runtimeAsm.GetName().Version}");
+                return runtimeAsm;
+            }
+            // Not found in runtime — try fuzzy match (e.g., System.Xml.ReaderWriter → System.Xml)
+            // Blazor WASM bundles some assemblies under different names
+            var fuzzyMatch = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name.StartsWith(name) || name.StartsWith(a.GetName().Name));
+            if (fuzzyMatch != null)
+            {
+                Console.WriteLine($"[SdvLoadContext] {name} → fuzzy match {fuzzyMatch.GetName().Name}");
+                return fuzzyMatch;
+            }
+            Console.WriteLine($"[SdvLoadContext] WARN: {name} not found in runtime — trying CoreLib");
+            // If not found by exact name, try CoreLib as fallback
+            if (coreLib != null) return coreLib;
         }
 
         // MonoGame.Framework → facade
@@ -275,6 +311,18 @@ internal sealed class SdvLoadContext : AssemblyLoadContext
             var facade = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == "MonoGame.Framework");
             if (facade != null) return facade;
+        }
+
+        // KNI assemblies (Xna.Framework.*) — return runtime's already-loaded versions
+        if (name.StartsWith("Xna.Framework."))
+        {
+            var kniAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == name);
+            if (kniAsm != null)
+            {
+                Console.WriteLine($"[SdvLoadContext] KNI resolve: {name}");
+                return kniAsm;
+            }
         }
 
         // SDV dependencies — return pre-loaded bytes (fetched before ALC.Load)
