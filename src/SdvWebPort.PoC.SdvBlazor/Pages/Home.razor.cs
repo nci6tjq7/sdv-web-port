@@ -36,10 +36,24 @@ public partial class Home : ComponentBase
 
         if (firstRender)
         {
-            // Register this component as a .NET object reference so JS can call
-            // back into our TickDotNet method via invokeMethodAsync('TickDotNet').
-            // This is the KNI Blazor pattern (Phase 2.5b): the game loop is
-            // driven by JS requestAnimationFrame, not by Game.Run() blocking.
+            // Register an ALC.Resolving handler that maps .NET 6 version refs → .NET 8.
+            // Real SDV references System.Runtime v6.0.0.0; our runtime is v8.0.0.0.
+            // AppDomain.AssemblyResolve doesn't fire in Blazor WASM — use ALC.Resolving.
+            AssemblyLoadContext.Default.Resolving += (context, name) =>
+            {
+                if (name.Version != null && name.Version.Major < 8)
+                {
+                    var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
+                        .FirstOrDefault(a => a.GetName().Name == name.Name);
+                    if (runtimeAsm != null)
+                    {
+                        Console.WriteLine($"[ALC.Resolving] {name.Name} v{name.Version} → {runtimeAsm.GetName().Version}");
+                        return runtimeAsm;
+                    }
+                }
+                return null;
+            };
+
             JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
         }
     }
@@ -139,12 +153,29 @@ public partial class Home : ComponentBase
         }
         Console.WriteLine($"[+] Facade assembly: {facadeAssembly.FullName}");
 
-        // 5. Load the rewritten SDV DLL into the DEFAULT ALC.
+        // 5. Pre-fetch SDV dependencies before loading SDV.
+        //    ALC.Load is sync — can't do async HttpClient in WASM.
+        Console.WriteLine("[+] Pre-fetching SDV dependencies...");
+        var deps = new Dictionary<string, byte[]>();
+        foreach (var depName in new[] { "xTile", "StardewValley.GameData" })
+        {
+            try
+            {
+                var depUri = new Uri(new Uri(HostEnv.BaseAddress), $"{depName}.dll");
+                var depBytes = await _http!.GetByteArrayAsync(depUri);
+                Console.WriteLine($"[+] Fetched {depName}.dll: {depBytes.Length:N0} bytes");
+                deps[depName] = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(depBytes);
+            }
+            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch {depName}.dll: {ex.Message}"); }
+        }
+
+        // 6. Load the rewritten SDV DLL into a CUSTOM ALC with pre-loaded deps.
         Assembly sdvAsm;
         try
         {
-            Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
-            sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenBytes));
+            Console.WriteLine("[+] Loading rewritten SDV into SdvLoadContext...");
+            var alc = new SdvLoadContext(deps);
+            sdvAsm = alc.LoadFromStream(new MemoryStream(rewrittenBytes));
             Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
         }
         catch (Exception ex)
@@ -154,15 +185,34 @@ public partial class Home : ComponentBase
         }
 
         // 6. Find the Game type via reflection.
-        //    Try FileSystemTestGame first (for Phase 2.75 testing), fall back to Game1.
-        Type? gameType = sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.FileSystemTestGame")
-                         ?? sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        // Use GetType(string) instead of GetTypes() — GetType lazily resolves
+        // only the requested type, while GetTypes() eagerly resolves ALL type
+        // references (which fails for System.Guid in System.Runtime v6.0.0.0).
+        Type? gameType = sdvAsm.GetType("StardewValley.FileSystemTestGame")
+                         ?? sdvAsm.GetType("StardewValley.Game1");
         if (gameType == null)
         {
-            Console.WriteLine("[FAIL] No Game type found in SDV assembly");
-            foreach (var t in sdvAsm.GetTypes().Take(20))
-                Console.WriteLine($"    - {t.FullName}");
-            return null;
+            Console.WriteLine("[FAIL] No Game type found via GetType. Trying GetTypes() with catch...");
+            // Last resort: try GetTypes() with per-type error handling
+            Type[] allTypes;
+            try
+            {
+                allTypes = sdvAsm.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                allTypes = ex.Types.Where(t => t != null).ToArray()!;
+                Console.WriteLine($"[!] Partial type load: {allTypes.Length} OK, {ex.Types.Length - allTypes.Length} failed");
+            }
+            gameType = allTypes.FirstOrDefault(t => t.FullName == "StardewValley.FileSystemTestGame")
+                     ?? allTypes.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+            if (gameType == null)
+            {
+                Console.WriteLine("[FAIL] No Game type found. Types found:");
+                foreach (var t in allTypes.Take(20))
+                    Console.WriteLine($"    - {t.FullName}");
+                return null;
+            }
         }
         Console.WriteLine($"[+] Found: {gameType.FullName}");
         Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
@@ -184,5 +234,59 @@ public partial class Home : ComponentBase
         }
 
         return (Game?)gameInstance;
+    }
+}
+
+/// <summary>
+/// Custom AssemblyLoadContext that resolves framework assembly references
+/// (System.*, mscorlib, netstandard) by returning the runtime's already-loaded
+/// versions. This solves the cross-ALC type resolution issue in Blazor WASM:
+/// the runtime's System.Runtime is in a different internal ALC, and dynamically
+/// loaded assemblies can't reference its types without this bridge.
+/// </summary>
+internal sealed class SdvLoadContext : AssemblyLoadContext
+{
+    private readonly Dictionary<string, byte[]> _preloadedDeps;
+    private readonly Dictionary<string, Assembly> _loaded = new();
+
+    public SdvLoadContext(Dictionary<string, byte[]> preloadedDeps) : base("SdvLoadContext", isCollectible: false)
+    {
+        _preloadedDeps = preloadedDeps;
+    }
+
+    protected override Assembly? Load(AssemblyName assemblyName)
+    {
+        var name = assemblyName.Name ?? "";
+
+        // Framework assemblies: redirect to CoreLib (where types are actually defined)
+        if (name.StartsWith("System.") || name == "System" || name == "mscorlib" || name == "netstandard")
+        {
+            var coreLib = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "System.Private.CoreLib");
+            if (coreLib != null) return coreLib;
+            var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == name);
+            if (runtimeAsm != null) return runtimeAsm;
+        }
+
+        // MonoGame.Framework → facade
+        if (name == "MonoGame.Framework")
+        {
+            var facade = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "MonoGame.Framework");
+            if (facade != null) return facade;
+        }
+
+        // SDV dependencies — return pre-loaded bytes (fetched before ALC.Load)
+        if (_preloadedDeps.TryGetValue(name, out var depBytes))
+        {
+            if (_loaded.TryGetValue(name, out var cached)) return cached;
+            Console.WriteLine($"[SdvLoadContext] Loading pre-fetched: {name}");
+            var asm = LoadFromStream(new MemoryStream(depBytes));
+            _loaded[name] = asm;
+            return asm;
+        }
+
+        return null;
     }
 }

@@ -74,8 +74,11 @@ public static class SdvFileSystemRewriter
     {
         Console.WriteLine($"[Rewriter] Loading assembly ({assemblyBytes.Length:N0} bytes)");
         using var inputMs = new MemoryStream(assemblyBytes);
+
+        // Custom resolver that maps .NET 6 version refs → .NET 8 runtime.
+        // Real SDV references System.Runtime v6.0.0.0; our runtime is v8.0.0.0.
+        // Without this mapping, Cecil's Write() fails with AssemblyResolutionException.
         var resolver = new DefaultAssemblyResolver();
-        // Cecil needs to resolve references to System.IO.File etc. — use the current AppDomain.
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             try
@@ -86,15 +89,122 @@ public static class SdvFileSystemRewriter
             }
             catch { /* skip */ }
         }
+
+        // Register a custom resolve handler that maps version 6.0.0.0 → 8.0.0.0
+        // for framework assemblies (System.Runtime, System.Collections, etc.)
+        resolver.ResolveFailure += (sender, name) =>
+        {
+            // If the requested version is 6.0.0.0 or similar, try loading the
+            // current runtime's version (which may have a different version number)
+            if (name.Version != null && name.Version.Major < 8)
+            {
+                Console.WriteLine($"[Rewriter] Resolving {name.Name} v{name.Version} → trying runtime version");
+                var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == name.Name);
+                if (runtimeAsm != null)
+                {
+                    Console.WriteLine($"[Rewriter] Found {name.Name} in runtime: {runtimeAsm.FullName}");
+                    return AssemblyDefinition.ReadAssembly(
+                        runtimeAsm.Location,
+                        new ReaderParameters { AssemblyResolver = resolver });
+                }
+            }
+            return null;
+        };
+
         var parameters = new ReaderParameters { AssemblyResolver = resolver };
         using var asmDef = AssemblyDefinition.ReadAssembly(inputMs, parameters);
 
         int totalRewrites = 0;
         foreach (var module in asmDef.Modules)
         {
+            // Rewrite AssemblyRef entries for framework assemblies.
+            // Real SDV (compiled against .NET 6) references System.Runtime v6.0.0.0 etc.
+            // Our WASM runtime is .NET 8 (v8.0.0.0).
+            //
+            // Two strategies:
+            // 1. System.Runtime → redirect to System.Private.CoreLib (where types are actually
+            //    defined; System.Runtime is a facade and the WASM native type loader doesn't
+            //    follow type forwarders for dynamically loaded assemblies)
+            // 2. Other System.* → just fix version to 8.0.0.0 (these are standalone assemblies
+            //    with their own type definitions; version fix is sufficient)
+            int asmRefRewrites = 0;
+            // Known facade assemblies that forward ALL their types to CoreLib:
+            var facadeAssemblies = new HashSet<string>
+            {
+                "System.Runtime", "System.Collections", "System.Threading",
+                "System.Reflection", "System.Diagnostics.Debug", "System.Globalization",
+                "System.Resources.ResourceManager", "System.Runtime.Extensions",
+                "System.Runtime.InteropServices", "System.Text.Encoding",
+                "System.Text.Encoding.Extensions", "System.Threading.Tasks",
+                "System.Runtime.Loader", "System.Threading.ThreadPool",
+                "System.ObjectModel", "System.ComponentModel",
+            };
+            foreach (var asmRef in module.AssemblyReferences)
+            {
+                if (asmRef.Version != null && asmRef.Version.Major < 8 &&
+                    (asmRef.Name.StartsWith("System.") || asmRef.Name == "System" ||
+                     asmRef.Name == "netstandard" || asmRef.Name == "mscorlib"))
+                {
+                    var oldName = asmRef.Name;
+                    var oldVersion = asmRef.Version;
+
+                    if (facadeAssemblies.Contains(asmRef.Name))
+                    {
+                        // Redirect facade → CoreLib (types are actually defined there)
+                        asmRef.Name = "System.Private.CoreLib";
+                        asmRef.Version = new Version(8, 0, 0, 0);
+                        Console.WriteLine($"[Rewriter] AssemblyRef: {oldName} v{oldVersion} → System.Private.CoreLib v8.0.0.0 (facade)");
+                    }
+                    else
+                    {
+                        // Just fix version (standalone assembly with its own types)
+                        asmRef.Version = new Version(8, 0, 0, 0);
+                        Console.WriteLine($"[Rewriter] AssemblyRef: {oldName} v{oldVersion} → v8.0.0.0 (version fix)");
+                    }
+                    asmRefRewrites++;
+                }
+            }
+            if (asmRefRewrites > 0)
+                Console.WriteLine($"[Rewriter] Rewrote {asmRefRewrites} AssemblyRef entries");
+
             totalRewrites += RewriteModule(module);
         }
         Console.WriteLine($"[Rewriter] Total rewrites: {totalRewrites}");
+
+        // Remove all parameter constants (default parameter values) before Write.
+        // Cecil's Write() tries to resolve the type of each constant, which fails
+        // for System.Runtime v6.0.0.0 types in WASM (only v8.0.0.0 available).
+        // Removing constants is safe — default parameter values are not needed
+        // for our use case (we're only rewriting File/Directory calls, not signatures).
+        int constantsRemoved = 0;
+        foreach (var module in asmDef.Modules)
+        {
+            foreach (var type in module.GetTypes())
+            {
+                foreach (var method in type.Methods)
+                {
+                    foreach (var param in method.Parameters)
+                    {
+                        if (param.HasConstant)
+                        {
+                            param.Constant = null;
+                            constantsRemoved++;
+                        }
+                    }
+                    // Also remove property constants
+                    if (method.HasBody)
+                    {
+                        foreach (var var in method.Body.Variables)
+                        {
+                            // Don't remove variable types, just constants
+                        }
+                    }
+                }
+            }
+        }
+        if (constantsRemoved > 0)
+            Console.WriteLine($"[Rewriter] Removed {constantsRemoved} parameter constants (prevents type resolution during Write)");
 
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
