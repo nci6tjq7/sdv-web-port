@@ -5,8 +5,8 @@
 > **Any agent resuming work on this project MUST read this file FIRST, before
 > doing anything else.**
 >
-> Last updated: 2026-07-05 (Phase 2.75 — Cecil FS redirect works, VFS-backed SDV renders)
-> Current state: Phase 2.75 complete (v1.1.0-sdv-fs-redirect). Next: test with real GOG SDV.dll + Phase 3 (SMAPI).
+> Last updated: 2026-07-05 (post-Phase 2.75 health check — spec v2 + code review + retrospective)
+> Current state: Phase 2.75 complete (v1.1.0-sdv-fs-redirect) + health check done. Next: Phase 2.8 with subagent-driven-development.
 
 ---
 
@@ -682,3 +682,125 @@ When completing a phase or making a major architectural decision:
 6. Push to GitHub
 
 **This file is the project's institutional memory. Keep it current.**
+
+---
+
+## Retrospective: Phase 0 → Phase 2.75 (2026-07-05)
+
+### What went well
+
+1. **MEMORY.md persistence layer** — solved the session-reset context loss
+   problem. Future agents can resume from git + GitHub even with zero
+   conversation history.
+
+2. **systematic-debugging skill** — Phase 2.5→2.5b architecture pivot was
+   driven by the 4-phase root-cause process, not guessing. Discovered
+   `StartGameLoop()` empty stub by reading KNI source on GitHub.
+
+3. **writing-plans skill** — every phase had a plan document. Plans caught
+   scope creep and forced decomposition into bite-sized tasks.
+
+4. **TDD for Rewriter** — 3 (now 7) unit tests caught the Cecil return-type
+   bug early. Tests verify IL structure correctness, not just "didn't throw."
+
+5. **Frequent commits + tags** — 9 version tags (v0.1.0 → v1.1.0) give
+   clear rollback points. Every phase is a recoverable checkpoint.
+
+6. **Headless browser verification** — every rendering PoC verified via
+   Playwright + sharp pixel analysis, not just console.log. Real evidence
+   (477,500 CornflowerBlue pixels) vs assertions.
+
+### What went wrong (and lessons)
+
+1. **Phase 2.5 .NET 10 dead end (3+ days wasted)**
+   - **What:** Assumed KNI works on .NET 10 `Microsoft.NET.Sdk.WebAssembly`.
+     Spent 5 shim attempts before discovering KNI only supports net8.0
+     BlazorWebAssembly.
+   - **Root cause:** No upfront research on KNI's SDK compatibility. v1 spec
+     assumed .NET 10 without verifying.
+   - **Lesson:** Before committing to a tech stack, verify third-party
+     compatibility by checking the library's target framework + sample
+     templates. KNI's BlazorGL template clearly shows `net8.0` +
+     `Microsoft.NET.Sdk.BlazorWebAssembly`.
+   - **Action:** spec v2 now documents this; risk R3 reassessed down (net8.0
+     is mature LTS).
+
+2. **No code review until Phase 2.75 health check (50+ commits unreviewed)**
+   - **What:** From Phase 0 to 2.75, no agent reviewed the code. Code review
+     found 6 Important + 10 Minor issues, including a logic bug
+     (`DirectoryExists` always-true) and a broken fallback method.
+   - **Root cause:** "不停推进" mindset — kept moving forward without
+     stopping to verify quality.
+   - **Lesson:** Code review is not optional. The `requesting-code-review`
+     skill exists for a reason. Review after each major feature, not after
+     5 features.
+   - **Action:** Phase 2.8+ will use `subagent-driven-development` with
+     review after EACH task.
+
+3. **Brainstorming skipped — all decisions made unilaterally**
+   - **What:** Every phase's approach was chosen by the main agent without
+     the "one question at a time" dialogue the brainstorming skill prescribes.
+   - **Root cause:** User said "按推荐推进" so I just picked an approach
+     and executed.
+   - **Lesson:** "按推荐推进" means "use your judgment on the recommendation,"
+     not "skip design exploration." Even a 5-minute brainstorming dialogue
+     would have surfaced the .NET 10 risk before wasting 3 days.
+   - **Action:** For Phase 2.8+, present 2-3 options with trade-offs even
+     when user says "按推荐推进."
+
+4. **Test coverage too narrow**
+   - **What:** Only Rewriter had tests (3/7 entries covered). SdvFileShim,
+     Home.razor.cs, facade integrity — all untested.
+   - **Root cause:** Rushed to "make it work" without "make it correct."
+   - **Lesson:** TDD isn't just for one component. Every public method
+     should have at least one test.
+   - **Action:** Phase 2.8 includes test coverage for SdvFileShim + facade.
+
+5. **Technical debt accumulated (9 projects, some stale)**
+   - **What:** PoC.SdvLoad, PoC.Render, PoC.VfsRender, PoC.SmapiLoad, Runtime
+     are all stale (superseded by SdvBlazor). Nobody cleaned up.
+   - **Root cause:** No `finishing-a-development-branch` discipline.
+   - **Lesson:** Each phase should end with cleanup: mark/branch/archive
+     superseded PoCs.
+   - **Action:** spec v2 §17 lists stale projects; Phase 2.8 will archive them.
+
+6. **Spec document not updated through 7 phases**
+   - **What:** v1 spec (823 lines) was Phase 0 era. 3 core assumptions were
+     wrong by Phase 2.5b but nobody updated it.
+   - **Root cause:** "Keep moving" mindset — documentation felt less urgent
+     than code.
+   - **Lesson:** Spec is the source of truth. If it's wrong, every future
+     agent inherits the wrong assumptions.
+   - **Action:** spec v2 written; risk register reassessed; v1 marked
+     historical. Update spec at every phase boundary going forward.
+
+### Process improvements for Phase 2.8+
+
+1. **Use `subagent-driven-development`** — fresh subagent per task, review
+   between tasks. Prevents context bloat + catches issues early.
+
+2. **Brainstorm before planning** — even for "按推荐推进," present 2-3
+   options with trade-offs and get explicit approval on the approach.
+
+3. **Code review after each task** — not after each phase. Use
+   `requesting-code-review` skill's template.
+
+4. **Update spec at phase boundaries** — not after 7 phases pile up.
+
+5. **TDD for all new code** — every public method gets a test. No exceptions.
+
+6. **End each phase with `finishing-a-development-branch`** — merge, cleanup,
+   archive superseded code.
+
+7. **Retrospective at phase boundaries** — what went well, what didn't,
+   what to change. Write it into this section.
+
+### Metrics
+
+- Phases completed: 0, 1a, 1b, 1c, 2, 2.5(partial), 2.5b, 2.6, 2.75 = 9
+- Tags: v0.1.0 → v1.1.0 = 9 releases
+- Commits: ~60
+- Projects: 11 (6 active, 5 stale)
+- Tests: 7 (all for Rewriter; 0 for other components — gap)
+- Code reviews: 1 (this health check; should have been 9)
+- Headless verifications: 4 (Phase 2, 2.5b, 2.6, 2.75)
