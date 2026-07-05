@@ -7,8 +7,8 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-[assembly: AssemblyVersion("3.8.5.0")]
-[assembly: AssemblyFileVersion("3.8.5.0")]
+[assembly: AssemblyVersion("3.8.0.1641")]
+[assembly: AssemblyFileVersion("3.8.0.1641")]
 
 
 [assembly: TypeForwardedTo(typeof(Microsoft.Xna.Platform.IFrameworkDispatcher))]

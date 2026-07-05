@@ -66,16 +66,12 @@ Console.WriteLine("//   ./scripts/generate-facade-types.sh");
 Console.WriteLine("using System.Reflection;");
 Console.WriteLine("using System.Runtime.CompilerServices;");
 Console.WriteLine("");
-// SDV was compiled against MonoGame.Framework — the AssemblyRef version
-// depends on which MonoGame.Framework package the user's GOG SDV was built
-// against. Real SDV 1.6.x uses 3.8.0.1641. For our MockSdv test target we
-// use 3.8.5-preview.6, which produces AssemblyRef version 3.8.5.0.
-// The CLR's binding rules don't enforce version on unsigned assemblies,
-// BUT the WASM metadata resolver appears to be stricter — so we set the
-// facade's AssemblyVersion to match the test target's AssemblyRef.
-// In production with real SDV, set this to 3.8.0.1641.
-Console.WriteLine("[assembly: AssemblyVersion(\"3.8.5.0\")]");
-Console.WriteLine("[assembly: AssemblyFileVersion(\"3.8.5.0\")]");
+// SDV was compiled against MonoGame.Framework — real GOG SDV v1.6.15 uses
+// v3.8.0.1641. The facade's AssemblyVersion should match to avoid any
+// potential version resolution issues (though unsigned assemblies are
+// generally not version-checked in practice — proven in Phase 2).
+Console.WriteLine("[assembly: AssemblyVersion(\"3.8.0.1641\")]");
+Console.WriteLine("[assembly: AssemblyFileVersion(\"3.8.0.1641\")]");
 Console.WriteLine("");
 Console.WriteLine("");
 
