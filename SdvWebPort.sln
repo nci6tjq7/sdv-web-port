@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SdvWebPort.PoC.SdvBlazor", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SdvWebPort.Rewriter", "src\SdvWebPort.Rewriter\SdvWebPort.Rewriter.csproj", "{2F070B0A-CAEC-4387-A63B-EC042AC55CF0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SdvWebPort.Rewriter.Tests", "tests\SdvWebPort.Rewriter.Tests\SdvWebPort.Rewriter.Tests.csproj", "{D0AD2858-A699-465F-BCE8-AC048DE0328D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -171,6 +173,18 @@ Global
 		{2F070B0A-CAEC-4387-A63B-EC042AC55CF0}.Release|x64.Build.0 = Release|Any CPU
 		{2F070B0A-CAEC-4387-A63B-EC042AC55CF0}.Release|x86.ActiveCfg = Release|Any CPU
 		{2F070B0A-CAEC-4387-A63B-EC042AC55CF0}.Release|x86.Build.0 = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|x64.Build.0 = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Debug|x86.Build.0 = Debug|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|x64.ActiveCfg = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|x64.Build.0 = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|x86.ActiveCfg = Release|Any CPU
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -187,5 +201,6 @@ Global
 		{0C684BEA-135E-495E-9233-5539CE7539DB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{ED502E9F-3FB7-4844-B16C-AE31AEEA972C} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{2F070B0A-CAEC-4387-A63B-EC042AC55CF0} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{D0AD2858-A699-465F-BCE8-AC048DE0328D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
