@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.JSInterop;
 using Microsoft.Xna.Framework;
 using System;
@@ -13,9 +14,19 @@ namespace SdvWebPort.PoC.SdvBlazor.Pages;
 
 public partial class Home : ComponentBase
 {
-    private static readonly HttpClient _http = new HttpClient();
+    private HttpClient? _http;
     private Game? _game;
     private bool _loadAttempted;
+
+    [Inject]
+    public IWebAssemblyHostEnvironment HostEnv { get; set; } = null!;
+
+    [Inject]
+    public HttpClient Http
+    {
+        get => _http!;
+        set => _http = value;
+    }
 
     // JsRuntime is injected via @inject in Home.razor — no need to redeclare here.
 
@@ -66,7 +77,7 @@ public partial class Home : ComponentBase
         }
     }
 
-    private static async Task<Game?> LoadAndInstantiateGame1()
+    private async Task<Game?> LoadAndInstantiateGame1()
     {
         // 1. Fetch "Stardew Valley.dll" from wwwroot.
         //    For testing, this is MockSdv.dll (a real Game1 subclass compiled against
@@ -74,11 +85,15 @@ public partial class Home : ComponentBase
         //    "Stardew Valley.dll" here.
         const string sdvUrl = "Stardew Valley.dll";
         Console.WriteLine($"[+] Fetching SDV from: {sdvUrl}");
+        Console.WriteLine($"[+] Base address: {HostEnv.BaseAddress}");
         byte[] sdvBytes;
         try
         {
-            // Use a relative URL — Blazor's HttpClient will resolve against the base address.
-            sdvBytes = await _http.GetByteArrayAsync(sdvUrl);
+            // Construct absolute URL from the host environment's base address
+            // (the relative URL alone fails with net_http_client_invalid_requesturi).
+            var absoluteUri = new Uri(new Uri(HostEnv.BaseAddress), sdvUrl);
+            Console.WriteLine($"[+] Absolute URL: {absoluteUri}");
+            sdvBytes = await _http!.GetByteArrayAsync(absoluteUri);
             Console.WriteLine($"[+] Fetched SDV: {sdvBytes.Length:N0} bytes");
         }
         catch (Exception ex)
