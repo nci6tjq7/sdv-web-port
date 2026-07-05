@@ -254,6 +254,13 @@ public static class SdvAssemblyRefRewriter
         // just need to get past the ctor to prove the game loop works.
         PatchGame1Cctor(asmDef);
 
+        // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
+        // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
+        // Func`6..`17 from System.Private.CoreLib. We define equivalent delegates
+        // in SdvWebPort.Vfs.DelegateReplacements and rewrite SDV's typerefs to
+        // point at them.
+        ReplaceMissingDelegates(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -405,6 +412,237 @@ public static class SdvAssemblyRefRewriter
         cctor.Body.ExceptionHandlers.Clear();
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Game1..cctor() → ret (no-op, {instrs.Count} instructions)");
+    }
+
+    /// <summary>
+    /// Rewrite high-arity Action/Func typerefs to use our replacement delegate types.
+    /// The BlazorWebAssembly trimmer strips Action`7..`16 and Func`6+1..`16+1 from
+    /// System.Private.CoreLib. We define equivalent delegates in
+    /// SdvWebPort.Vfs.DelegateReplacements and rewrite SDV's typerefs to point at them.
+    /// </summary>
+    private static void ReplaceMissingDelegates(AssemblyDefinition asmDef)
+    {
+        // Find SdvWebPort.Vfs assembly in AppDomain to import replacement types
+        var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+        if (vfsAsm == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SdvWebPort.Vfs not loaded — skipping delegate replacement");
+            return;
+        }
+
+        var replacementNamespace = "SdvWebPort.Vfs.DelegateReplacements";
+        var module = asmDef.MainModule;
+
+        // Build a cache of replacement TypeReferences by (delegateName, arity)
+        // delegateName is "Action" or "Func"
+        // arity is the number of generic parameters
+        var replacementCache = new Dictionary<(string Name, int Arity), TypeReference>();
+
+        TypeReference? GetReplacement(string name, int arity)
+        {
+            var key = (name, arity);
+            lock (replacementCache)
+            {
+                if (replacementCache.TryGetValue(key, out var cached))
+                    return cached;
+            }
+
+            // Build the full type name: e.g., "SdvWebPort.Vfs.DelegateReplacements.Action`7"
+            var fullName = replacementNamespace + "." + name + "`" + arity.ToString();
+            var replacementType = vfsAsm.GetType(fullName);
+            if (replacementType == null)
+                return null;
+
+            var typeRef = module.ImportReference(replacementType);
+            lock (replacementCache)
+            {
+                replacementCache[key] = typeRef;
+            }
+            return typeRef;
+        }
+
+        int rewrites = 0;
+
+        // Walk all typerefs in the module. We need to find GenericInstanceType
+        // instances whose ElementType is a TypeRef pointing at System.Action`N or
+        // System.Func`N with N in the stripped range.
+        //
+        // Stripped ranges (from WASM CoreLib diagnostic):
+        //   Action: arity 7-16 (Action`7 through Action`16)
+        //   Func: arity 6-17 (Func`6 through Func`17) — Func`N has N args + TResult
+        //
+        // We collect from: type fields, base types, interfaces, method signatures,
+        // method bodies (instructions with TypeReference operands).
+        var genericInstancesToRewrite = new List<GenericInstanceType>();
+
+        foreach (var type in module.GetTypes())
+        {
+            // Fields
+            foreach (var field in type.Fields)
+                CollectGenericInstances(field.FieldType, genericInstancesToRewrite);
+            // Base type + interfaces
+            if (type.BaseType != null)
+                CollectGenericInstances(type.BaseType, genericInstancesToRewrite);
+            foreach (var iface in type.Interfaces)
+                CollectGenericInstances(iface.InterfaceType, genericInstancesToRewrite);
+            // Properties + events
+            foreach (var prop in type.Properties)
+                CollectGenericInstances(prop.PropertyType, genericInstancesToRewrite);
+            foreach (var ev in type.Events)
+                CollectGenericInstances(ev.EventType, genericInstancesToRewrite);
+            // Methods: return type, parameter types, body instructions
+            foreach (var method in type.Methods)
+            {
+                if (method.ReturnType != null)
+                    CollectGenericInstances(method.ReturnType, genericInstancesToRewrite);
+                foreach (var param in method.Parameters)
+                    CollectGenericInstances(param.ParameterType, genericInstancesToRewrite);
+                if (method.HasBody)
+                {
+                    foreach (var instr in method.Body.Instructions)
+                    {
+                        if (instr.Operand is TypeReference tr)
+                            CollectGenericInstances(tr, genericInstancesToRewrite);
+                        if (instr.Operand is MethodReference mr && mr.DeclaringType != null)
+                            CollectGenericInstances(mr.DeclaringType, genericInstancesToRewrite);
+                        if (instr.Operand is FieldReference fr && fr.DeclaringType != null)
+                            CollectGenericInstances(fr.DeclaringType, genericInstancesToRewrite);
+                    }
+                    foreach (var local in method.Body.Variables)
+                        CollectGenericInstances(local.VariableType, genericInstancesToRewrite);
+                }
+            }
+        }
+
+        // Dedupe by reference identity (each GenericInstanceType is unique)
+        var seen = new HashSet<GenericInstanceType>();
+        foreach (var git in genericInstancesToRewrite)
+        {
+            if (!seen.Add(git)) continue;
+
+            // Check if this is a stripped delegate type
+            var elementType = git.ElementType;
+            if (elementType == null) continue;
+
+            string? delegateName = null;
+            int arity = git.GenericArguments.Count;
+
+            // elementType.FullName for Action`7 is "System.Action`1" ... no wait,
+            // for a generic instance, ElementType is the OPEN generic type.
+            // For System.Action`7, ElementType.FullName is "System.Action`7".
+            var elementFullName = elementType.FullName ?? "";
+
+            if (elementFullName == "System.Action`7" || elementFullName == "System.Action`8" ||
+                elementFullName == "System.Action`9" || elementFullName == "System.Action`10" ||
+                elementFullName == "System.Action`11" || elementFullName == "System.Action`12" ||
+                elementFullName == "System.Action`13" || elementFullName == "System.Action`14" ||
+                elementFullName == "System.Action`15" || elementFullName == "System.Action`16")
+            {
+                delegateName = "Action";
+                // arity should match the `N in the name
+            }
+            else if (elementFullName == "System.Func`6" || elementFullName == "System.Func`7" ||
+                     elementFullName == "System.Func`8" || elementFullName == "System.Func`9" ||
+                     elementFullName == "System.Func`10" || elementFullName == "System.Func`11" ||
+                     elementFullName == "System.Func`12" || elementFullName == "System.Func`13" ||
+                     elementFullName == "System.Func`14" || elementFullName == "System.Func`15" ||
+                     elementFullName == "System.Func`16" || elementFullName == "System.Func`17")
+            {
+                delegateName = "Func";
+            }
+            else
+                continue;
+
+            // Get replacement type (just to verify it exists)
+            var replacement = GetReplacement(delegateName, arity);
+            if (replacement == null)
+            {
+                Console.WriteLine($"[AssemblyRefRewriter] WARN: no replacement for {delegateName}`{arity}");
+                continue;
+            }
+
+            // The git.ElementType may be a different object than the typeref
+            // stored in the module's metadata. We need to find the ACTUAL
+            // TypeReference in module.GetTypeReferences() that matches, and
+            // modify THAT one.
+            //
+            // Actually, a simpler approach: the module's GetTypeReferences()
+            // returns all typerefs. We modify ALL that match System.Action`N
+            // or System.Func`N in the stripped range. This is done ONCE, not
+            // per-generic-instance.
+            // (Handled below, after the loop)
+        }
+
+        // Now do the actual modification: walk module.GetTypeReferences() and
+        // rewrite any System.Action`N / System.Func`N in the stripped range.
+        var vfsAsmRef = module.AssemblyReferences.FirstOrDefault(a => a.Name == "SdvWebPort.Vfs");
+        if (vfsAsmRef == null)
+        {
+            vfsAsmRef = new AssemblyNameReference("SdvWebPort.Vfs", new Version(1, 0, 0, 0))
+            {
+                PublicKeyToken = null!,
+            };
+            module.AssemblyReferences.Add(vfsAsmRef);
+        }
+
+        foreach (var tr in module.GetTypeReferences())
+        {
+            var fn = tr.FullName ?? "";
+            // System.Action`N — stripped for N=7..16
+            if (fn.StartsWith("System.Action`"))
+            {
+                var arityStr = fn.Substring("System.Action`".Length);
+                if (int.TryParse(arityStr, out var n) && n >= 7 && n <= 16)
+                {
+                    var oldNs = tr.Namespace;
+                    var oldScope = tr.Scope?.Name;
+                    tr.Namespace = replacementNamespace;
+                    tr.Scope = vfsAsmRef;
+                    rewrites++;
+                    if (rewrites <= 5)
+                        Console.WriteLine($"[AssemblyRefRewriter] TypeRef {fn}: scope {oldScope} → SdvWebPort.Vfs (ns {oldNs} → {replacementNamespace})");
+                }
+            }
+            // System.Func`N — stripped for N=6..17
+            else if (fn.StartsWith("System.Func`"))
+            {
+                var arityStr = fn.Substring("System.Func`".Length);
+                if (int.TryParse(arityStr, out var n) && n >= 6 && n <= 17)
+                {
+                    var oldNs = tr.Namespace;
+                    var oldScope = tr.Scope?.Name;
+                    tr.Namespace = replacementNamespace;
+                    tr.Scope = vfsAsmRef;
+                    rewrites++;
+                    if (rewrites <= 5)
+                        Console.WriteLine($"[AssemblyRefRewriter] TypeRef {fn}: scope {oldScope} → SdvWebPort.Vfs (ns {oldNs} → {replacementNamespace})");
+                }
+            }
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] Delegate replacements: {rewrites}");
+    }
+
+    private static void CollectGenericInstances(TypeReference tr, List<GenericInstanceType> list)
+    {
+        if (tr == null) return;
+        if (tr is GenericInstanceType git)
+        {
+            list.Add(git);
+            // Recurse into generic arguments
+            foreach (var arg in git.GenericArguments)
+                CollectGenericInstances(arg, list);
+            // Recurse into element type
+            if (git.ElementType != null)
+                CollectGenericInstances(git.ElementType, list);
+        }
+        else if (tr is TypeSpecification spec)
+        {
+            CollectGenericInstances(spec.ElementType, list);
+        }
+        if (tr.DeclaringType != null)
+            CollectGenericInstances(tr.DeclaringType, list);
     }
 
     private static void CollectTypeRefs(TypeReference tr, List<TypeReference> list)

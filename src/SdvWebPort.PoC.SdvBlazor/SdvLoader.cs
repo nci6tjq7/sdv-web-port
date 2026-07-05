@@ -375,36 +375,22 @@ public static class SdvLoader
 
         // Diagnostic: verify key types are resolvable
         Console.WriteLine("[SdvLoader] === Type resolution check ===");
-        foreach (var typeName in new[] { "System.IComparable", "System.IComparable`1", "System.Guid", "System.DateTime", "System.Enum" })
-        {
-            try
-            {
-                var t = Type.GetType(typeName + ", System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a");
-                Console.WriteLine($"  Type.GetType({typeName}, System.Runtime) → {(t == null ? "NULL" : t.AssemblyQualifiedName)}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Type.GetType({typeName}, System.Runtime) → THREW: {ex.GetType().Name}: {ex.Message}");
-            }
-        }
-        // Also check via System.Private.CoreLib directly
         var coreLib = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "System.Private.CoreLib");
         if (coreLib != null)
         {
-            foreach (var typeName in new[] { "System.IComparable", "System.IComparable`1", "System.Guid", "System.DateTime", "System.Enum" })
+            // Check Action/Func delegate arities — use string concat, no interpolation
+            Console.WriteLine("[SdvLoader] Checking Action/Func delegate arities:");
+            for (int arity = 1; arity <= 17; arity++)
             {
-                var t = coreLib.GetType(typeName);
-                Console.WriteLine($"  coreLib.GetType({typeName}) → {(t == null ? "NULL" : t.AssemblyQualifiedName)}");
-            }
-        }
-        // And via System.Runtime
-        var sysRuntime = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "System.Runtime");
-        if (sysRuntime != null)
-        {
-            foreach (var typeName in new[] { "System.IComparable", "System.IComparable`1", "System.Guid", "System.DateTime", "System.Enum" })
-            {
-                var t = sysRuntime.GetType(typeName);
-                Console.WriteLine($"  sysRuntime.GetType({typeName}) → {(t == null ? "NULL" : t.AssemblyQualifiedName)}");
+                string actionName = arity == 1 ? "System.Action" : "System.Action`" + arity.ToString();
+                string funcName = "System.Func`" + (arity + 1).ToString();
+                var action = coreLib.GetType(actionName);
+                var func = coreLib.GetType(funcName);
+                if (action == null || func == null)
+                {
+                    string msg = "  arity " + arity.ToString() + ": Action=" + (action != null).ToString() + " Func=" + (func != null).ToString() + " <-- MISSING!";
+                    Console.WriteLine(msg);
+                }
             }
         }
 
