@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SDV Web Port — Phase 2.6 SdvBlazor</title>
+    <base href="/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+</head>
+
+<body>
+    <div id="app">
+        <div style="margin: 1em; font-family: monospace; font-size: 1.5em; color: #569cd6;">
+            Loading SDV Web Port Phase 2.6...
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <!-- Blazor WASM boot script (auto-starts) -->
+    <script src="_framework/blazor.webassembly.js"></script>
+
+    <!--
+      KNI's Blazor.GL platform depends on the nkast.Wasm.* JS interop layer.
+      Same scripts as Phase 2.5b BlazorGameLoop.
+    -->
+    <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Window.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Document.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Media.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.XHR/js/XHR.8.0.11.js"></script>
+    <script src="_content/nkast.Wasm.Audio/js/Audio.8.0.11.js"></script>
+
+    <!--
+      Game loop driver — KNI's StartGameLoop() is an empty stub, so we drive
+      the loop externally via requestAnimationFrame. Same pattern as Phase 2.5b.
+      Uses invokeMethodAsync because TickDotNet returns Task.
+    -->
+    <script>
+        function tickJS() {
+            var canvas = document.getElementById('theCanvas');
+            if (canvas) {
+                var holder = document.getElementById('canvasHolder');
+                if (holder) {
+                    canvas.width = holder.clientWidth;
+                    canvas.height = holder.clientHeight;
+                }
+            }
+
+            if (window.theInstance) {
+                try {
+                    window.theInstance.invokeMethodAsync('TickDotNet');
+                } catch (e) {
+                    console.error('[tickJS] Error invoking TickDotNet: ' + e.message);
+                }
+            }
+            window.requestAnimationFrame(tickJS);
+        }
+
+        window.initRenderJS = (instance) => {
+            window.theInstance = instance;
+            console.log('[initRenderJS] Instance registered, starting game loop');
+            window.requestAnimationFrame(tickJS);
+        };
+    </script>
+</body>
+
+</html>

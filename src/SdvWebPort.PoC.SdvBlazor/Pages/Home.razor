@@ -1,0 +1,13 @@
+@page "/"
+@inject IJSRuntime JsRuntime
+
+<PageTitle>SDV Web Port — Phase 2.6 SdvBlazor</PageTitle>
+
+<div style="font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px;">
+    <h1 style="color: #569cd6;">Phase 2.6 — Real SDV Game1 Load + Render</h1>
+    <p>Status: <span id="status" style="color: #4ec9b0;">Loading...</span></p>
+
+    <div id="canvasHolder" style="background: #000; width: 800px; height: 600px; position: relative;">
+        <canvas id="theCanvas" width="800" height="600" style="touch-action: none; display: block;"></canvas>
+    </div>
+</div>
