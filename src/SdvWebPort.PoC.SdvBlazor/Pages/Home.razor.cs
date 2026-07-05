@@ -340,9 +340,25 @@ public partial class Home : ComponentBase
                 }
             }
 
-            // Initialize GameRunner.instance — SDV's Program.Main() normally does this.
-            // GameRunner constructor calls Program.get_sdk() + SDKHelper.EarlyInitialize()
-            // which may fail. Try creating it; if it fails, set a minimal stub.
+            // Initialize Program._sdk with NullSDKHelper BEFORE creating GameRunner.
+            // get_sdk() normally tries SteamHelper first (causes Mono assertion in browser).
+            // Pre-setting _sdk to NullSDKHelper skips the Steam attempt entirely.
+            var sdkHelperType = sdvAsm.GetType("StardewValley.SDKs.SDKHelper");
+            var nullSdkType = sdvAsm.GetType("StardewValley.SDKs.NullSDKHelper");
+            var programType = sdvAsm.GetType("StardewValley.Program");
+            if (programType != null && nullSdkType != null)
+            {
+                var sdkField = programType.GetField("_sdk", BindingFlags.NonPublic | BindingFlags.Static);
+                if (sdkField != null)
+                {
+                    Console.WriteLine("[DIAG] Setting Program._sdk = new NullSDKHelper()...");
+                    var nullSdk = Activator.CreateInstance(nullSdkType);
+                    sdkField.SetValue(null, nullSdk);
+                    Console.WriteLine($"[DIAG] Program._sdk set: {nullSdk != null}");
+                }
+            }
+
+            // Now create GameRunner — with _sdk pre-set, get_sdk() returns NullSDKHelper
             var gameRunnerType = sdvAsm.GetType("StardewValley.GameRunner");
             if (gameRunnerType != null)
             {
