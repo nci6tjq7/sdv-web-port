@@ -84,12 +84,19 @@ public static class SdvLoader
     };
 
     /// <summary>
-    /// Preload KNI Xna.Framework.* assemblies so the runtime can resolve
-    /// TypeForwardedTo from the MonoGame.Framework facade.
+    /// Preload KNI Xna.Framework.* assemblies by fetching them from wwwroot/deps/kni/
+    /// as static files. This bypasses the BlazorWebAssembly trimmer, which strips
+    /// types from these assemblies even with PublishTrimmed=false + TrimmerRootAssembly
+    /// + TrimmerRootDescriptor (linker.xml preserve="all").
+    ///
+    /// The trimmer's behavior is fundamentally incompatible with runtime-loaded
+    /// assemblies (SDV) that reference types not directly used by the host app.
+    /// Loading the unmodified KNI DLLs via LoadFromStream gives us the FULL type
+    /// definitions, not the trimmed ones.
     /// </summary>
-    private static void PreloadKniAssemblies()
+    private static async Task PreloadKniAssembliesAsync(HttpClient http, string baseAddress)
     {
-        Console.WriteLine("[SdvLoader] Preloading KNI Xna.Framework.* assemblies...");
+        Console.WriteLine("[SdvLoader] Preloading KNI Xna.Framework.* assemblies (from /deps/kni/)...");
         string[] kniAssemblies = new[]
         {
             "Xna.Framework",
@@ -110,11 +117,17 @@ public static class SdvLoader
                     .FirstOrDefault(a => a.GetName().Name == name);
                 if (existing != null)
                 {
+                    // Already loaded (possibly trimmed). Unload isn't supported in default ALC,
+                    // so we just log and continue. The trimmed version may still work for some types.
                     already++;
+                    Console.WriteLine($"[SdvLoader]   {name}: already loaded (may be trimmed)");
                     continue;
                 }
-                AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName(name));
+                var url = new Uri(new Uri(baseAddress), $"deps/kni/{name}.dll");
+                var bytes = await http.GetByteArrayAsync(url);
+                var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(bytes));
                 loaded++;
+                Console.WriteLine($"[SdvLoader]   {name}: loaded {bytes.Length:N0} bytes (untrimmed)");
             }
             catch (Exception ex)
             {
@@ -123,6 +136,13 @@ public static class SdvLoader
             }
         }
         Console.WriteLine($"[SdvLoader] KNI preload: {loaded} loaded, {already} already there, {failed} failed");
+    }
+
+    private static void PreloadKniAssemblies()
+    {
+        // Legacy sync version — kept for backwards compat but no longer used.
+        // PreloadKniAssembliesAsync is the active path.
+        throw new NotSupportedException("Use PreloadKniAssembliesAsync instead.");
     }
 
     private static void PreloadSystemAssemblies()
@@ -173,6 +193,36 @@ public static class SdvLoader
         _ = typeof(System.Func<>);
         _ = typeof(System.Action<>);
         _ = typeof(System.EventHandler<>);
+        // SDV uses high-arity Action/Func delegates. The trimmer strips these
+        // from System.Private.CoreLib even with PublishTrimmed=false. Touching
+        // them forces the trimmer to keep them.
+        _ = typeof(System.Action<,,>);
+        _ = typeof(System.Action<,,,>);
+        _ = typeof(System.Action<,,,,>);
+        _ = typeof(System.Action<,,,,,>);
+        _ = typeof(System.Action<,,,,,,>);
+        _ = typeof(System.Action<,,,,,,,>);
+        _ = typeof(System.Func<,,,,>);
+        _ = typeof(System.Func<,,,,,>);
+        _ = typeof(System.Func<,,,,,,>);
+        _ = typeof(System.Func<,,,,,,,>);
+        _ = typeof(System.Func<,,,,,,,,>);
+        // SDV also uses Lazy<T>
+        _ = typeof(System.Lazy<>);
+        _ = typeof(System.Lazy<int>);
+        // SDV uses various System.* types that may be stripped
+        _ = typeof(System.Collections.Generic.Dictionary<,>);
+        _ = typeof(System.Collections.Generic.List<>);
+        _ = typeof(System.Collections.Generic.HashSet<>);
+        _ = typeof(System.Collections.Generic.Queue<>);
+        _ = typeof(System.Collections.Generic.Stack<>);
+        _ = typeof(System.Collections.Generic.KeyValuePair<,>);
+        _ = typeof(System.Xml.Serialization.IXmlSerializable);
+        _ = typeof(System.Xml.Serialization.XmlSerializer);
+        _ = typeof(System.Xml.XmlReader);
+        _ = typeof(System.Xml.XmlWriter);
+        _ = typeof(System.Text.RegularExpressions.Regex);
+        _ = typeof(System.Net.IPAddress);
         _ = typeof(System.IDisposable);
         _ = typeof(System.IFormattable);
         _ = typeof(System.IConvertible);
@@ -267,11 +317,10 @@ public static class SdvLoader
         //     the bundle — we need to add TrimmerRootAssembly entries.
         PreloadSystemAssemblies();
 
-        // 1c. Preload KNI Xna.Framework.* assemblies (Audio, Media, etc.) so the
-        //     runtime can resolve TypeForwardedTo from the MonoGame.Framework facade.
-        //     Without this, the runtime tries to load these lazily when SDV accesses
-        //     them, but the lazy load may fail if the trimmer stripped the type-forwards.
-        PreloadKniAssemblies();
+        // 1c. Preload KNI Xna.Framework.* assemblies (Audio, Media, etc.) by fetching
+        //     them from wwwroot/deps/kni/ as static files. This bypasses the trimmer,
+        //     which strips types from these assemblies even with all preservation settings.
+        await PreloadKniAssembliesAsync(http, baseAddress);
 
         // 2. Preload MonoGame.Framework facade (already in default ALC by virtue of
         //    project reference, but ensure it's loaded before SDV).

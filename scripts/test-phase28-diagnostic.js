@@ -8,7 +8,8 @@ const { chromium } = require('playwright');
 
 const PORT = process.argv[2] || '8765';
 const SECONDS = parseInt(process.argv[3] || '40', 10);
-const URL = `http://localhost:${PORT}/`;
+const BISECT = process.argv[4] || '0'; // 0=no bisection, 1-5=bisect modes
+const URL = `http://localhost:${PORT}/?bisect=${BISECT}`;
 
 (async () => {
     let browser;

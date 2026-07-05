@@ -1,4 +1,5 @@
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -66,6 +67,17 @@ public static class SdvAssemblyRefRewriter
     /// MonoGame.Framework version to rewrite to (must match our facade).
     /// </summary>
     private static readonly Version _monoGameFrameworkVersion = new(3, 8, 5, 0);
+
+    /// <summary>
+    /// Bisection mode for GameRunner..ctor() debugging.
+    /// 0 = no patching (production mode)
+    /// 1 = patch out everything after List inits + Game..ctor() call
+    /// 2 = patch out everything after GraphicsDeviceManager (before LocalMultiplayer.Initialize)
+    /// 3 = patch out everything after LocalMultiplayer.Initialize
+    /// 4 = patch out everything after ItemRegistry.RegisterItemTypes
+    /// 5 = patch out everything after Window.AllowUserResizing
+    /// </summary>
+    public static int BisectMode { get; set; } = 0;
 
     /// <summary>
     /// Cached forward map: (source assembly name, type full name) → (target assembly name, target type full name).
@@ -197,19 +209,13 @@ public static class SdvAssemblyRefRewriter
                 CollectTypeRefs(ev.EventType, typeRefsToRewrite);
         }
 
-        // Dedupe by (scope, fullname)
-        var seen = new HashSet<string>();
-        var uniqueTypeRefs = new List<TypeReference>();
-        foreach (var tr in typeRefsToRewrite)
-        {
-            var key = $"{tr.Scope?.Name}|{tr.FullName}";
-            if (seen.Add(key))
-                uniqueTypeRefs.Add(tr);
-        }
-
-        Console.WriteLine($"[AssemblyRefRewriter] Unique typerefs to scan: {uniqueTypeRefs.Count}");
+        // Process ALL typerefs (no dedup — each TypeReference is a separate object
+        // in the module's metadata, and we need to modify ALL of them, not just one
+        // per unique (scope, fullname) pair. Dedup would miss duplicate typerefs
+        // that point at the same type but are separate objects.)
+        Console.WriteLine($"[AssemblyRefRewriter] Total typerefs to scan: {typeRefsToRewrite.Count}");
         int errors = 0;
-        foreach (var tr in uniqueTypeRefs)
+        foreach (var tr in typeRefsToRewrite)
         {
             try
             {
@@ -225,6 +231,26 @@ public static class SdvAssemblyRefRewriter
         }
         Console.WriteLine($"[AssemblyRefRewriter] TypeRef scope rewrites: {typeRefRewrites} ({errors} errors)");
 
+        // Pass 3 (optional): patch GameRunner..ctor() for bisection debugging.
+        // This is used to isolate which step in GameRunner..ctor() triggers the
+        // Mono runtime assertion (exception.c:172, condition `method' not met).
+        if (BisectMode > 0)
+        {
+            PatchGameRunnerCtor(asmDef);
+        }
+
+        // Pass 4: patch Program.get_sdk() to remove the SteamHelper branch.
+        // Even though we pre-set Program._sdk = NullSDKHelper, Mono's JIT
+        // eagerly resolves type references in the method body — including
+        // `newobj SteamHelper::.ctor()` in the dead branch. SteamHelper has
+        // a field of type Steamworks.NET.GameOverlayActivated_t, which can't
+        // be loaded (native deps). This causes TypeLoadException when the JIT
+        // compiles get_sdk().
+        //
+        // Fix: rewrite get_sdk() to just `ldsfld _sdk; ret` — no branches,
+        // no SteamHelper reference.
+        PatchProgramGetSdk(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -232,15 +258,133 @@ public static class SdvAssemblyRefRewriter
         return result;
     }
 
+    /// <summary>
+    /// Patch GameRunner..ctor() to skip steps after the bisection mode's cutoff.
+    /// Used for debugging the Mono assertion.
+    /// </summary>
+    private static void PatchGameRunnerCtor(AssemblyDefinition asmDef)
+    {
+        var gameRunner = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.GameRunner");
+        if (gameRunner == null)
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] BisectMode {BisectMode}: GameRunner type not found");
+            return;
+        }
+        var ctor = gameRunner.Methods.FirstOrDefault(m => m.Name == ".ctor");
+        if (ctor == null)
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] BisectMode {BisectMode}: GameRunner..ctor not found");
+            return;
+        }
+
+        // IL offsets (from inspect-gamerunner.cs output):
+        // IL_002D: call Game::.ctor  (after List inits)
+        // IL_003C: ldsfld releaseBuild (after get_sdk + EarlyInitialize)
+        // IL_005B: ldsfld graphics (after new GraphicsDeviceManager + stsfld)
+        // IL_00B2: ldc.r4 0.001 (after all GDM property sets + Content.RootDirectory)
+        // IL_00BC: call LocalMultiplayer::Initialize
+        // IL_00C1: call ItemRegistry::RegisterItemTypes
+        // IL_00D7: callvirt set_AllowUserResizing
+        var patchAfterOffset = BisectMode switch
+        {
+            1 => 0x0032,  // after Game::.ctor returns (before get_sdk)
+            2 => 0x00BC,  // before LocalMultiplayer::Initialize
+            3 => 0x00C1,  // after LocalMultiplayer::Initialize (before ItemRegistry)
+            4 => 0x00C6,  // after ItemRegistry::RegisterItemTypes
+            5 => 0x00DC,  // after set_AllowUserResizing
+            6 => 0x003C,  // after get_sdk + EarlyInitialize
+            7 => 0x005B,  // after new GraphicsDeviceManager
+            8 => 0x00B2,  // after GDM property sets + Content.RootDirectory
+            _ => -1,
+        };
+
+        if (patchAfterOffset < 0) return;
+
+        var instrs = ctor.Body.Instructions;
+        var patchIndex = -1;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            if (instrs[i].Offset >= patchAfterOffset)
+            {
+                patchIndex = i;
+                break;
+            }
+        }
+
+        if (patchIndex < 0)
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] BisectMode {BisectMode}: no instruction at IL_{patchAfterOffset:X4}");
+            return;
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] BisectMode {BisectMode}: removing from IL_{patchAfterOffset:X4} (idx {patchIndex}): {instrs[patchIndex].OpCode} {instrs[patchIndex].Operand}");
+        while (instrs.Count > patchIndex)
+            instrs.RemoveAt(instrs.Count - 1);
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        ctor.Body.ExceptionHandlers.Clear();
+        Console.WriteLine($"[AssemblyRefRewriter] BisectMode {BisectMode}: patched to {instrs.Count} instructions");
+    }
+
+    /// <summary>
+    /// Patch Program.get_sdk() to just `ldsfld _sdk; ret`.
+    /// Removes the SteamHelper and NullSDKHelper fallback branches because:
+    /// 1. We pre-set _sdk = NullSDKHelper via reflection before calling get_sdk()
+    /// 2. Mono's JIT eagerly resolves type refs in dead branches, causing
+    ///    TypeLoadException for SteamHelper (which has Steamworks.NET fields)
+    /// </summary>
+    private static void PatchProgramGetSdk(AssemblyDefinition asmDef)
+    {
+        var program = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Program");
+        if (program == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Program type not found — skipping get_sdk patch");
+            return;
+        }
+        var getSdk = program.Methods.FirstOrDefault(m => m.Name == "get_sdk");
+        if (getSdk == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Program.get_sdk not found — skipping patch");
+            return;
+        }
+
+        // Find the _sdk field reference (manual loop — avoid LINQ FirstOrDefault
+        // because the trimmer may strip the generic method)
+        FieldReference? sdkField = null;
+        foreach (var ins in getSdk.Body.Instructions)
+        {
+            if (ins.Operand is FieldReference fr && fr.Name == "_sdk")
+            {
+                sdkField = fr;
+                break;
+            }
+        }
+
+        if (sdkField == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] _sdk field not found in get_sdk — skipping patch");
+            return;
+        }
+
+        // Rewrite: ldsfld _sdk; ret
+        var instrs = getSdk.Body.Instructions;
+        instrs.Clear();
+        instrs.Add(Instruction.Create(OpCodes.Ldsfld, sdkField));
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        getSdk.Body.ExceptionHandlers.Clear();
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched Program.get_sdk() → ldsfld _sdk; ret (removed SteamHelper branch)");
+    }
+
     private static void CollectTypeRefs(TypeReference tr, List<TypeReference> list)
     {
         if (tr == null) return;
         list.Add(tr);
-        // Recurse into element type (for arrays, byrefs, generics)
-        if (tr.IsArray || tr.IsByReference || tr.IsPointer)
+        // Recurse into element type for ALL TypeSpecifications (arrays, byrefs,
+        // pointers, AND generic instances). For GenericInstanceType, the ElementType
+        // is the open generic (e.g., Lazy`1) — we need to rewrite its scope too.
+        if (tr is TypeSpecification spec)
         {
-            if (tr is TypeSpecification spec)
-                CollectTypeRefs(spec.ElementType, list);
+            CollectTypeRefs(spec.ElementType, list);
         }
         // Recurse into generic arguments
         if (tr is GenericInstanceType git)
@@ -384,26 +528,29 @@ public static class SdvAssemblyRefRewriter
 
             // Check if the type is FORWARDED (ExportedTypes).
             var exported = asmDef.MainModule.ExportedTypes.FirstOrDefault(et => et.FullName == typeFullName);
-            if (exported == null)
+            if (exported != null)
             {
-                // Type not in this assembly at all. If this is the INITIAL source,
-                // fall back to CoreLib. Otherwise, trust the current assembly as
-                // the target (the forward chain ended here).
-                if (currentAsm == sourceAsmName)
-                    result = "System.Private.CoreLib";
-                else
+                // Forwarded to another assembly — follow the chain
+                var forwardTarget = exported.Scope?.Name;
+                if (forwardTarget == null || forwardTarget == currentAsm)
+                {
                     result = currentAsm;
-                break;
+                    break;
+                }
+                currentAsm = forwardTarget;
+                continue;
             }
 
-            // Forwarded to another assembly
-            var forwardTarget = exported.Scope?.Name;
-            if (forwardTarget == null || forwardTarget == currentAsm)
-            {
+            // Type not found in this assembly's Types or ExportedTypes.
+            // If this is the INITIAL source, fall back to CoreLib (most System.*
+            // types are there). Otherwise, trust the current assembly as the
+            // target (the forward chain led us here — the type should be defined
+            // here even if we can't verify because we don't have the runtime assembly).
+            if (currentAsm == sourceAsmName)
+                result = "System.Private.CoreLib";
+            else
                 result = currentAsm;
-                break;
-            }
-            currentAsm = forwardTarget;
+            break;
         }
 
         lock (_forwardCache)

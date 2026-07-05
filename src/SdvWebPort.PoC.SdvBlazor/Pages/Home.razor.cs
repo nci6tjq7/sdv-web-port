@@ -98,6 +98,12 @@ public partial class Home : ComponentBase
         byte[] rewrittenBytes;
         try
         {
+            // Set bisection mode from URL query param (?bisect=N) for debugging
+            var bisectMode = await ReadBisectModeFromUrlAsync();
+            SdvWebPort.Rewriter.SdvAssemblyRefRewriter.BisectMode = bisectMode;
+            if (bisectMode > 0)
+                Console.WriteLine($"[+] BISECT MODE {bisectMode} — patching GameRunner..ctor() for debugging");
+
             Console.WriteLine("[+] Running Cecil AssemblyRef rewriter (System.* v6→v8, MG v3.8.0.1641→v3.8.5.0)...");
             var refRewritten = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
             Console.WriteLine($"[+] Running Cecil FileSystem rewriter (File/Directory → SdvFileShim)...");
@@ -208,6 +214,26 @@ public partial class Home : ComponentBase
         }
 
         return (Game?)gameRunnerInstance;
+    }
+
+    /// <summary>
+    /// Read bisect mode from URL query param (?bisect=N) via JS interop.
+    /// Used for debugging the GameRunner..ctor() Mono assertion. Returns 0 if not set.
+    /// (Can't use NavigationManager.Uri because System.Uri.get_Query was trimmed.)
+    /// </summary>
+    private async Task<int> ReadBisectModeFromUrlAsync()
+    {
+        try
+        {
+            var bisectStr = await JsRuntime.InvokeAsync<string>("eval", "new URLSearchParams(location.search).get('bisect') || '0'");
+            if (int.TryParse(bisectStr, out var mode) && mode >= 0 && mode <= 9)
+                return mode;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] ReadBisectModeFromUrl failed: {ex.Message}");
+        }
+        return 0;
     }
 
     /// <summary>
