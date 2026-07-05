@@ -102,23 +102,65 @@ public partial class Home : ComponentBase
         SdvWebPort.Vfs.SdvFileShim.SetVfs(vfs);
         Console.WriteLine("[+] VFS set up with Content/test.txt");
 
-        // 3. Run the Cecil rewriter on the SDV bytes (in-memory, user's file untouched).
+        // 3. Fetch System.Private.CoreLib.dll for Cecil's resolver.
+        byte[]? coreLibBytes = null;
+        try
+        {
+            var coreLibUri = new Uri(new Uri(HostEnv.BaseAddress), "System.Private.CoreLib.dll");
+            coreLibBytes = await _http!.GetByteArrayAsync(coreLibUri);
+            Console.WriteLine($"[+] Fetched System.Private.CoreLib.dll: {coreLibBytes.Length:N0} bytes");
+        }
+        catch (Exception ex) { Console.WriteLine($"[!] Could not fetch CoreLib.dll: {ex.Message}"); }
+
+        // 4. Pre-fetch SDV dependencies (needed by Cecil resolver + ALC loading).
+        Console.WriteLine("[+] Pre-fetching SDV dependencies + KNI assemblies...");
+        var deps = new Dictionary<string, byte[]>();
+        foreach (var depName in new[] { "xTile", "StardewValley.GameData",
+            "System.Data.HashFunction.xxHash", "System.Data.HashFunction.Interfaces",
+            "System.Data.HashFunction.Core", "MonoGame.Framework" })
+        {
+            try
+            {
+                var depUri = new Uri(new Uri(HostEnv.BaseAddress), $"{depName}.dll");
+                var depBytes = await _http!.GetByteArrayAsync(depUri);
+                Console.WriteLine($"[+] Fetched {depName}.dll: {depBytes.Length:N0} bytes");
+                deps[depName] = depBytes;
+            }
+            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch {depName}.dll: {ex.Message}"); }
+        }
+        foreach (var kniName in new[] {
+            "Xna.Framework", "Xna.Framework.Game", "Xna.Framework.Graphics",
+            "Xna.Framework.Content", "Xna.Framework.Input",
+            "Xna.Framework.Audio", "Xna.Framework.Media",
+            "Xna.Framework.Devices", "Xna.Framework.Storage",
+        })
+        {
+            try
+            {
+                var kniUri = new Uri(new Uri(HostEnv.BaseAddress), $"{kniName}.dll");
+                var kniBytes = await _http!.GetByteArrayAsync(kniUri);
+                Console.WriteLine($"[+] Fetched KNI {kniName}.dll: {kniBytes.Length:N0} bytes");
+                deps[kniName] = kniBytes;
+            }
+            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch KNI {kniName}.dll: {ex.Message}"); }
+        }
+
+        // 5. Run the Cecil rewriter (now with deps available for resolver).
         byte[] rewrittenBytes;
         try
         {
             Console.WriteLine("[+] Running Cecil rewriter (redirect File/Directory → SdvFileShim)...");
-            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(sdvBytes);
+            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(sdvBytes, coreLibBytes, deps);
             Console.WriteLine($"[+] Rewritten: {rewrittenBytes.Length:N0} bytes");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
             Console.WriteLine($"    Stack: {ex.StackTrace}");
-            // Fall back to original bytes (rewriter failed — SDV's File calls will throw at runtime)
             rewrittenBytes = sdvBytes;
         }
 
-        // 4. Verify the MonoGame.Framework facade is loaded.
+        // 6. Verify the MonoGame.Framework facade is loaded.
         Assembly? facadeAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "MonoGame.Framework");
         if (facadeAssembly == null)
@@ -137,49 +179,7 @@ public partial class Home : ComponentBase
         }
         Console.WriteLine($"[+] Facade assembly: {facadeAssembly.FullName}");
 
-        // 5. Pre-fetch SDV dependencies before loading SDV.
-        //    ALC.Load is sync — can't do async HttpClient in WASM.
-        Console.WriteLine("[+] Pre-fetching SDV dependencies + KNI assemblies...");
-        var deps = new Dictionary<string, byte[]>();
-        // SDV-specific dependencies that need explicit loading (not in Blazor .wasm bundle
-        // or have version mismatches). Pre-fetch their .dll bytes.
-        // Note: HashFunction uses v1.8.2.2 (matching SDV's AssemblyRef), NOT v2.0.0.
-        foreach (var depName in new[] { "xTile", "StardewValley.GameData",
-            "System.Data.HashFunction.xxHash", "System.Data.HashFunction.Interfaces",
-            "System.Data.HashFunction.Core" })
-        {
-            try
-            {
-                var depUri = new Uri(new Uri(HostEnv.BaseAddress), $"{depName}.dll");
-                var depBytes = await _http!.GetByteArrayAsync(depUri);
-                Console.WriteLine($"[+] Fetched {depName}.dll: {depBytes.Length:N0} bytes");
-                deps[depName] = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(depBytes);
-            }
-            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch {depName}.dll: {ex.Message}"); }
-        }
-        // KNI assemblies — loaded into the SAME ALC as SDV so TypeForwardedTo resolution works.
-        // Raw .dll files are copied to wwwroot root during publish (NOT _framework/ —
-        // Blazor converts _framework/*.dll to .wasm format which can't be loaded via ALC).
-        foreach (var kniName in new[] {
-            "Xna.Framework", "Xna.Framework.Game", "Xna.Framework.Graphics",
-            "Xna.Framework.Content", "Xna.Framework.Input",
-            "Xna.Framework.Audio", "Xna.Framework.Media",
-            "Xna.Framework.Devices", "Xna.Framework.Storage",
-        })
-        {
-            try
-            {
-                var baseUri = new Uri(HostEnv.BaseAddress);
-                var kniUri = new Uri(baseUri, $"{kniName}.dll");
-                var kniBytes = await _http!.GetByteArrayAsync(kniUri);
-                Console.WriteLine($"[+] Fetched KNI {kniName}.dll: {kniBytes.Length:N0} bytes");
-                deps[kniName] = kniBytes;
-            }
-            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch KNI {kniName}.dll: {ex.Message}"); }
-        }
-
-        // 6. Load SDV deps (xTile, GameData) into default ALC, then load SDV.
-        //    KNI assemblies already loaded in step 2.
+        // 7. Load ALL pre-fetched deps into default ALC, then load SDV.
         Assembly sdvAsm;
         try
         {
@@ -262,6 +262,34 @@ public partial class Home : ComponentBase
         object? gameInstance;
         try
         {
+            // DIAGNOSTIC: Try creating InstanceGame first to isolate NPE location.
+            // Game1 : InstanceGame : Game
+            // If InstanceGame NPEs → problem in InstanceGame or Game base
+            // If InstanceGame works → problem in Game1's own constructor
+            var instanceGameType = sdvAsm.GetType("StardewValley.InstanceGame");
+            if (instanceGameType != null)
+            {
+                Console.WriteLine($"[DIAG] Testing InstanceGame instantiation...");
+                try
+                {
+                    var ig = Activator.CreateInstance(instanceGameType);
+                    Console.WriteLine($"[DIAG] InstanceGame created OK: {ig != null}");
+                }
+                catch (Exception igEx)
+                {
+                    Console.WriteLine($"[DIAG] InstanceGame FAILED: {igEx.GetType().Name}: {igEx.Message}");
+                    var igInner = igEx.InnerException ?? igEx;
+                    Console.WriteLine($"[DIAG] InstanceGame Inner: {igInner.GetType().Name}: {igInner.Message}");
+                    Console.WriteLine($"[DIAG] InstanceGame Stack: {igInner.StackTrace}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("[DIAG] InstanceGame type not found");
+            }
+
+            // Now try Game1
+            Console.WriteLine("[DIAG] Testing Game1 instantiation...");
             gameInstance = Activator.CreateInstance(gameType);
             Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
         }

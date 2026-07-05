@@ -89,8 +89,11 @@ public static class SdvFileSystemRewriter
     /// <summary>
     /// Rewrite the given assembly bytes, redirecting File/Directory calls to SdvFileShim.
     /// Returns the rewritten assembly bytes.
+    /// coreLibBytes: raw bytes of System.Private.CoreLib.dll (fetched from wwwroot in WASM).
+    /// When provided, Cecil can resolve CoreLib types during Write, so constants
+    /// are preserved (preventing NPE from wrong default parameter values).
     /// </summary>
-    public static byte[] Rewrite(byte[] assemblyBytes)
+    public static byte[] Rewrite(byte[] assemblyBytes, byte[]? coreLibBytes = null, Dictionary<string, byte[]>? assemblyBytesMap = null)
     {
         Console.WriteLine($"[Rewriter] Loading assembly ({assemblyBytes.Length:N0} bytes)");
         using var inputMs = new MemoryStream(assemblyBytes);
@@ -110,26 +113,49 @@ public static class SdvFileSystemRewriter
             catch { /* skip */ }
         }
 
-        // Register a custom resolve handler that maps version 6.0.0.0 → 8.0.0.0
-        // for framework assemblies (System.Runtime, System.Collections, etc.)
+        // Register a custom resolve handler that can resolve ANY assembly from
+        // the runtime's already-loaded set, or from provided CoreLib bytes.
         resolver.ResolveFailure += (sender, name) =>
         {
-            // If the requested version is 6.0.0.0 or similar, try loading the
-            // current runtime's version (which may have a different version number)
-            if (name.Version != null && name.Version.Major < 8)
+            Console.WriteLine($"[Rewriter] ResolveFailure: {name.Name} v{name.Version}");
+            // If we have CoreLib bytes and this is a CoreLib reference, use them
+            if (coreLibBytes != null && name.Name == "System.Private.CoreLib")
             {
-                Console.WriteLine($"[Rewriter] Resolving {name.Name} v{name.Version} → trying runtime version");
-                var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == name.Name);
-                if (runtimeAsm != null)
+                Console.WriteLine("[Rewriter] Resolving CoreLib from provided bytes");
+                return AssemblyDefinition.ReadAssembly(
+                    new MemoryStream(coreLibBytes),
+                    new ReaderParameters { AssemblyResolver = resolver });
+            }
+            // Check assembly bytes map for SDV deps (xTile, GameData, etc.)
+            if (assemblyBytesMap != null && assemblyBytesMap.TryGetValue(name.Name, out var asmBytes))
+            {
+                Console.WriteLine($"[Rewriter] Resolving {name.Name} from provided bytes map");
+                return AssemblyDefinition.ReadAssembly(
+                    new MemoryStream(asmBytes),
+                    new ReaderParameters { AssemblyResolver = resolver });
+            }
+            // Check AppDomain for runtime assemblies (KNI, System.*, etc.)
+            var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == name.Name);
+            if (runtimeAsm != null && !string.IsNullOrEmpty(runtimeAsm.Location))
+            {
+                try
                 {
-                    Console.WriteLine($"[Rewriter] Found {name.Name} in runtime: {runtimeAsm.FullName}");
                     return AssemblyDefinition.ReadAssembly(
                         runtimeAsm.Location,
                         new ReaderParameters { AssemblyResolver = resolver });
                 }
+                catch { }
             }
-            return null;
+            // Last resort: return a dummy empty assembly to prevent AssemblyResolutionException
+            // Cecil only needs the assembly for type resolution during Write — if we can't
+            // provide it, returning a minimal assembly prevents the Write from crashing.
+            Console.WriteLine($"[Rewriter] WARN: Cannot resolve {name.Name} — returning dummy");
+            var dummyAsm = AssemblyDefinition.CreateAssembly(
+                new AssemblyNameDefinition(name.Name, name.Version),
+                name.Name,
+                ModuleKind.Dll);
+            return dummyAsm;
         };
 
         var parameters = new ReaderParameters { AssemblyResolver = resolver };
@@ -232,39 +258,34 @@ public static class SdvFileSystemRewriter
         }
         Console.WriteLine($"[Rewriter] Total rewrites: {totalRewrites}");
 
-        // Remove all parameter constants (default parameter values) before Write.
-        // Cecil's Write() tries to resolve the type of each constant, which fails
-        // for System.Runtime v6.0.0.0 types in WASM (only v8.0.0.0 available).
-        // Removing constants is safe — default parameter values are not needed
-        // for our use case (we're only rewriting File/Directory calls, not signatures).
+        // Remove parameter constants ONLY if CoreLib is not provided.
+        // When CoreLib bytes are available, Cecil can resolve constant types
+        // during Write, so constants are preserved (prevents NPE from wrong defaults).
         int constantsRemoved = 0;
-        foreach (var module in asmDef.Modules)
+        if (coreLibBytes == null)
         {
-            foreach (var type in module.GetTypes())
+            foreach (var module in asmDef.Modules)
             {
-                foreach (var method in type.Methods)
+                foreach (var type in module.GetTypes())
                 {
-                    foreach (var param in method.Parameters)
+                    foreach (var method in type.Methods)
                     {
-                        if (param.HasConstant)
+                        foreach (var param in method.Parameters)
                         {
+                            if (!param.HasConstant) continue;
                             param.Constant = null;
                             constantsRemoved++;
                         }
                     }
-                    // Also remove property constants
-                    if (method.HasBody)
-                    {
-                        foreach (var var in method.Body.Variables)
-                        {
-                            // Don't remove variable types, just constants
-                        }
-                    }
                 }
             }
+            if (constantsRemoved > 0)
+                Console.WriteLine($"[Rewriter] Removed {constantsRemoved} parameter constants (no CoreLib — fallback mode)");
         }
-        if (constantsRemoved > 0)
-            Console.WriteLine($"[Rewriter] Removed {constantsRemoved} parameter constants (prevents type resolution during Write)");
+        else
+        {
+            Console.WriteLine("[Rewriter] CoreLib provided — preserving parameter constants");
+        }
 
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
