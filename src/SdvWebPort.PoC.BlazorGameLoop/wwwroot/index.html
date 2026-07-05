@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SDV Web Port — Phase 2.5b Blazor Game Loop</title>
+    <base href="/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+</head>
+
+<body>
+    <div id="app">
+        <div style="margin: 1em; font-family: monospace; font-size: 1.5em; color: #569cd6;">
+            Loading SDV Web Port Phase 2.5b...
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <!-- Blazor WASM boot script (auto-starts) -->
+    <script src="_framework/blazor.webassembly.js"></script>
+
+    <!--
+      KNI's Blazor.GL platform depends on the nkast.Wasm.* JS interop layer.
+      These scripts register globalThis.window.nkJSObject, nkWindow, nkDocument,
+      nkCanvas, etc. that KNI's C# code calls into via JSInterop.
+      They MUST load after blazor.webassembly.js (so Blazor is available) but
+      the order relative to Blazor startup doesn't matter because Blazor
+      defers component rendering until after these scripts execute.
+    -->
+    <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Window.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Document.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Dom/js/Media.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.0.js"></script>
+    <script src="_content/nkast.Wasm.XHR/js/XHR.8.0.11.js"></script>
+    <script src="_content/nkast.Wasm.Audio/js/Audio.8.0.11.js"></script>
+
+    <!--
+      Game loop driver — KNI's StartGameLoop() is an empty stub, so we drive
+      the loop externally via requestAnimationFrame. Each frame:
+        1. resize canvas to fit holder
+        2. call the .NET TickDotNet method (which calls game.Tick())
+        3. re-queue requestAnimationFrame
+
+      This is the pattern from KNI's CanvasGL sample (nkast/Wasm repo).
+    -->
+    <script>
+        function tickJS() {
+            // resize the canvas to fit its parent
+            var canvas = document.getElementById('theCanvas');
+            if (canvas) {
+                var holder = document.getElementById('canvasHolder');
+                if (holder) {
+                    canvas.width = holder.clientWidth;
+                    canvas.height = holder.clientHeight;
+                }
+            }
+
+            // call into .NET — this invokes the [JSInvokable] TickDotNet method
+            if (window.theInstance) {
+                try {
+                    window.theInstance.invokeMethod('TickDotNet');
+                } catch (e) {
+                    console.error('[tickJS] Error invoking TickDotNet: ' + e.message);
+                }
+            }
+            window.requestAnimationFrame(tickJS);
+        }
+
+        window.initRenderJS = (instance) => {
+            window.theInstance = instance;
+            console.log('[initRenderJS] Instance registered, starting game loop');
+            // begin game loop
+            window.requestAnimationFrame(tickJS);
+        };
+
+        // expose a pixel-read function for headless verification
+        window.readCanvasPixels = function() {
+            const canvas = document.getElementById('theCanvas');
+            if (!canvas) return JSON.stringify({ error: 'canvas not found' });
+            try {
+                const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                if (!ctx) return JSON.stringify({ error: 'no gl context' });
+                const w = canvas.width, h = canvas.height;
+                const pixels = new Uint8Array(w * h * 4);
+                ctx.readPixels(0, 0, w, h, ctx.RGBA, ctx.UNSIGNED_BYTE, pixels);
+                let nonBlack = 0;
+                let sample = [0, 0, 0];
+                for (let i = 0; i < pixels.length; i += 4000) {
+                    if (pixels[i] > 0 || pixels[i+1] > 0 || pixels[i+2] > 0) nonBlack++;
+                    sample = [pixels[i], pixels[i+1], pixels[i+2]];
+                }
+                return JSON.stringify({ width: w, height: h, nonBlackSamples: nonBlack, sampleColor: sample });
+            } catch (e) {
+                return JSON.stringify({ error: e.message });
+            }
+        };
+    </script>
+</body>
+
+</html>

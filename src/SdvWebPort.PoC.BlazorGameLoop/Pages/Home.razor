@@ -1,0 +1,15 @@
+@page "/"
+@inject IJSRuntime JsRuntime
+
+<PageTitle>SDV Web Port — Phase 2.5b Blazor Game Loop</PageTitle>
+
+<div style="font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px;">
+    <h1 style="color: #569cd6;">Phase 2.5b — Blazor Game Loop PoC</h1>
+    <p>Status: <span id="status" style="color: #4ec9b0;">Starting...</span></p>
+
+    <div id="canvasHolder" style="background: #000; width: 800px; height: 600px; position: relative;">
+        <canvas id="theCanvas" width="800" height="600" style="touch-action: none; display: block;"></canvas>
+    </div>
+
+    <pre id="log" style="background: #000; color: #d4d4d4; padding: 10px; max-height: 200px; overflow: auto; white-space: pre-wrap;"></pre>
+</div>
