@@ -240,16 +240,19 @@ public static class SdvAssemblyRefRewriter
         }
 
         // Pass 4: patch Program.get_sdk() to remove the SteamHelper branch.
-        // Even though we pre-set Program._sdk = NullSDKHelper, Mono's JIT
-        // eagerly resolves type references in the method body — including
-        // `newobj SteamHelper::.ctor()` in the dead branch. SteamHelper has
-        // a field of type Steamworks.NET.GameOverlayActivated_t, which can't
-        // be loaded (native deps). This causes TypeLoadException when the JIT
-        // compiles get_sdk().
-        //
-        // Fix: rewrite get_sdk() to just `ldsfld _sdk; ret` — no branches,
-        // no SteamHelper reference.
         PatchProgramGetSdk(asmDef);
+
+        // Pass 5: patch Game1..cctor() (static constructor) to be a no-op.
+        // Game1's .cctor triggers TypeLoadException because it has fields with
+        // types (Action`7, Lazy<T>, etc.) that were stripped from
+        // System.Private.CoreLib by the BlazorWebAssembly trimmer. The
+        // TypeLoadException then causes a Mono assertion (exception.c:172)
+        // because the exception handler can't find the method.
+        //
+        // Fix: replace .cctor body with just `ret`. Game1's static fields
+        // won't be initialized, but that's acceptable for Phase 2.8 — we
+        // just need to get past the ctor to prove the game loop works.
+        PatchGame1Cctor(asmDef);
 
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
@@ -373,6 +376,35 @@ public static class SdvAssemblyRefRewriter
         getSdk.Body.ExceptionHandlers.Clear();
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Program.get_sdk() → ldsfld _sdk; ret (removed SteamHelper branch)");
+    }
+
+    /// <summary>
+    /// Patch Game1..cctor() (static constructor) to be a no-op (just `ret`).
+    /// Game1's .cctor fails because it has fields with types (Action`7, Lazy<T>,
+    /// etc.) that were stripped from System.Private.CoreLib by the trimmer.
+    /// The resulting TypeLoadException causes a Mono assertion.
+    /// </summary>
+    private static void PatchGame1Cctor(AssemblyDefinition asmDef)
+    {
+        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1 == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Game1 type not found — skipping .cctor patch");
+            return;
+        }
+        var cctor = game1.Methods.FirstOrDefault(m => m.Name == ".cctor");
+        if (cctor == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Game1..cctor not found — skipping patch");
+            return;
+        }
+
+        var instrs = cctor.Body.Instructions;
+        instrs.Clear();
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        cctor.Body.ExceptionHandlers.Clear();
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched Game1..cctor() → ret (no-op, {instrs.Count} instructions)");
     }
 
     private static void CollectTypeRefs(TypeReference tr, List<TypeReference> list)
