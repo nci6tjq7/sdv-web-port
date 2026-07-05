@@ -290,8 +290,65 @@ public partial class Home : ComponentBase
 
             // Now try Game1
             Console.WriteLine("[DIAG] Testing Game1 instantiation...");
+            // DIAGNOSTIC: Inspect Game1 constructor to understand what it does
+            var ctors = gameType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            Console.WriteLine($"[DIAG] Game1 has {ctors.Length} constructors");
+            foreach (var c in ctors)
+            {
+                var ps = c.GetParameters();
+                Console.WriteLine($"[DIAG]   ctor({string.Join(", ", ps.Select(p => p.ParameterType.Name + " " + p.Name))})");
+            }
+            // Check Game1 static fields — if .cctor failed, statics are null
+            var staticFields = gameType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                .Where(f => !f.IsLiteral && !f.IsInitOnly).Take(20);
+            Console.WriteLine("[DIAG] Game1 static fields (first 20):");
+            foreach (var f in staticFields)
+            {
+                try
+                {
+                    var val = f.GetValue(null);
+                    Console.WriteLine($"[DIAG]   {f.FieldType.Name} {f.Name} = {(val == null ? "null" : val.GetType().Name)}");
+                }
+                catch (Exception ex) { Console.WriteLine($"[DIAG]   {f.FieldType.Name} {f.Name} = ERROR: {ex.Message}"); }
+            }
+            // Check if Game1 has a static constructor (.cctor) and if it ran
+            var staticCtor = gameType.TypeInitializer;
+            if (staticCtor != null)
+            {
+                Console.WriteLine($"[DIAG] Game1 has static constructor: {staticCtor.Name}");
+                // Try to invoke .cctor explicitly — it should be idempotent
+                // If it throws, we'll see the actual initialization error
+                try
+                {
+                    Console.WriteLine("[DIAG] Invoking Game1..cctor explicitly...");
+                    staticCtor.Invoke(null, null);
+                    Console.WriteLine("[DIAG] Game1..cctor completed OK");
+                }
+                catch (Exception cctorEx)
+                {
+                    var cctorInner = cctorEx.InnerException ?? cctorEx;
+                    Console.WriteLine($"[DIAG] Game1..cctor FAILED: {cctorInner.GetType().Name}: {cctorInner.Message}");
+                    Console.WriteLine($"[DIAG] .cctor Stack: {cctorInner.StackTrace}");
+                    var cctorDeep = cctorInner.InnerException;
+                    int d = 0;
+                    while (cctorDeep != null && d < 3)
+                    {
+                        d++;
+                        Console.WriteLine($"[DIAG] .cctor Deep[{d}]: {cctorDeep.GetType().Name}: {cctorDeep.Message}");
+                        cctorDeep = cctorDeep.InnerException;
+                    }
+                }
+            }
+
             gameInstance = Activator.CreateInstance(gameType);
             Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
+            // If we get here, inspect the instance
+            if (gameInstance != null)
+            {
+                var g = (Game)gameInstance;
+                Console.WriteLine($"[DIAG] Game1 created. Services={g.Services != null}, Window={g.Window != null}, GraphicsDevice={g.GraphicsDevice != null}");
+                Console.WriteLine($"[DIAG] Content.RootDirectory={g.Content?.RootDirectory ?? "null"}");
+            }
         }
         catch (Exception ex)
         {
