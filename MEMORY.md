@@ -5,8 +5,8 @@
 > **Any agent resuming work on this project MUST read this file FIRST, before
 > doing anything else.**
 >
-> Last updated: 2026-07-05 (Phase 2.6 — real SDV Game1 loads + renders in browser)
-> Current state: Phase 2.6 complete (v1.0.0-sdv-renders). Next: Phase 2.75 — redirect real SDV file system calls to VFS.
+> Last updated: 2026-07-05 (Phase 2.75 — Cecil FS redirect works, VFS-backed SDV renders)
+> Current state: Phase 2.75 complete (v1.1.0-sdv-fs-redirect). Next: test with real GOG SDV.dll + Phase 3 (SMAPI).
 
 ---
 
@@ -112,7 +112,8 @@ DLL patching. See `src/MonoGame.Framework.Facade/README.md` for details.
 | 2.5 — Game1 Invoke (.NET 10) | ⚠️ PARTIAL | `v0.8.0-phase2.5-partial` | Game1 instantiates but game loop doesn't start (KNI/.NET 10 mismatch) |
 | 2.5b — Blazor Game Loop (net8.0) | ✅ DONE | `v0.9.0-blazor-loop-works` | KNI game loop WORKS on net8.0 BlazorWebAssembly — canvas renders |
 | 2.6 — SdvBlazor Load + Render | ✅ DONE | `v1.0.0-sdv-renders` | Real SDV Game1 (MockSdv) loads via facade + renders — 6/6 checks PASS |
-| 2.75 — Real SDV FS Redirect | ⏳ NEXT | — | Redirect real SDV's File.OpenRead/etc. to VFS; load real GOG SDV.dll |
+| 2.75 — Cecil FS Redirect | ✅ DONE | `v1.1.0-sdv-fs-redirect` | File.OpenRead → SdvFileShim → VFS — 'Hello from VFS!' loaded + rendered |
+| 2.8 — Real GOG SDV.dll Test | ⏳ NEXT | — | User supplies GOG SDV.dll + Content/*.xnb; test title screen renders |
 | 3 — SMAPI | 🔲 PLANNED | — | Harmony → RuntimeDetour shim; mod loading |
 | 4 — First Mod E2E | 🔲 PLANNED | — | CJB Cheats or similar end-to-end |
 | 5 — XNB Editing | 🔲 PLANNED | — | xnbcli integration; in-browser XNB editor |
@@ -187,43 +188,35 @@ This is a significant decision — discuss with user before pivoting.
 
 ---
 
-## Next Steps (Phase 2.75 — Real SDV File System Redirect)
+## Next Steps (Phase 2.8 — Real GOG SDV.dll Test)
 
-**Goal:** Load the REAL GOG `Stardew Valley.dll` (not MockSdv stand-in) and
-redirect its file system calls (`File.OpenRead`, `File.Exists`, `Directory.GetFiles`,
-etc.) to the `IVirtualFileSystem` so SDV can read its Content/*.xnb files from
-the user's uploaded GOG copy.
+**Goal:** Test the full pipeline with the REAL GOG `Stardew Valley.dll` + user's
+uploaded Content/*.xnb files. The user supplies their GOG copy; we load it,
+run the Cecil rewriter, and verify the SDV title screen renders in the browser.
 
-**Context:** Phase 2.6 proved the load + render pipeline works with MockSdv
-(a minimal Game1 with no file system dependencies). Real SDV's `Game1` constructor
-and `Initialize()`/`LoadContent()` call `File.OpenRead("Content/...")` etc.,
-which will throw `FileNotFoundException` in WASM (no native FS). We need to
-intercept these calls and route them to VFS.
+**Context:** Phase 2.75 proved the Cecil FS redirect works with MockSdv's
+`FileSystemTestGame` (a minimal Game that calls `File.OpenRead`). The next
+step is to test with real SDV, which has far more complex file system usage
+(Content pipeline, save files, configs, etc.) and may surface additional
+File/Directory patterns the rewriter doesn't cover yet.
 
 **Required work:**
-1. Choose an interception mechanism:
-   - **Option A:** Mono.Cecil — rewrite SDV DLL's `System.IO.File.*` calls to
-     `SdvWebPort.Vfs.SdvFileShim.*` calls, in-memory only (user's file untouched)
-   - **Option B:** Harmony-style method replacement (requires Harmony, which
-     uses IL.Emit — may not work in WASM interpreter mode; risk per MEMORY.md #4)
-   - **Option C:** Custom AssemblyLoadContext.Resolving hook (won't work for
-     System.IO.File — it's in the BCL, not a removable assembly)
-   - **Recommendation:** Option A (Cecil) — proven approach for IL rewriting,
-     no runtime JIT needed
-2. Implement `SdvFileShim` — a static class with the same signatures as
-   `System.IO.File` that routes to `IVirtualFileSystem`
-3. Write a Cecil rewriter that scans SDV DLL for `System.IO.File::*` calls
-   and rewrites them to `SdvWebPort.Vfs.SdvFileShim::*`
-4. Wire up the VFS (from Phase 1a) — user uploads GOG files via FSA/OPFS
-5. In SdvBlazor's `LoadAndInstantiateGame1`, run the Cecil rewriter on the
-   fetched SDV bytes before `LoadFromStream`
-6. Test with real GOG SDV.dll — verify title screen renders
+1. User copies their GOG `Stardew Valley.dll` + `Content/` folder into
+   `src/SdvWebPort.PoC.SdvBlazor/wwwroot/`
+2. Wire up the real VFS (FSA/OPFS from Phase 1a) instead of InMemoryVfs —
+   the user uploads their GOG files via the browser UI
+3. Run the PoC — the Cecil rewriter will rewrite real SDV's File/Directory
+   calls; SdvFileShim routes them to the VFS
+4. If SDV uses File/Directory patterns not in `_rewriteMap`, add them
+   (e.g., `File.ReadAllText(string, Encoding)`, `Directory.GetDirectories`,
+   `Path.Combine`, etc.)
+5. Verify the SDV title screen renders (headless screenshot)
 
-**Why this approach:** Phase 2.6 proved the facade→KNI + game loop pipeline
-works. The only remaining gap for real SDV is file system access. Cecil
-rewriting is the cleanest approach (no Harmony/IL.Emit risk, no runtime hooks).
+**Why this approach:** Phase 2.75 proved the Cecil rewriting approach works.
+The only remaining gap for real SDV is coverage of all its file system
+patterns. Iteratively add patterns until the title screen renders.
 
-**Branch:** create `feat/phase2.75-sdv-fs-redirect` from `main`.
+**Branch:** create `feat/phase2.8-real-sdv-test` from `main`.
 
 ---
 
@@ -428,6 +421,46 @@ MockSdv.dll (compiled against MonoGame.Framework v3.8.5.0)
 Project: `src/SdvWebPort.PoC.SdvBlazor/` (net8.0 BlazorWebAssembly)
 Screenshot: `download/phase2.6-sdv-blazor-canvas.png` (477,500 CornflowerBlue pixels)
 
+### 15. Cecil IL rewriting for file system redirect (Phase 2.75, v1.1.0)
+
+Mono.Cecil 0.11.6 works in WASM (pure managed, no native deps) for rewriting
+SDV's `System.IO.File.*` / `System.IO.Directory.*` calls to `SdvFileShim.*`.
+
+**Two critical fixes discovered during Phase 2.75:**
+
+1. **TypeLoadException** — Cecil's `new TypeReference(...)` with `scope: module.TypeSystem.CoreLibrary`
+   scopes the type to `System.Runtime`, but `SdvFileShim` lives in `SdvWebPort.Vfs`.
+   Fix: use `module.ImportReference(Type)` from the loaded AppDomain assembly.
+
+2. **MissingMethodException** — Using `callee.ReturnType` (e.g., `FileStream` from
+   `File.OpenRead`) for the shim method reference fails because `SdvFileShim.OpenRead`
+   returns `Stream` (not `FileStream`). Fix: import each shim method via
+   `module.ImportReference(MethodInfo)` so return types + parameter types are correct.
+
+**Working pattern** (in `src/SdvWebPort.Rewriter/SdvFileSystemRewriter.cs`):
+```csharp
+// Find SdvFileShim type in the loaded AppDomain
+var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+    .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+var shimType = vfsAsm.GetType("SdvWebPort.Vfs.SdvFileShim");
+var shimTypeRef = module.ImportReference(shimType);
+
+// Import each shim method (correct return types)
+var shimMethods = new Dictionary<(string, int), MethodReference>();
+foreach (var mi in shimType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+    shimMethods[(mi.Name, mi.GetParameters().Length)] = module.ImportReference(mi);
+
+// In IL: replace File.OpenRead callee with SdvFileShim.OpenRead callee
+instr.Operand = shimMethods[("OpenRead", 1)];
+```
+
+The rewriter runs in-memory on fetched DLL bytes — the user's SDV.dll file
+on disk is NEVER modified (respects constraint C4).
+
+Screenshot: `download/phase2.75-sdv-fs-redirect-canvas.png`
+Evidence: `loadedText='Hello from VFS!'` logged on every frame — the
+`File.OpenRead("Content/test.txt")` call was successfully redirected to VFS.
+
 ---
 
 ## Environment Setup (Quick Reference)
@@ -588,6 +621,27 @@ The GitHub token is in `.env` (gitignored, ephemeral — re-set if needed).
 - Screenshot: `download/phase2.6-sdv-blazor-canvas.png` (477,500 CornflowerBlue pixels)
 - Tagged `v1.0.0-sdv-renders`
 - **Next: Phase 2.75 — redirect real SDV's file system calls to VFS (Cecil rewriter)**
+
+### Phase 2.75 (v1.1.0 — Cecil FS redirect works, VFS-backed SDV renders)
+- Retargeted `SdvWebPort.Vfs` from net10.0 → net8.0
+- Created `SdvWebPort.Vfs.SdvFileShim` — static class with File/Directory-equivalent signatures
+- Created `SdvWebPort.Rewriter` project (net8.0) using Mono.Cecil 0.11.6
+- `SdvFileSystemRewriter.Rewrite(byte[])` scans IL for File/Directory calls, rewrites to SdvFileShim
+- 3 unit tests PASS (verify File.OpenRead, File.Exists, Directory.GetFiles redirected)
+- Created `MockSdv.Target.FileSystemTestGame` — Game that calls `File.OpenRead("Content/test.txt")`
+- Wired rewriter into `SdvBlazor/Pages/Home.razor.cs`: fetch → rewrite → load → instantiate → Run → Tick
+- VFS set up with `InMemoryVfs` containing "Hello from VFS!" test file
+- Two debugging fixes:
+  1. TypeLoadException — use `module.ImportReference(Type)` not `new TypeReference(..., CoreLibrary)`
+  2. MissingMethodException — use `module.ImportReference(MethodInfo)` for correct return types
+- **HEADLESS TEST PASSES ALL 9 CHECKS:**
+  - SDV loaded + Game found + instantiated + Run() returned ✅
+  - Rewriter ran + SdvFileShim called + VFS text loaded ✅
+  - Frames rendered (2220+) + Pixels non-black ✅
+- Key evidence: `loadedText='Hello from VFS!'` on every frame
+- Screenshot: `download/phase2.75-sdv-fs-redirect-canvas.png`
+- Tagged `v1.1.0-sdv-fs-redirect`
+- **Next: Phase 2.8 — test with real GOG SDV.dll + user's Content/*.xnb files**
 
 ---
 

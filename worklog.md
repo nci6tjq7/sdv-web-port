@@ -500,3 +500,63 @@ Stage Summary:
 - All work committed on feat/phase2.6-sdv-blazor branch, pushed to GitHub
 - MEMORY.md updated: Phase 2.6 = DONE, Critical Knowledge #13 (HttpClient absolute URL)
   + #14 (Phase 2.6 complete), Phase 2.75 = NEXT
+
+---
+Task ID: phase2.75-sdv-fs-redirect
+Agent: main
+Task: Phase 2.75 — Cecil IL rewriter to redirect SDV's File/Directory calls to VFS
+
+Work Log:
+- Used writing-plans skill to create docs/superpowers/plans/2026-07-05-phase2.75-sdv-fs-redirect.md
+- Created feat/phase2.75-sdv-fs-redirect branch
+- Task 1: Retargeted SdvWebPort.Vfs from net10.0 → net8.0 + created SdvFileShim.cs
+  (static class with OpenRead/Exists/ReadAllBytes/ReadAllText/GetFiles/DirectoryExists)
+- Task 2: Created SdvWebPort.Rewriter project (net8.0) using Mono.Cecil 0.11.6
+  - SdvFileSystemRewriter.Rewrite(byte[]) scans IL for File/Directory calls
+  - Rewrites call operands to point at SdvFileShim methods
+  - 3 unit tests PASS (verify File.OpenRead, File.Exists, Directory.GetFiles redirected)
+- Task 3: Created MockSdv.Target.FileSystemTestGame — Game that calls File.OpenRead in LoadContent
+- Task 4: Wired rewriter into SdvBlazor/Pages/Home.razor.cs:
+  fetch → InMemoryVfs setup → SdvFileShim.SetVfs → Cecil rewriter → ALC.LoadFromStream →
+  reflection find FileSystemTestGame → Activator.CreateInstance → game.Run() → game.Tick()
+
+Debugging (systematic-debugging skill):
+- Issue 1: TypeLoadException 'Could not resolve SdvWebPort.Vfs.SdvFileShim in System.Runtime'
+  Cause: Rewriter was scoping SdvFileShim TypeReference to module.TypeSystem.CoreLibrary
+  Fix: Use module.ImportReference(Type) from the loaded AppDomain SdvWebPort.Vfs assembly
+- Issue 2: MissingMethodException 'Method not found: FileStream SdvFileShim.OpenRead(string)'
+  Cause: Rewriter used callee.ReturnType (FileStream) but SdvFileShim.OpenRead returns Stream
+  Fix: Import each shim method via module.ImportReference(MethodInfo) so return types match
+
+FINAL HEADLESS TEST RESULT (after both fixes):
+  [+] Canvas pixels: {"nonBlack":91,"cornflower":30,"sample":[100,149,237]}
+  === Verdict === (9/9 PASS)
+  SDV loaded:          PASS
+  Game found:          PASS
+  Game instantiated:   PASS
+  Run() returned:      PASS
+  Rewriter ran:        PASS (1 rewrite: File.OpenRead → SdvFileShim.OpenRead)
+  SdvFileShim called:  PASS
+  VFS text loaded:     PASS ('Hello from VFS!')
+  Frames rendered:     PASS (2220+ frames)
+  Pixels non-black:    PASS
+  [RESULT] PASS — Real SDV Game1 loads + VFS redirect works + renders in browser!
+
+Key evidence: 'loadedText=Hello from VFS!' logged on every frame — the
+File.OpenRead('Content/test.txt') call was successfully redirected to
+SdvFileShim.OpenRead which routed to InMemoryVfs.
+
+Screenshot: download/phase2.75-sdv-fs-redirect-canvas.png
+  - 91 nonBlack, 30 cornflower, sampleColor=[100,149,237] (CornflowerBlue)
+
+Stage Summary:
+- The Cecil IL rewriting approach WORKS for redirecting SDV's file system calls to VFS
+- The rewriter runs in-memory — user's SDV.dll file on disk is never modified (C4 respected)
+- Mono.Cecil 0.11.6 works in WASM (pure managed, no native deps)
+- Two critical Cecil lessons documented in MEMORY.md Critical Knowledge #15:
+  1. Use module.ImportReference(Type) not new TypeReference(..., CoreLibrary)
+  2. Use module.ImportReference(MethodInfo) for correct return types
+- Phase 2.75 complete, tagged v1.1.0-sdv-fs-redirect
+- Next: Phase 2.8 — test with real GOG SDV.dll + user's Content/*.xnb files
+- All work committed on feat/phase2.75-sdv-fs-redirect branch, pushed to GitHub
+- MEMORY.md updated: Phase 2.75 = DONE, Critical Knowledge #15, Phase 2.8 = NEXT
