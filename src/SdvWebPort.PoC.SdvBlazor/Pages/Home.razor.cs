@@ -155,8 +155,9 @@ public partial class Home : ComponentBase
 
         // 5. Pre-fetch SDV dependencies before loading SDV.
         //    ALC.Load is sync — can't do async HttpClient in WASM.
-        Console.WriteLine("[+] Pre-fetching SDV dependencies...");
+        Console.WriteLine("[+] Pre-fetching SDV dependencies + KNI assemblies...");
         var deps = new Dictionary<string, byte[]>();
+        // SDV's own dependencies:
         foreach (var depName in new[] { "xTile", "StardewValley.GameData" })
         {
             try
@@ -167,6 +168,26 @@ public partial class Home : ComponentBase
                 deps[depName] = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(depBytes);
             }
             catch (Exception ex) { Console.WriteLine($"[!] Could not fetch {depName}.dll: {ex.Message}"); }
+        }
+        // KNI assemblies — loaded into the SAME ALC as SDV so TypeForwardedTo resolution works.
+        // Raw .dll files are copied to wwwroot root during publish (NOT _framework/ —
+        // Blazor converts _framework/*.dll to .wasm format which can't be loaded via ALC).
+        foreach (var kniName in new[] {
+            "Xna.Framework", "Xna.Framework.Game", "Xna.Framework.Graphics",
+            "Xna.Framework.Content", "Xna.Framework.Input",
+            "Xna.Framework.Audio", "Xna.Framework.Media",
+            "Xna.Framework.Devices", "Xna.Framework.Storage",
+        })
+        {
+            try
+            {
+                var baseUri = new Uri(HostEnv.BaseAddress);
+                var kniUri = new Uri(baseUri, $"{kniName}.dll");
+                var kniBytes = await _http!.GetByteArrayAsync(kniUri);
+                Console.WriteLine($"[+] Fetched KNI {kniName}.dll: {kniBytes.Length:N0} bytes");
+                deps[kniName] = kniBytes;
+            }
+            catch (Exception ex) { Console.WriteLine($"[!] Could not fetch KNI {kniName}.dll: {ex.Message}"); }
         }
 
         // 6. Load the rewritten SDV DLL into a CUSTOM ALC with pre-loaded deps.
@@ -313,14 +334,25 @@ internal sealed class SdvLoadContext : AssemblyLoadContext
             if (facade != null) return facade;
         }
 
-        // KNI assemblies (Xna.Framework.*) — return runtime's already-loaded versions
-        if (name.StartsWith("Xna.Framework."))
+        // KNI assemblies (Xna.Framework.*) — load from pre-fetched bytes in THIS ALC
+        // (not from the default ALC's runtime versions — TypeForwardedTo requires same ALC)
+        if (name.StartsWith("Xna.Framework"))
         {
+            if (_loaded.TryGetValue(name, out var cachedKni))
+                return cachedKni;
+            if (_preloadedDeps.TryGetValue(name, out var kniBytes))
+            {
+                Console.WriteLine($"[SdvLoadContext] Loading KNI from pre-fetched: {name}");
+                var asm = LoadFromStream(new MemoryStream(kniBytes));
+                _loaded[name] = asm;
+                return asm;
+            }
+            // Fallback: try runtime's version
             var kniAsm = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == name);
             if (kniAsm != null)
             {
-                Console.WriteLine($"[SdvLoadContext] KNI resolve: {name}");
+                Console.WriteLine($"[SdvLoadContext] KNI fallback (runtime): {name}");
                 return kniAsm;
             }
         }
