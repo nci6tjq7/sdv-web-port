@@ -79,25 +79,81 @@ public static class SdvFileSystemRewriter
     {
         int rewrites = 0;
 
-        // Find or import the SdvFileShim type reference.
-        var shimTypeRef = new TypeReference(
+        // Import the SdvFileShim type reference properly.
+        // We need to find the SdvWebPort.Vfs assembly in the resolver and
+        // create a TypeReference that points at it (not at CoreLibrary).
+        TypeReference? shimTypeRef = null;
+
+        // Try to find the SdvWebPort.Vfs assembly via the resolver.
+        // First check if it's already loaded in the current AppDomain.
+        var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+        if (vfsAsm != null)
+        {
+            var shimType = vfsAsm.GetType("SdvWebPort.Vfs.SdvFileShim");
+            if (shimType != null)
+            {
+                // Import the type through the module's ImportReference, which
+                // correctly resolves the assembly reference.
+                shimTypeRef = module.ImportReference(shimType);
+                Console.WriteLine($"[Rewriter] Imported SdvFileShim from {vfsAsm.GetName().Name}");
+
+                // Build a map of shim method references by (name, paramCount).
+                // We import each shim method via reflection so the return types
+                // and parameter types are correct (e.g., OpenRead returns Stream,
+                // not FileStream — the original File.OpenRead returns FileStream).
+                var shimMethodsByName = new Dictionary<(string Name, int ParamCount), MethodReference>();
+                foreach (var mi in shimType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                {
+                    var key = (mi.Name, mi.GetParameters().Length);
+                    if (!shimMethodsByName.ContainsKey(key))
+                    {
+                        var imported = module.ImportReference(mi);
+                        shimMethodsByName[key] = imported;
+                        Console.WriteLine($"[Rewriter] Imported shim method: {mi.Name}({mi.GetParameters().Length} params) → {imported.ReturnType.FullName}");
+                    }
+                }
+
+                foreach (var type in module.GetTypes())
+                {
+                    foreach (var method in type.Methods)
+                    {
+                        if (method.Body == null) continue;
+                        rewrites += RewriteMethod(method, shimTypeRef, shimMethodsByName);
+                    }
+                }
+                return rewrites;
+            }
+        }
+
+        // Fallback: create an AssemblyReference to SdvWebPort.Vfs and a
+        // TypeReference scoped to it (less reliable — return types may not match).
+        Console.WriteLine($"[Rewriter] WARN: SdvWebPort.Vfs assembly not found in AppDomain — using fallback TypeReference");
+        var vfsAsmRef = new AssemblyNameReference("SdvWebPort.Vfs", new Version(1, 0, 0, 0));
+        var existingRef = module.AssemblyReferences.FirstOrDefault(ar => ar.Name == "SdvWebPort.Vfs");
+        if (existingRef != null)
+            vfsAsmRef = existingRef;
+        else
+            module.AssemblyReferences.Add(vfsAsmRef);
+
+        shimTypeRef = new TypeReference(
             @namespace: "SdvWebPort.Vfs",
             name: "SdvFileShim",
             module: module,
-            scope: module.TypeSystem.CoreLibrary);
+            scope: vfsAsmRef);
 
         foreach (var type in module.GetTypes())
         {
             foreach (var method in type.Methods)
             {
                 if (method.Body == null) continue;
-                rewrites += RewriteMethod(method, shimTypeRef);
+                rewrites += RewriteMethodFallback(method, shimTypeRef);
             }
         }
         return rewrites;
     }
 
-    private static int RewriteMethod(MethodDefinition method, TypeReference shimTypeRef)
+    private static int RewriteMethod(MethodDefinition method, TypeReference shimTypeRef, Dictionary<(string Name, int ParamCount), MethodReference> shimMethods)
     {
         int rewrites = 0;
         var instructions = method.Body.Instructions;
@@ -114,15 +170,44 @@ public static class SdvFileSystemRewriter
             if (!_rewriteMap.TryGetValue((declaringType, callee.Name, callee.Parameters.Count), out var shimMethod))
                 continue;
 
-            // Build the new method reference on SdvFileShim
-            var newCallee = new MethodReference(shimMethod, callee.ReturnType, shimTypeRef);
-            foreach (var param in callee.Parameters)
-                newCallee.Parameters.Add(param);
+            // Look up the imported shim method reference (has correct return type)
+            if (!shimMethods.TryGetValue((shimMethod, callee.Parameters.Count), out var newCallee))
+            {
+                Console.WriteLine($"[Rewriter] WARN: shim method {shimMethod}({callee.Parameters.Count}) not found in imports");
+                continue;
+            }
 
             // Replace the operand
             instr.Operand = newCallee;
             rewrites++;
             Console.WriteLine($"[Rewriter] {method.DeclaringType.FullName}::{method.Name}: {declaringType}.{callee.Name} → SdvFileShim.{shimMethod}");
+        }
+        return rewrites;
+    }
+
+    private static int RewriteMethodFallback(MethodDefinition method, TypeReference shimTypeRef)
+    {
+        int rewrites = 0;
+        var instructions = method.Body.Instructions;
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            var instr = instructions[i];
+            if (instr.OpCode != OpCodes.Call && instr.OpCode != OpCodes.Callvirt) continue;
+            if (instr.Operand is not MethodReference callee) continue;
+
+            var declaringType = callee.DeclaringType?.FullName;
+            if (declaringType == null) continue;
+
+            if (!_rewriteMap.TryGetValue((declaringType, callee.Name, callee.Parameters.Count), out var shimMethod))
+                continue;
+
+            var newCallee = new MethodReference(shimMethod, callee.ReturnType, shimTypeRef);
+            foreach (var param in callee.Parameters)
+                newCallee.Parameters.Add(param);
+
+            instr.Operand = newCallee;
+            rewrites++;
+            Console.WriteLine($"[Rewriter] {method.DeclaringType.FullName}::{method.Name}: {declaringType}.{callee.Name} → SdvFileShim.{shimMethod} (fallback)");
         }
         return rewrites;
     }

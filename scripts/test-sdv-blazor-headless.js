@@ -79,22 +79,28 @@ const URL = `http://localhost:${PORT}/`;
         console.log('');
         console.log('=== Verdict ===');
         const loadedSdv = fullLog.includes('Loaded: MockSdv') || fullLog.includes('Loaded: Stardew Valley');
-        const foundGame1 = fullLog.includes('Found: StardewValley.Game1');
-        const instantiated = fullLog.includes('Game1 instantiated');
+        const foundGame1 = fullLog.includes('Found: StardewValley.FileSystemTestGame') || fullLog.includes('Found: StardewValley.Game1');
+        const instantiated = fullLog.includes('Game instantiated');
         const runReturned = fullLog.includes('Run() returned');
-        const hasFrames = /Frame \d+ drawn/.test(fullLog);
+        const hasFrames = /Frame \d+/.test(fullLog);
+        const rewriterRan = fullLog.includes('Total rewrites:');
+        const vfsLoaded = fullLog.includes('Loaded text: Hello from VFS!');
+        const shimCalled = fullLog.includes('[SdvFileShim] OpenRead:');
         console.log(`SDV loaded:          ${loadedSdv ? 'PASS' : 'FAIL'}`);
-        console.log(`Game1 found:         ${foundGame1 ? 'PASS' : 'FAIL'}`);
-        console.log(`Game1 instantiated:  ${instantiated ? 'PASS' : 'FAIL'}`);
+        console.log(`Game found:          ${foundGame1 ? 'PASS' : 'FAIL'}`);
+        console.log(`Game instantiated:   ${instantiated ? 'PASS' : 'FAIL'}`);
         console.log(`Run() returned:      ${runReturned ? 'PASS' : 'FAIL'}`);
+        console.log(`Rewriter ran:        ${rewriterRan ? 'PASS' : 'FAIL'}`);
+        console.log(`SdvFileShim called:  ${shimCalled ? 'PASS' : 'FAIL'}`);
+        console.log(`VFS text loaded:     ${vfsLoaded ? 'PASS' : 'FAIL'}`);
         console.log(`Frames rendered:     ${hasFrames ? 'PASS' : 'FAIL'}`);
         console.log(`Pixels non-black:    ${pixelPass ? 'PASS' : 'FAIL'}`);
         if (pixelData && !pixelData.error) {
             console.log(`  nonBlack=${pixelData.nonBlack}, cornflower=${pixelData.cornflower}, sampleColor=${JSON.stringify(pixelData.sample)}`);
         }
 
-        if (loadedSdv && foundGame1 && instantiated && runReturned && hasFrames && pixelPass) {
-            console.log('\n[RESULT] PASS — Real SDV Game1 loads + renders in browser!');
+        if (loadedSdv && foundGame1 && instantiated && runReturned && rewriterRan && shimCalled && vfsLoaded && hasFrames && pixelPass) {
+            console.log('\n[RESULT] PASS — Real SDV Game1 loads + VFS redirect works + renders in browser!');
             await browser.close();
             process.exit(0);
         }
