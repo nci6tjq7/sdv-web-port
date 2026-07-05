@@ -139,8 +139,12 @@ public partial class Home : ComponentBase
         //    ALC.Load is sync — can't do async HttpClient in WASM.
         Console.WriteLine("[+] Pre-fetching SDV dependencies + KNI assemblies...");
         var deps = new Dictionary<string, byte[]>();
-        // SDV's own dependencies:
-        foreach (var depName in new[] { "xTile", "StardewValley.GameData" })
+        // SDV-specific dependencies that need explicit loading (not in Blazor .wasm bundle
+        // or have version mismatches). Pre-fetch their .dll bytes.
+        // Note: HashFunction uses v1.8.2.2 (matching SDV's AssemblyRef), NOT v2.0.0.
+        foreach (var depName in new[] { "xTile", "StardewValley.GameData",
+            "System.Data.HashFunction.xxHash", "System.Data.HashFunction.Interfaces",
+            "System.Data.HashFunction.Core" })
         {
             try
             {
@@ -177,15 +181,12 @@ public partial class Home : ComponentBase
         Assembly sdvAsm;
         try
         {
-            // Load SDV deps (xTile, GameData) via LoadFromStream (they're not in the bundle)
+            // Load ALL pre-fetched deps (xTile, GameData, HashFunction, KNI) into default ALC
             foreach (var (depName, depBytes) in deps)
             {
-                if (depName == "xTile" || depName == "StardewValley.GameData")
-                {
-                    Console.WriteLine($"[+] Loading {depName} into default ALC...");
-                    try { AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(depBytes)); }
-                    catch (Exception ex) { Console.WriteLine($"[!] Failed loading {depName}: {ex.Message}"); }
-                }
+                Console.WriteLine($"[+] Loading {depName} into default ALC...");
+                try { AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(depBytes)); }
+                catch (Exception ex) { Console.WriteLine($"[!] Failed loading {depName}: {ex.Message}"); }
             }
 
             Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
