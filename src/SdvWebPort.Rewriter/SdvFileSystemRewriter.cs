@@ -40,6 +40,7 @@ public static class SdvFileSystemRewriter
     // for un-routed calls, add entries iteratively.
     private static readonly Dictionary<(string Type, string Method, int ParamCount), string> _rewriteMap = new()
     {
+        // Phase 2.75 PoC — original 7 entries
         { ("System.IO.File", "OpenRead", 1),       "OpenRead" },
         { ("System.IO.File", "Exists", 1),          "Exists" },
         { ("System.IO.File", "ReadAllBytes", 1),    "ReadAllBytes" },
@@ -47,6 +48,22 @@ public static class SdvFileSystemRewriter
         { ("System.IO.Directory", "GetFiles", 1),   "GetFiles" },
         { ("System.IO.Directory", "GetFiles", 2),   "GetFiles" },
         { ("System.IO.Directory", "Exists", 1),     "DirectoryExists" },
+        // Phase 2.8 — gaps discovered by static analysis of real SDV.dll v1.6.15
+        // See docs/superpowers/analysis/2026-07-05-sdv-io-coverage.md
+        { ("System.IO.File", "Open", 2),            "Open" },           // File.Open(string, FileMode)
+        { ("System.IO.File", "Open", 3),            "Open" },           // File.Open(string, FileMode, FileAccess)
+        { ("System.IO.File", "ReadAllLines", 1),    "ReadAllLines" },
+        { ("System.IO.File", "AppendAllText", 2),   "AppendAllText" },
+        { ("System.IO.File", "Create", 1),          "Create" },
+        { ("System.IO.File", "CreateText", 1),      "CreateText" },
+        { ("System.IO.File", "Delete", 1),          "Delete" },
+        { ("System.IO.File", "Move", 3),            "Move" },           // File.Move(string, string, bool)
+        { ("System.IO.File", "WriteAllText", 2),    "WriteAllText" },
+        { ("System.IO.Directory", "CreateDirectory", 1), "CreateDirectory" },
+        { ("System.IO.Directory", "Delete", 2),     "DeleteDirectory" },// Directory.Delete(string, bool) → renamed
+        { ("System.IO.Directory", "EnumerateDirectories", 1), "EnumerateDirectories" },
+        // Note: Path.* methods are NOT in the map — they're pure string ops, work fine in WASM
+        // Note: FileStream constructor needs special handling (Newobj opcode, not Call) — TODO
     };
 
     /// <summary>
