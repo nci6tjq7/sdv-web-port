@@ -340,6 +340,35 @@ public partial class Home : ComponentBase
                 }
             }
 
+            // Initialize GameRunner.instance — SDV's Program.Main() normally does this.
+            // GameRunner constructor calls Program.get_sdk() + SDKHelper.EarlyInitialize()
+            // which may fail. Try creating it; if it fails, set a minimal stub.
+            var gameRunnerType = sdvAsm.GetType("StardewValley.GameRunner");
+            if (gameRunnerType != null)
+            {
+                var instanceField = gameRunnerType.GetField("instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (instanceField != null)
+                {
+                    var existingRunner = instanceField.GetValue(null);
+                    if (existingRunner == null)
+                    {
+                        Console.WriteLine("[DIAG] GameRunner.instance is null — creating...");
+                        try
+                        {
+                            var runner = Activator.CreateInstance(gameRunnerType);
+                            instanceField.SetValue(null, runner);
+                            Console.WriteLine($"[DIAG] GameRunner.instance set: {runner != null}");
+                        }
+                        catch (Exception runnerEx)
+                        {
+                            Console.WriteLine($"[DIAG] GameRunner creation failed: {runnerEx.GetType().Name}: {runnerEx.Message}");
+                            // Try setting instance to null explicitly (GetNewInstanceID might handle null)
+                            Console.WriteLine("[DIAG] Continuing without GameRunner.instance...");
+                        }
+                    }
+                }
+            }
+
             gameInstance = Activator.CreateInstance(gameType);
             Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
             // If we get here, inspect the instance
