@@ -251,6 +251,16 @@ public partial class Home : ComponentBase
             var inner = ex.InnerException ?? ex;
             Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
             Console.WriteLine($"    Stack: {inner.StackTrace}");
+            // Drill deeper for TypeInitializationException
+            var deepInner = inner.InnerException;
+            int depth = 0;
+            while (deepInner != null && depth < 5)
+            {
+                depth++;
+                Console.WriteLine($"    Deep[{depth}]: {deepInner.GetType().Name}: {deepInner.Message}");
+                Console.WriteLine($"    Deep[{depth}] Stack: {deepInner.StackTrace?.Split('\n')[0]}");
+                deepInner = deepInner.InnerException;
+            }
             return null;
         }
 
