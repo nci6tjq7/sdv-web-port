@@ -560,3 +560,43 @@ Stage Summary:
 - Next: Phase 2.8 — test with real GOG SDV.dll + user's Content/*.xnb files
 - All work committed on feat/phase2.75-sdv-fs-redirect branch, pushed to GitHub
 - MEMORY.md updated: Phase 2.75 = DONE, Critical Knowledge #15, Phase 2.8 = NEXT
+
+---
+Task ID: phase2.8-real-sdv
+Agent: main
+Task: Phase 2.8 — load real GOG SDV.dll + instantiate GameRunner
+
+Work Log:
+- Read MEMORY.md to resume context — Phase 2.75 complete, Phase 2.8 NEXT
+- Discovered previous session's Phase 2.8 work was NEVER COMMITTED (lost on context reset)
+- Re-extracted GOG installer to /tmp/sdv-extract/
+- Installed superpowers skills (14 skills)
+- Installed .NET 8 SDK (8.0.412) + wasm-tools workload
+- Created feat/phase2.8-real-sdv branch
+- Inspected SDV.dll: 33 AssemblyRefs, 955 types, 9 P/Invoke sites
+- Discovered Game1 derives from InstanceGame (NOT GameRunner as previous summary claimed)
+- GameRunner derives from Microsoft.Xna.Framework.Game (KNI via facade)
+- Program.Main creates GameRunner, NOT Game1 directly
+- Built SdvAssemblyRefRewriter: rewrites AssemblyRefs (System.* v6→v8, MG v3.8.0.1641→v3.8.5.0)
+- Built RefAssemblyResolver: 42 embedded ref/runtime assemblies for Cecil resolution
+- Built TypeRef scope rewriter: bypasses trimmer-stripped type-forwards
+- Extended facade: 407 TypeForwardedTo (added Audio/Media/XR — was missing!)
+- Built SdvLoader: preloads System.* + KNI assemblies, loads SDV + deps into default ALC
+- Set Program._sdk = NullSDKHelper via reflection (bypasses Steam/Galaxy SDK)
+- GameRunner type found via GetType() (base: Microsoft.Xna.Framework.Game from KNI)
+
+REMAINING BLOCKER:
+- GameRunner instantiation fails: BadImageFormatException for WaveBank field
+- The BlazorWebAssembly trimmer strips types from KNI assemblies
+- Xna.Framework.Audio.wasm is 16KB (source: 67KB) — heavily trimmed
+- Despite PublishTrimmed=false + TrimmerRootAssembly + TrimmerRootDescriptor
+- The trimmer's behavior is fundamentally incompatible with runtime-loaded assemblies
+  that reference types not directly used by the host app
+
+Stage Summary:
+- Massive progress: real SDV loads, all AssemblyRefs fixed, Cecil rewriters work,
+  GameRunner type resolves through facade→KNI chain
+- Root cause of remaining blocker: BlazorWebAssembly trimmer strips types from
+  KNI assemblies even with all preservation settings enabled
+- Next: ship KNI DLLs as static files + load via LoadFromStream (bypasses trimmer)
+- All work committed on feat/phase2.8-real-sdv branch
