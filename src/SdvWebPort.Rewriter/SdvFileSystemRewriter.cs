@@ -241,6 +241,23 @@ public static class SdvFileSystemRewriter
             if (typeRefRewrites > 0)
                 Console.WriteLine($"[Rewriter] Rewrote {typeRefRewrites} TypeRef scopes (MonoGame.Framework → KNI)");
 
+            // Debug: log all TypeRefs that point at System.Private.CoreLib
+            // (to verify Action`7 etc. have correct scope)
+            int coreLibTypeRefs = 0;
+            foreach (var tr in module.GetTypeReferences())
+            {
+                if (tr.Scope is AssemblyNameReference scope)
+                {
+                    if (scope.Name == "System.Private.CoreLib" && tr.FullName.Contains("Action"))
+                    {
+                        Console.WriteLine($"[Rewriter] DEBUG: TypeRef {tr.FullName} → scope={scope.Name}");
+                        coreLibTypeRefs++;
+                    }
+                }
+            }
+            if (coreLibTypeRefs > 0)
+                Console.WriteLine($"[Rewriter] DEBUG: Found {coreLibTypeRefs} Action TypeRefs pointing to CoreLib");
+
             totalRewrites += RewriteModule(module);
         }
         Console.WriteLine($"[Rewriter] Total rewrites: {totalRewrites}");

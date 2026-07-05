@@ -190,13 +190,26 @@ public partial class Home : ComponentBase
             catch (Exception ex) { Console.WriteLine($"[!] Could not fetch KNI {kniName}.dll: {ex.Message}"); }
         }
 
-        // 6. Load the rewritten SDV DLL into a CUSTOM ALC with pre-loaded deps.
+        // 6. Load SDV dependencies (xTile, GameData) into default ALC FIRST,
+        //    then load SDV itself into default ALC.
+        // Default ALC gives direct access to CoreLib's type table (no cross-ALC issues
+        // for Action`7, IComparable, etc.).
         Assembly sdvAsm;
         try
         {
-            Console.WriteLine("[+] Loading rewritten SDV into SdvLoadContext...");
-            var alc = new SdvLoadContext(deps);
-            sdvAsm = alc.LoadFromStream(new MemoryStream(rewrittenBytes));
+            // Load SDV-specific deps (xTile, GameData) into default ALC.
+            // KNI assemblies are already in the Blazor bundle — don't re-load them.
+            foreach (var (depName, depBytes) in deps)
+            {
+                if (depName == "xTile" || depName == "StardewValley.GameData")
+                {
+                    Console.WriteLine($"[+] Loading {depName} into default ALC...");
+                    try { AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(depBytes)); }
+                    catch (Exception ex) { Console.WriteLine($"[!] Failed loading {depName}: {ex.Message}"); }
+                }
+            }
+            Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
+            sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenBytes));
             Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
         }
         catch (Exception ex)
@@ -239,6 +252,15 @@ public partial class Home : ComponentBase
         Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
 
         // 7. Instantiate the Game via Activator.CreateInstance.
+        // Debug: list all loaded assemblies containing "Xna" or "MonoGame"
+        Console.WriteLine("[+] === Loaded Xna/MonoGame assemblies ===");
+        foreach (var a in AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => a.GetName().Name?.Contains("Xna") == true || a.GetName().Name?.Contains("MonoGame") == true)
+            .OrderBy(a => a.GetName().Name))
+        {
+            Console.WriteLine($"    {a.FullName} (ALC: {AssemblyLoadContext.GetLoadContext(a)?.Name ?? "default"})");
+        }
+        Console.WriteLine("[+] === End assembly list ===");
         object? gameInstance;
         try
         {
