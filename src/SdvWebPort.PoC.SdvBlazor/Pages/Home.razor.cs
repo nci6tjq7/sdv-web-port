@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.JSInterop;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Platform;
+using Microsoft.Xna.Platform.Input;
 using System;
 using System.IO;
 using System.Linq;
@@ -233,6 +235,21 @@ public partial class Home : ComponentBase
         Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
 
         // 7. Instantiate the Game via Activator.CreateInstance.
+        // Register KNI factories FIRST (required by Game constructor).
+        Console.WriteLine("[+] Registering KNI ConcreteGameFactory + ConcreteInputFactory...");
+        try
+        {
+            GameFactory.RegisterGameFactory(new ConcreteGameFactory());
+            Console.WriteLine("[+] ConcreteGameFactory registered");
+        }
+        catch (Exception ex) { Console.WriteLine($"[!] GameFactory registration: {ex.Message}"); }
+        try
+        {
+            InputFactory.RegisterInputFactory(new ConcreteInputFactory());
+            Console.WriteLine("[+] ConcreteInputFactory registered");
+        }
+        catch (Exception ex) { Console.WriteLine($"[!] InputFactory registration: {ex.Message}"); }
+
         // Debug: list all loaded assemblies
         Console.WriteLine("[+] === Loaded assemblies (count: " + AppDomain.CurrentDomain.GetAssemblies().Length + ") ===");
         foreach (var a in AppDomain.CurrentDomain.GetAssemblies()
