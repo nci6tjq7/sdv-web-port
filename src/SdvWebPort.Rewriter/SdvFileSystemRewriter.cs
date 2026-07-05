@@ -27,6 +27,26 @@ namespace SdvWebPort.Rewriter;
 /// </summary>
 public static class SdvFileSystemRewriter
 {
+    // Types that exist in KNI .dll but are stripped from KNI's Blazor.GL .wasm version.
+    // These are XACT audio types (browser doesn't support XACT audio).
+    // The facade (MonoGame.Framework) has stub definitions for these.
+    private static readonly HashSet<string> MissingFromKniWasm = new()
+    {
+        "Microsoft.Xna.Framework.Audio.WaveBank",
+        "Microsoft.Xna.Framework.Audio.AudioEngine",
+        "Microsoft.Xna.Framework.Audio.Cue",
+        "Microsoft.Xna.Framework.Audio.SoundBank",
+        "Microsoft.Xna.Framework.Audio.AudioCategory",
+        "Microsoft.Xna.Framework.Audio.AudioChannels",
+        "Microsoft.Xna.Framework.Audio.AudioStopOptions",
+        "Microsoft.Xna.Framework.Audio.InstancePlayLimitException",
+        "Microsoft.Xna.Framework.Audio.NoAudioHardwareException",
+        "Microsoft.Xna.Framework.Audio.NoMicrophoneConnectedException",
+        "Microsoft.Xna.Framework.Audio.Microphone",
+        "Microsoft.Xna.Framework.Audio.MicrophoneState",
+        "Microsoft.Xna.Platform.Audio.MicrophoneStrategy",
+    };
+
     // Maps (DeclaringTypeFullName, MethodName, ParameterCount) → ShimMethodName
     //
     // Phase 2.75 PoC — covers MockSdv.Target's File.OpenRead pattern.
@@ -198,65 +218,13 @@ public static class SdvFileSystemRewriter
             if (asmRefRewrites > 0)
                 Console.WriteLine($"[Rewriter] Rewrote {asmRefRewrites} AssemblyRef entries");
 
-            // Rewrite TypeRef scopes: change MonoGame.Framework → actual KNI assembly.
-            // The WASM native type loader does NOT follow TypeForwardedTo for dynamically
-            // loaded assemblies. So we directly rewrite each TypeRef's scope to point at
-            // the KNI assembly where the type is actually defined (e.g., WaveBank → Xna.Framework.Audio).
-            // This bypasses the facade's TypeForwardedTo mechanism entirely.
-            int typeRefRewrites = 0;
-            // Build KNI assembly name → AssemblyNameReference map (from existing refs or create new)
-            var kniAsmRefs = new Dictionary<string, AssemblyNameReference>();
-            foreach (var ar in module.AssemblyReferences)
-            {
-                if (ar.Name.StartsWith("Xna.Framework"))
-                    kniAsmRefs[ar.Name] = ar;
-            }
-            // Also check for MonoGame.Framework ref (the facade)
-            var mgRef = module.AssemblyReferences.FirstOrDefault(ar => ar.Name == "MonoGame.Framework");
-
-            // Need to add missing KNI assembly references
-            foreach (var module2 in asmDef.Modules) // iterate again to find all needed KNI refs
-            {
-                foreach (var tr in module2.GetTypeReferences())
-                {
-                    if (tr.Scope is not AssemblyNameReference scopeRef) continue;
-                    if (scopeRef.Name != "MonoGame.Framework") continue;
-
-                    var fullName = tr.FullName;
-                    if (TypeMap.TypeToAssembly.TryGetValue(fullName, out var targetAsmName))
-                    {
-                        // Find or create the KNI AssemblyNameReference
-                        if (!kniAsmRefs.TryGetValue(targetAsmName, out var kniRef))
-                        {
-                            kniRef = new AssemblyNameReference(targetAsmName, new Version(4, 2, 9001, 0));
-                            module.AssemblyReferences.Add(kniRef);
-                            kniAsmRefs[targetAsmName] = kniRef;
-                        }
-                        // Rewrite the TypeRef's scope
-                        tr.Scope = kniRef;
-                        typeRefRewrites++;
-                    }
-                }
-            }
-            if (typeRefRewrites > 0)
-                Console.WriteLine($"[Rewriter] Rewrote {typeRefRewrites} TypeRef scopes (MonoGame.Framework → KNI)");
-
-            // Debug: log all TypeRefs that point at System.Private.CoreLib
-            // (to verify Action`7 etc. have correct scope)
-            int coreLibTypeRefs = 0;
-            foreach (var tr in module.GetTypeReferences())
-            {
-                if (tr.Scope is AssemblyNameReference scope)
-                {
-                    if (scope.Name == "System.Private.CoreLib" && tr.FullName.Contains("Action"))
-                    {
-                        Console.WriteLine($"[Rewriter] DEBUG: TypeRef {tr.FullName} → scope={scope.Name}");
-                        coreLibTypeRefs++;
-                    }
-                }
-            }
-            if (coreLibTypeRefs > 0)
-                Console.WriteLine($"[Rewriter] DEBUG: Found {coreLibTypeRefs} Action TypeRefs pointing to CoreLib");
+            // TypeRef scope rewriting is DISABLED for now.
+            // In default ALC, the facade's TypeForwardedTo should work (same ALC as KNI).
+            // Loading KNI .wasm into default ALC breaks CoreLib type resolution (Action`7 issue).
+            // The facade has stubs for types missing from KNI .wasm (WaveBank etc.).
+            // If TypeForwardedTo doesn't work, re-enable this block.
+            // int typeRefRewrites = 0;
+            // ... (TypeRef rewriting code disabled) ...
 
             totalRewrites += RewriteModule(module);
         }

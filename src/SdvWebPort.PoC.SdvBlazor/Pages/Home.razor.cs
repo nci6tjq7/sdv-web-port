@@ -190,15 +190,12 @@ public partial class Home : ComponentBase
             catch (Exception ex) { Console.WriteLine($"[!] Could not fetch KNI {kniName}.dll: {ex.Message}"); }
         }
 
-        // 6. Load SDV dependencies (xTile, GameData) into default ALC FIRST,
-        //    then load SDV itself into default ALC.
-        // Default ALC gives direct access to CoreLib's type table (no cross-ALC issues
-        // for Action`7, IComparable, etc.).
+        // 6. Load SDV deps (xTile, GameData) into default ALC, then load SDV.
+        //    KNI assemblies already loaded in step 2.
         Assembly sdvAsm;
         try
         {
-            // Load SDV-specific deps (xTile, GameData) into default ALC.
-            // KNI assemblies are already in the Blazor bundle — don't re-load them.
+            // Load SDV deps (xTile, GameData) via LoadFromStream (they're not in the bundle)
             foreach (var (depName, depBytes) in deps)
             {
                 if (depName == "xTile" || depName == "StardewValley.GameData")
@@ -208,6 +205,7 @@ public partial class Home : ComponentBase
                     catch (Exception ex) { Console.WriteLine($"[!] Failed loading {depName}: {ex.Message}"); }
                 }
             }
+
             Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
             sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenBytes));
             Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
@@ -261,6 +259,32 @@ public partial class Home : ComponentBase
             Console.WriteLine($"    {a.FullName} (ALC: {AssemblyLoadContext.GetLoadContext(a)?.Name ?? "default"})");
         }
         Console.WriteLine("[+] === End assembly list ===");
+
+        // Debug: check if WaveBank exists in loaded Xna.Framework.Audio
+        var audioAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Xna.Framework.Audio");
+        if (audioAsm != null)
+        {
+            Console.WriteLine($"[+] Xna.Framework.Audio loaded: {audioAsm.FullName}");
+            var waveBankType = audioAsm.GetType("Microsoft.Xna.Framework.Audio.WaveBank");
+            Console.WriteLine($"[+] WaveBank type found: {waveBankType != null}");
+            if (waveBankType == null)
+            {
+                // List all types in the assembly
+                Console.WriteLine("[+] Types in Xna.Framework.Audio:");
+                Type[] audioTypes;
+                try { audioTypes = audioAsm.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { audioTypes = ex.Types.Where(t => t != null).ToArray()!; }
+                foreach (var t in audioTypes.Where(t => t.Name.Contains("Wave") || t.Name.Contains("Sound") || t.Name.Contains("Audio")).Take(20))
+                    Console.WriteLine($"    - {t.FullName}");
+                Console.WriteLine($"    (total {audioTypes.Length} types)");
+            }
+        }
+        else
+        {
+            Console.WriteLine("[!] Xna.Framework.Audio NOT loaded!");
+        }
+
         object? gameInstance;
         try
         {
