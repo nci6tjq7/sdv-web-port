@@ -17,6 +17,20 @@
     <ProjectReference Include="..\MonoGame.Framework.Facade\MonoGame.Framework.Facade.csproj" />
   </ItemGroup>
 
+  <!-- Phase 2.75: Cecil rewriter + VFS for redirecting SDV's File/Directory calls. -->
+  <ItemGroup>
+    <ProjectReference Include="..\SdvWebPort.Rewriter\SdvWebPort.Rewriter.csproj" />
+    <ProjectReference Include="..\SdvWebPort.Vfs\SdvWebPort.Vfs.csproj" />
+  </ItemGroup>
+
+  <!-- Prevent the trimmer from stripping Cecil (pure managed, but metadata-only refs
+       from the Rewriter may cause the trimmer to strip it). -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Mono.Cecil" />
+    <TrimmerRootAssembly Include="SdvWebPort.Rewriter" />
+    <TrimmerRootAssembly Include="SdvWebPort.Vfs" />
+  </ItemGroup>
+
   <!-- KNI Blazor.GL platform — provides ConcreteGameFactory + ConcreteInputFactory +
        the game loop infrastructure. Same packages as BlazorGameLoop (Phase 2.5b). -->
   <ItemGroup>

@@ -80,17 +80,12 @@ public partial class Home : ComponentBase
     private async Task<Game?> LoadAndInstantiateGame1()
     {
         // 1. Fetch "Stardew Valley.dll" from wwwroot.
-        //    For testing, this is MockSdv.dll (a real Game1 subclass compiled against
-        //    MonoGame.Framework). For real SDV, the user copies their GOG
-        //    "Stardew Valley.dll" here.
         const string sdvUrl = "Stardew Valley.dll";
         Console.WriteLine($"[+] Fetching SDV from: {sdvUrl}");
         Console.WriteLine($"[+] Base address: {HostEnv.BaseAddress}");
         byte[] sdvBytes;
         try
         {
-            // Construct absolute URL from the host environment's base address
-            // (the relative URL alone fails with net_http_client_invalid_requesturi).
             var absoluteUri = new Uri(new Uri(HostEnv.BaseAddress), sdvUrl);
             Console.WriteLine($"[+] Absolute URL: {absoluteUri}");
             sdvBytes = await _http!.GetByteArrayAsync(absoluteUri);
@@ -99,13 +94,33 @@ public partial class Home : ComponentBase
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] Could not fetch {sdvUrl}: {ex.Message}");
-            Console.WriteLine("[!] Place 'Stardew Valley.dll' (or MockSdv.dll renamed) in wwwroot/");
             return null;
         }
 
-        // 2. Verify the MonoGame.Framework facade is loaded (for TypeForwardedTo resolution).
-        //    On net8.0 BlazorWebAssembly, the facade should be auto-loaded because it's
-        //    a ProjectReference. Check anyway.
+        // 2. Set up the VFS with a test file (simulates user's uploaded GOG files).
+        //    In production, this is where the user's FSA/OPFS-uploaded files go.
+        var vfs = new SdvWebPort.Vfs.InMemoryVfs();
+        await vfs.WriteFileAsync("Content/test.txt", System.Text.Encoding.UTF8.GetBytes("Hello from VFS!"));
+        SdvWebPort.Vfs.SdvFileShim.SetVfs(vfs);
+        Console.WriteLine("[+] VFS set up with Content/test.txt");
+
+        // 3. Run the Cecil rewriter on the SDV bytes (in-memory, user's file untouched).
+        byte[] rewrittenBytes;
+        try
+        {
+            Console.WriteLine("[+] Running Cecil rewriter (redirect File/Directory → SdvFileShim)...");
+            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(sdvBytes);
+            Console.WriteLine($"[+] Rewritten: {rewrittenBytes.Length:N0} bytes");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"    Stack: {ex.StackTrace}");
+            // Fall back to original bytes (rewriter failed — SDV's File calls will throw at runtime)
+            rewrittenBytes = sdvBytes;
+        }
+
+        // 4. Verify the MonoGame.Framework facade is loaded.
         Assembly? facadeAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "MonoGame.Framework");
         if (facadeAssembly == null)
@@ -124,14 +139,12 @@ public partial class Home : ComponentBase
         }
         Console.WriteLine($"[+] Facade assembly: {facadeAssembly.FullName}");
 
-        // 3. Load the SDV DLL into the DEFAULT ALC.
-        //    TypeForwardedTo resolution requires the SDV assembly + facade + KNI
-        //    to all be in the same ALC (the default ALC).
+        // 5. Load the rewritten SDV DLL into the DEFAULT ALC.
         Assembly sdvAsm;
         try
         {
-            Console.WriteLine("[+] Loading SDV into default ALC...");
-            sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(sdvBytes));
+            Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
+            sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenBytes));
             Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
         }
         catch (Exception ex)
@@ -140,35 +153,36 @@ public partial class Home : ComponentBase
             return null;
         }
 
-        // 4. Find StardewValley.Game1 via reflection.
-        Type? game1Type = sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.Game1");
-        if (game1Type == null)
+        // 6. Find the Game type via reflection.
+        //    Try FileSystemTestGame first (for Phase 2.75 testing), fall back to Game1.
+        Type? gameType = sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.FileSystemTestGame")
+                         ?? sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (gameType == null)
         {
-            Console.WriteLine("[FAIL] StardewValley.Game1 not found in SDV assembly");
-            Console.WriteLine("[!] Types found:");
+            Console.WriteLine("[FAIL] No Game type found in SDV assembly");
             foreach (var t in sdvAsm.GetTypes().Take(20))
                 Console.WriteLine($"    - {t.FullName}");
             return null;
         }
-        Console.WriteLine($"[+] Found: {game1Type.FullName}");
-        Console.WriteLine($"[+] Base type: {game1Type.BaseType?.FullName} (asm: {game1Type.BaseType?.Assembly.GetName().Name})");
+        Console.WriteLine($"[+] Found: {gameType.FullName}");
+        Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
 
-        // 5. Instantiate Game1 via Activator.CreateInstance.
-        object? game1Instance;
+        // 7. Instantiate the Game via Activator.CreateInstance.
+        object? gameInstance;
         try
         {
-            game1Instance = Activator.CreateInstance(game1Type);
-            Console.WriteLine($"[+] Game1 instantiated: {game1Instance?.GetType().FullName}");
+            gameInstance = Activator.CreateInstance(gameType);
+            Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FAIL] Game1 instantiation threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"[FAIL] Game instantiation threw: {ex.GetType().Name}: {ex.Message}");
             var inner = ex.InnerException ?? ex;
             Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
             Console.WriteLine($"    Stack: {inner.StackTrace}");
             return null;
         }
 
-        return (Game?)game1Instance;
+        return (Game?)gameInstance;
     }
 }
