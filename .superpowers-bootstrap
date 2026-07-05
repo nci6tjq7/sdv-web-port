@@ -1,16 +1,5 @@
 # Superpowers Bootstrap
 # Created by install.sh. Presence indicates superpowers is installed.
-#
-# ── SESSION RESUME INSTRUCTIONS ──────────────────────────────────────
-# This is a LONG-TERM project. Before doing any work:
-#
-#   1. Read /home/z/my-project/MEMORY.md  ← PROJECT MEMORY (required)
-#   2. Read /home/z/my-project/worklog.md ← chronological work log
-#   3. Read /home/z/my-project/AGENTS.md  ← project-specific guidelines
-#   4. Check: git log --oneline -10 && git tag
-#
-# MEMORY.md survives session resets because it is committed to git and
-# pushed to GitHub. It contains everything you need to resume work.
-#
-# To activate the skill system: Skill tool → command="using-superpowers"
-# ─────────────────────────────────────────────────────────────────────
+# The using-superpowers skill references this file as a first action.
+# If you are reading this, superpowers is installed and ready.
+# Invoke the skill system: Skill tool -> command="using-superpowers"

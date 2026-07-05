@@ -198,6 +198,49 @@ public static class SdvFileSystemRewriter
             if (asmRefRewrites > 0)
                 Console.WriteLine($"[Rewriter] Rewrote {asmRefRewrites} AssemblyRef entries");
 
+            // Rewrite TypeRef scopes: change MonoGame.Framework → actual KNI assembly.
+            // The WASM native type loader does NOT follow TypeForwardedTo for dynamically
+            // loaded assemblies. So we directly rewrite each TypeRef's scope to point at
+            // the KNI assembly where the type is actually defined (e.g., WaveBank → Xna.Framework.Audio).
+            // This bypasses the facade's TypeForwardedTo mechanism entirely.
+            int typeRefRewrites = 0;
+            // Build KNI assembly name → AssemblyNameReference map (from existing refs or create new)
+            var kniAsmRefs = new Dictionary<string, AssemblyNameReference>();
+            foreach (var ar in module.AssemblyReferences)
+            {
+                if (ar.Name.StartsWith("Xna.Framework"))
+                    kniAsmRefs[ar.Name] = ar;
+            }
+            // Also check for MonoGame.Framework ref (the facade)
+            var mgRef = module.AssemblyReferences.FirstOrDefault(ar => ar.Name == "MonoGame.Framework");
+
+            // Need to add missing KNI assembly references
+            foreach (var module2 in asmDef.Modules) // iterate again to find all needed KNI refs
+            {
+                foreach (var tr in module2.GetTypeReferences())
+                {
+                    if (tr.Scope is not AssemblyNameReference scopeRef) continue;
+                    if (scopeRef.Name != "MonoGame.Framework") continue;
+
+                    var fullName = tr.FullName;
+                    if (TypeMap.TypeToAssembly.TryGetValue(fullName, out var targetAsmName))
+                    {
+                        // Find or create the KNI AssemblyNameReference
+                        if (!kniAsmRefs.TryGetValue(targetAsmName, out var kniRef))
+                        {
+                            kniRef = new AssemblyNameReference(targetAsmName, new Version(4, 2, 9001, 0));
+                            module.AssemblyReferences.Add(kniRef);
+                            kniAsmRefs[targetAsmName] = kniRef;
+                        }
+                        // Rewrite the TypeRef's scope
+                        tr.Scope = kniRef;
+                        typeRefRewrites++;
+                    }
+                }
+            }
+            if (typeRefRewrites > 0)
+                Console.WriteLine($"[Rewriter] Rewrote {typeRefRewrites} TypeRef scopes (MonoGame.Framework → KNI)");
+
             totalRewrites += RewriteModule(module);
         }
         Console.WriteLine($"[Rewriter] Total rewrites: {totalRewrites}");

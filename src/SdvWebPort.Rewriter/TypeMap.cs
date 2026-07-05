@@ -1,6 +1,16 @@
-// 426 type → assembly mappings
-var typeToAssembly = new Dictionary<string, string>
+using System.Collections.Generic;
+
+namespace SdvWebPort.Rewriter;
+
+/// <summary>
+/// Maps KNI type full names to their defining assembly name.
+/// Used by SdvFileSystemRewriter to rewrite TypeRef scopes from MonoGame.Framework
+/// to the actual KNI assembly (bypassing TypeForwardedTo which doesn't work in WASM).
+/// </summary>
+public static class TypeMap
 {
+    public static readonly Dictionary<string, string> TypeToAssembly = new Dictionary<string, string>
+    {
     { "Microsoft.Xna.Framework.Audio.AudioCategory", "Xna.Framework.Audio" },
     { "Microsoft.Xna.Framework.Audio.AudioChannels", "Xna.Framework.Audio" },
     { "Microsoft.Xna.Framework.Audio.AudioEmitter", "Xna.Framework.Audio" },
@@ -427,4 +437,5 @@ var typeToAssembly = new Dictionary<string, string>
     { "Microsoft.Xna.Platform.Storage.StorageServiceStrategy", "Xna.Framework.Storage" },
     { "Microsoft.Xna.Platform.TitleContainerFactory", "Xna.Framework.Content" },
     { "Microsoft.Xna.Platform.TitleContainerStrategy", "Xna.Framework.Content" },
-};
+    };
+}
