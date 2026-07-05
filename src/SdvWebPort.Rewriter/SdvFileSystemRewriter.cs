@@ -255,6 +255,41 @@ public static class SdvFileSystemRewriter
             // ... (TypeRef rewriting code disabled) ...
 
             totalRewrites += RewriteModule(module);
+
+            // Patch Game1..ctor(): replace GameRunner.instance.GetNewInstanceID() with 0
+            // GameRunner can't be created in WASM (Mono assertion), so we bypass it.
+            var game1Type = module.GetType("StardewValley.Game1");
+            if (game1Type != null)
+            {
+                var game1Ctor = game1Type.Methods.FirstOrDefault(m => m.Name == ".ctor" && m.Parameters.Count == 0);
+                if (game1Ctor?.Body != null)
+                {
+                    var instrs = game1Ctor.Body.Instructions;
+                    for (int i = 0; i < instrs.Count - 1; i++)
+                    {
+                        // Look for: ldsfld GameRunner.instance → callvirt GetNewInstanceID()
+                        if (instrs[i].OpCode == OpCodes.Ldsfld &&
+                            instrs[i].Operand is Mono.Cecil.FieldReference fr &&
+                            fr.DeclaringType?.FullName == "StardewValley.GameRunner" &&
+                            fr.Name == "instance")
+                        {
+                            // Check next instruction is callvirt GetNewInstanceID
+                            if (i + 1 < instrs.Count &&
+                                instrs[i + 1].OpCode == OpCodes.Callvirt &&
+                                instrs[i + 1].Operand is MethodReference mr &&
+                                mr.Name == "GetNewInstanceID")
+                            {
+                                // Replace ldsfld + callvirt with ldc.i4.0
+                                var processor = game1Ctor.Body.GetILProcessor();
+                                processor.Replace(instrs[i], processor.Create(OpCodes.Ldc_I4_0));
+                                processor.Replace(instrs[i + 1], processor.Create(OpCodes.Nop));
+                                Console.WriteLine("[Rewriter] Patched Game1..ctor(): GameRunner.instance.GetNewInstanceID() → 0");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
         Console.WriteLine($"[Rewriter] Total rewrites: {totalRewrites}");
 

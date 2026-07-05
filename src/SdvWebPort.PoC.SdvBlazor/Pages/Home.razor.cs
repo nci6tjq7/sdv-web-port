@@ -358,32 +358,13 @@ public partial class Home : ComponentBase
                 }
             }
 
-            // Now create GameRunner — with _sdk pre-set, get_sdk() returns NullSDKHelper
-            var gameRunnerType = sdvAsm.GetType("StardewValley.GameRunner");
-            if (gameRunnerType != null)
-            {
-                var instanceField = gameRunnerType.GetField("instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                if (instanceField != null)
-                {
-                    var existingRunner = instanceField.GetValue(null);
-                    if (existingRunner == null)
-                    {
-                        Console.WriteLine("[DIAG] GameRunner.instance is null — creating...");
-                        try
-                        {
-                            var runner = Activator.CreateInstance(gameRunnerType);
-                            instanceField.SetValue(null, runner);
-                            Console.WriteLine($"[DIAG] GameRunner.instance set: {runner != null}");
-                        }
-                        catch (Exception runnerEx)
-                        {
-                            Console.WriteLine($"[DIAG] GameRunner creation failed: {runnerEx.GetType().Name}: {runnerEx.Message}");
-                            // Try setting instance to null explicitly (GetNewInstanceID might handle null)
-                            Console.WriteLine("[DIAG] Continuing without GameRunner.instance...");
-                        }
-                    }
-                }
-            }
+            // Instead of creating GameRunner (which crashes), try creating Game1
+            // with GameRunner.instance = null. Game1..ctor() calls
+            // GameRunner.instance.GetNewInstanceID() which will NPE.
+            // BUT: if we Cecil-patch that call to return 0, Game1 might work.
+            // For now, just try and see the exact error.
+            Console.WriteLine("[DIAG] Skipping GameRunner entirely — trying Game1 directly...");
+            // Remove the manual GameRunner steps — they don't work (type mismatch)
 
             gameInstance = Activator.CreateInstance(gameType);
             Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
