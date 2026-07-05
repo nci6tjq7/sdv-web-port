@@ -443,3 +443,60 @@ Stage Summary:
 - All work committed on feat/phase2.5b-blazor-sdk-pivot branch, merged to main
 - MEMORY.md updated: Phase 2.5b = DONE, Critical Knowledge #11 updated with solution,
   #12 added (WebGL canvas pixel verification), Phase 2.6 = NEXT
+
+---
+Task ID: phase2.6-sdv-blazor
+Agent: main
+Task: Phase 2.6 — load real SDV Game1 (MockSdv stand-in) + run game loop on net8.0 BlazorWebAssembly
+
+Work Log:
+- Used writing-plans skill to create docs/superpowers/plans/2026-07-05-phase2.6-sdv-blazor.md
+- Created feat/phase2.6-sdv-blazor branch
+- Task 1: Retargeted MonoGame.Framework.Facade + MockSdv.Target from net10.0 → net8.0
+  (required so the new net8.0 BlazorWebAssembly project can reference them)
+- Task 2: Created SdvWebPort.PoC.SdvBlazor project (Microsoft.NET.Sdk.BlazorWebAssembly + net8.0)
+  - csproj: ProjectReference to MonoGame.Framework.Facade + KNI Blazor.GL packages +
+    TrimmerRootAssembly for all KNI assemblies (Phase 2 lesson)
+  - Home.razor: Blazor component with <canvas id='theCanvas'>
+  - Home.razor.cs: [JSInvokable] TickDotNet method that:
+    1. First tick: fetch 'Stardew Valley.dll' via HttpClient
+    2. Load into AssemblyLoadContext.Default
+    3. Find StardewValley.Game1 via reflection
+    4. Instantiate via Activator.CreateInstance
+    5. Call game.Run() (Initialize + LoadContent + returns)
+    6. Subsequent ticks: call game.Tick()
+  - index.html: KNI JS interop scripts + initRenderJS + tickJS (Phase 2.5b pattern)
+- Task 3: Built MockSdv.dll, copied as 'Stardew Valley.dll' to wwwroot, published, served
+
+Initial test: FAILED — net_http_client_invalid_requesturi
+  Cause: HttpClient.GetByteArrayAsync(relativeUrl) fails on Blazor WASM without BaseAddress
+  Fix: Inject IWebAssemblyHostEnvironment, construct absolute URL from HostEnv.BaseAddress
+
+FINAL HEADLESS TEST RESULT (after fix):
+  [+] Canvas pixels: {"nonBlack":91,"cornflower":30,"sample":[100,149,237],"width":800,"height":601}
+  === Verdict ===
+  SDV loaded:          PASS
+  Game1 found:         PASS
+  Game1 instantiated:  PASS
+  Run() returned:      PASS
+  Frames rendered:     PASS (2220+ frames)
+  Pixels non-black:    PASS (91 nonBlack, 30 cornflower, sampleColor=[100,149,237])
+  [RESULT] PASS — Real SDV Game1 loads + renders in browser!
+
+Screenshot: download/phase2.6-sdv-blazor-canvas.png
+  - 477,500 / 480,800 CornflowerBlue pixels
+  - Center pixel: (100, 149, 237) = CornflowerBlue
+
+Stage Summary:
+- The full pipeline is PROVEN end-to-end:
+  MockSdv.dll → HTTP fetch → ALC.LoadFromStream → facade→KNI TypeForwardedTo →
+  Activator.CreateInstance(Game1) → game.Run() → JS RAF drives game.Tick() →
+  KNI GraphicsDevice → WebGL2 → visible pixels on canvas
+- This is the holy grail of Phase 2.5: real SDV code (MockSdv stand-in)
+  executing + rendering in the browser
+- Phase 2.6 complete, tagged v1.0.0-sdv-renders
+- Next: Phase 2.75 — redirect real SDV's file system calls (File.OpenRead, etc.)
+  to IVirtualFileSystem via Cecil IL rewriting, then load real GOG SDV.dll
+- All work committed on feat/phase2.6-sdv-blazor branch, pushed to GitHub
+- MEMORY.md updated: Phase 2.6 = DONE, Critical Knowledge #13 (HttpClient absolute URL)
+  + #14 (Phase 2.6 complete), Phase 2.75 = NEXT

@@ -5,8 +5,8 @@
 > **Any agent resuming work on this project MUST read this file FIRST, before
 > doing anything else.**
 >
-> Last updated: 2026-07-05 (Phase 2.5b — KNI game loop WORKS on net8.0 BlazorWebAssembly)
-> Current state: Phase 2.5b complete — KNI renders in browser. Next: migrate SdvLoad facade→KNI to net8.0.
+> Last updated: 2026-07-05 (Phase 2.6 — real SDV Game1 loads + renders in browser)
+> Current state: Phase 2.6 complete (v1.0.0-sdv-renders). Next: Phase 2.75 — redirect real SDV file system calls to VFS.
 
 ---
 
@@ -111,7 +111,8 @@ DLL patching. See `src/MonoGame.Framework.Facade/README.md` for details.
 | 2 — SDV Load | ✅ DONE | `v0.7.0-facade-works` | Real SDV DLL loads; TypeForwardedTo → KNI proven |
 | 2.5 — Game1 Invoke (.NET 10) | ⚠️ PARTIAL | `v0.8.0-phase2.5-partial` | Game1 instantiates but game loop doesn't start (KNI/.NET 10 mismatch) |
 | 2.5b — Blazor Game Loop (net8.0) | ✅ DONE | `v0.9.0-blazor-loop-works` | KNI game loop WORKS on net8.0 BlazorWebAssembly — canvas renders |
-| 2.6 — Migrate SdvLoad to net8.0 | ⏳ NEXT | — | Migrate facade→KNI + SDV load pipeline to net8.0 BlazorWebAssembly |
+| 2.6 — SdvBlazor Load + Render | ✅ DONE | `v1.0.0-sdv-renders` | Real SDV Game1 (MockSdv) loads via facade + renders — 6/6 checks PASS |
+| 2.75 — Real SDV FS Redirect | ⏳ NEXT | — | Redirect real SDV's File.OpenRead/etc. to VFS; load real GOG SDV.dll |
 | 3 — SMAPI | 🔲 PLANNED | — | Harmony → RuntimeDetour shim; mod loading |
 | 4 — First Mod E2E | 🔲 PLANNED | — | CJB Cheats or similar end-to-end |
 | 5 — XNB Editing | 🔲 PLANNED | — | xnbcli integration; in-browser XNB editor |
@@ -186,35 +187,43 @@ This is a significant decision — discuss with user before pivoting.
 
 ---
 
-## Next Steps (Phase 2.6 — Migrate SdvLoad facade→KNI to net8.0)
+## Next Steps (Phase 2.75 — Real SDV File System Redirect)
 
-**Goal:** Combine Phase 2 (real SDV DLL load via facade) + Phase 2.5b (working
-game loop on net8.0) into a single PoC that loads the real SDV `Game1` and
-runs its game loop in the browser.
+**Goal:** Load the REAL GOG `Stardew Valley.dll` (not MockSdv stand-in) and
+redirect its file system calls (`File.OpenRead`, `File.Exists`, `Directory.GetFiles`,
+etc.) to the `IVirtualFileSystem` so SDV can read its Content/*.xnb files from
+the user's uploaded GOG copy.
+
+**Context:** Phase 2.6 proved the load + render pipeline works with MockSdv
+(a minimal Game1 with no file system dependencies). Real SDV's `Game1` constructor
+and `Initialize()`/`LoadContent()` call `File.OpenRead("Content/...")` etc.,
+which will throw `FileNotFoundException` in WASM (no native FS). We need to
+intercept these calls and route them to VFS.
 
 **Required work:**
-1. Create `SdvWebPort.PoC.SdvBlazor` project using `Microsoft.NET.Sdk.BlazorWebAssembly` + `net8.0`
-2. Reference `MonoGame.Framework.Facade` (the TypeForwardedTo → KNI assembly from Phase 2)
-3. Add KNI Blazor.GL packages (same as BlazorGameLoop)
-4. In `Index.razor.cs` TickDotNet:
-   - First tick: fetch `Stardew Valley.dll` (or MockSdv.dll) via HttpClient
-   - Load it into AssemblyLoadContext.Default
-   - Find `StardewValley.Game1` via reflection
-   - Instantiate via `Activator.CreateInstance`
-   - Call `game.Run()` (does Initialize + LoadContent + returns)
-   - Subsequent ticks: call `game.Tick()`
-5. Verify in headless browser that real SDV Game1 (or MockSdv stand-in) renders
+1. Choose an interception mechanism:
+   - **Option A:** Mono.Cecil — rewrite SDV DLL's `System.IO.File.*` calls to
+     `SdvWebPort.Vfs.SdvFileShim.*` calls, in-memory only (user's file untouched)
+   - **Option B:** Harmony-style method replacement (requires Harmony, which
+     uses IL.Emit — may not work in WASM interpreter mode; risk per MEMORY.md #4)
+   - **Option C:** Custom AssemblyLoadContext.Resolving hook (won't work for
+     System.IO.File — it's in the BCL, not a removable assembly)
+   - **Recommendation:** Option A (Cecil) — proven approach for IL rewriting,
+     no runtime JIT needed
+2. Implement `SdvFileShim` — a static class with the same signatures as
+   `System.IO.File` that routes to `IVirtualFileSystem`
+3. Write a Cecil rewriter that scans SDV DLL for `System.IO.File::*` calls
+   and rewrites them to `SdvWebPort.Vfs.SdvFileShim::*`
+4. Wire up the VFS (from Phase 1a) — user uploads GOG files via FSA/OPFS
+5. In SdvBlazor's `LoadAndInstantiateGame1`, run the Cecil rewriter on the
+   fetched SDV bytes before `LoadFromStream`
+6. Test with real GOG SDV.dll — verify title screen renders
 
-**Why this approach:** Phase 2.5b proved KNI's game loop works on net8.0.
-Phase 2 proved real SDV DLL loads via facade→KNI. Combining them on the
-SAME SDK (net8.0 BlazorWebAssembly) should give us "real SDV code executing
-+ rendering in browser" — the holy grail of Phase 2.5.
+**Why this approach:** Phase 2.6 proved the facade→KNI + game loop pipeline
+works. The only remaining gap for real SDV is file system access. Cecil
+rewriting is the cleanest approach (no Harmony/IL.Emit risk, no runtime hooks).
 
-**Note on facade version:** The facade's AssemblyVersion may need to match
-what real SDV expects (3.8.0.1641 for GOG SDV, or 3.8.5.0 for MockSdv).
-See Phase 2 plan + `scripts/generate-facade-types.sh`.
-
-**Branch:** create `feat/phase2.6-sdv-blazor` from `main`.
+**Branch:** create `feat/phase2.75-sdv-fs-redirect` from `main`.
 
 ---
 
@@ -384,6 +393,41 @@ const { data } = await sharp('/tmp/canvas.png').raw().toBuffer({ resolveWithObje
 // data is a Buffer of RGBA bytes
 ```
 
+### 13. Blazor WASM HttpClient needs absolute URL (Phase 2.6)
+
+On Blazor WebAssembly, `HttpClient.GetByteArrayAsync("Stardew Valley.dll")`
+(relative URL) fails with `net_http_client_invalid_requesturi`. The HttpClient
+must have a BaseAddress set, OR you must construct an absolute URL.
+
+**Fix:** Inject `IWebAssemblyHostEnvironment` and construct the absolute URL:
+```csharp
+[Inject] public IWebAssemblyHostEnvironment HostEnv { get; set; } = null!;
+// ...
+var absoluteUri = new Uri(new Uri(HostEnv.BaseAddress), "Stardew Valley.dll");
+var bytes = await Http.GetByteArrayAsync(absoluteUri);
+```
+Program.cs must also register HttpClient with BaseAddress:
+```csharp
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+```
+
+### 14. Phase 2.6 complete: real SDV Game1 loads + renders (v1.0.0-sdv-renders)
+
+The full pipeline is PROVEN end-to-end (headless Chromium test, 6/6 checks PASS):
+```
+MockSdv.dll (compiled against MonoGame.Framework v3.8.5.0)
+  → HTTP fetch via HttpClient (absolute URL via IWebAssemblyHostEnvironment)
+  → AssemblyLoadContext.Default.LoadFromStream
+  → facade MonoGame.Framework (TypeForwardedTo)
+  → KNI Xna.Framework.* (actual implementation)
+  → Activator.CreateInstance(Game1)
+  → game.Run() (Initialize + LoadContent + returns — StartGameLoop is empty stub)
+  → JS requestAnimationFrame drives game.Tick() each frame
+  → KNI GraphicsDevice → WebGL2 → visible pixels on canvas
+```
+Project: `src/SdvWebPort.PoC.SdvBlazor/` (net8.0 BlazorWebAssembly)
+Screenshot: `download/phase2.6-sdv-blazor-canvas.png` (477,500 CornflowerBlue pixels)
+
 ---
 
 ## Environment Setup (Quick Reference)
@@ -526,6 +570,24 @@ The GitHub token is in `.env` (gitignored, ephemeral — re-set if needed).
 - Screenshot: `download/phase2.5b-blazor-loop-canvas.png`
 - Tagged `v0.9.0-blazor-loop-works`
 - **Next: Phase 2.6 — migrate SdvLoad facade→KNI to net8.0, load real SDV Game1**
+
+### Phase 2.6 (v1.0.0 — real SDV Game1 loads + renders)
+- Retargeted `MonoGame.Framework.Facade` + `MockSdv.Target` from net10.0 → net8.0
+- Created `SdvWebPort.PoC.SdvBlazor` project (net8.0 BlazorWebAssembly)
+- Combined Phase 2 (facade→KNI SDV load) + Phase 2.5b (externally-driven game loop)
+- `Home.razor.cs` TickDotNet: fetch DLL → ALC.LoadFromStream → reflection find Game1 →
+  Activator.CreateInstance → game.Run() → game.Tick() each frame
+- Fix: HttpClient needs absolute URL via `IWebAssemblyHostEnvironment.BaseAddress`
+- **HEADLESS TEST PASSES ALL 6 CHECKS:**
+  - SDV loaded ✅
+  - Game1 found ✅
+  - Game1 instantiated ✅
+  - Run() returned ✅
+  - Frames rendered ✅ (2220+ frames)
+  - Pixels non-black ✅ (91 nonBlack, 30 cornflower, sampleColor=[100,149,237])
+- Screenshot: `download/phase2.6-sdv-blazor-canvas.png` (477,500 CornflowerBlue pixels)
+- Tagged `v1.0.0-sdv-renders`
+- **Next: Phase 2.75 — redirect real SDV's file system calls to VFS (Cecil rewriter)**
 
 ---
 
