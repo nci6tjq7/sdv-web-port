@@ -29,22 +29,19 @@ const URL = `http://localhost:${PORT}/`;
         await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
 
         // Wait for SDV to load + game to start (up to 30s)
+        // Note: status span is not updated by Home.razor.cs (known issue from code review #3)
+        // So we wait for window.theInstance (set by initRenderJS) as the reliable signal.
         console.log('[+] Waiting for SDV load + game start (up to 30s)...');
         try {
             await page.waitForFunction(
-                () => {
-                    const status = document.getElementById('status');
-                    if (status && (status.textContent.includes('Run() returned') ||
-                                   status.textContent.includes('FATAL'))) return true;
-                    return false;
-                },
+                () => typeof window.theInstance !== 'undefined',
                 { timeout: 30000 }
             );
         } catch (err) {
-            console.log('[!] Timeout waiting for game start — checking current state');
+            console.log('[!] Timeout waiting for window.theInstance — checking logs');
         }
 
-        // Give the loop a few seconds to render frames
+        // Give the loop a few seconds to render frames + give rewriter time to run
         console.log('[+] Waiting 8s for frames to render...');
         await page.waitForTimeout(8000);
 

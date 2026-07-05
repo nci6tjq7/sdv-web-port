@@ -91,6 +91,100 @@ public class SdvFileSystemRewriterTests
 
         Assert.Contains(calls, c => c!.DeclaringType?.FullName == "SdvWebPort.Vfs.SdvFileShim" && c.Name == "GetFiles");
     }
+
+    [Fact]
+    public void Rewrite_FileReadAllBytes_RedirectsToSdvFileShim()
+    {
+        var testAsmPath = Assembly.GetExecutingAssembly().Location;
+        var testAsmBytes = File.ReadAllBytes(testAsmPath);
+        var rewrittenBytes = SdvFileSystemRewriter.Rewrite(testAsmBytes);
+
+        using var ms = new MemoryStream(rewrittenBytes);
+        using var asmDef = AssemblyDefinition.ReadAssembly(ms);
+        var module = asmDef.MainModule;
+        var targetType = module.GetType("SdvWebPort.Rewriter.Tests.TestTarget");
+        var readBytesMethod = targetType.Methods.FirstOrDefault(m => m.Name == "ReadBytes");
+        Assert.NotNull(readBytesMethod);
+
+        var calls = readBytesMethod.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            .Select(i => i.Operand as MethodReference)
+            .Where(m => m != null)
+            .ToList();
+
+        Assert.Contains(calls, c => c!.DeclaringType?.FullName == "SdvWebPort.Vfs.SdvFileShim" && c.Name == "ReadAllBytes");
+    }
+
+    [Fact]
+    public void Rewrite_FileReadAllText_RedirectsToSdvFileShim()
+    {
+        var testAsmPath = Assembly.GetExecutingAssembly().Location;
+        var testAsmBytes = File.ReadAllBytes(testAsmPath);
+        var rewrittenBytes = SdvFileSystemRewriter.Rewrite(testAsmBytes);
+
+        using var ms = new MemoryStream(rewrittenBytes);
+        using var asmDef = AssemblyDefinition.ReadAssembly(ms);
+        var module = asmDef.MainModule;
+        var targetType = module.GetType("SdvWebPort.Rewriter.Tests.TestTarget");
+        var readTextMethod = targetType.Methods.FirstOrDefault(m => m.Name == "ReadText");
+        Assert.NotNull(readTextMethod);
+
+        var calls = readTextMethod.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            .Select(i => i.Operand as MethodReference)
+            .Where(m => m != null)
+            .ToList();
+
+        Assert.Contains(calls, c => c!.DeclaringType?.FullName == "SdvWebPort.Vfs.SdvFileShim" && c.Name == "ReadAllText");
+    }
+
+    [Fact]
+    public void Rewrite_DirectoryGetFilesWithPattern_RedirectsToSdvFileShim()
+    {
+        var testAsmPath = Assembly.GetExecutingAssembly().Location;
+        var testAsmBytes = File.ReadAllBytes(testAsmPath);
+        var rewrittenBytes = SdvFileSystemRewriter.Rewrite(testAsmBytes);
+
+        using var ms = new MemoryStream(rewrittenBytes);
+        using var asmDef = AssemblyDefinition.ReadAssembly(ms);
+        var module = asmDef.MainModule;
+        var targetType = module.GetType("SdvWebPort.Rewriter.Tests.TestTarget");
+        var getFilesWithPatternMethod = targetType.Methods.FirstOrDefault(m => m.Name == "ListFilesWithPattern");
+        Assert.NotNull(getFilesWithPatternMethod);
+
+        var calls = getFilesWithPatternMethod.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            .Select(i => i.Operand as MethodReference)
+            .Where(m => m != null)
+            .ToList();
+
+        Assert.Contains(calls, c => c!.DeclaringType?.FullName == "SdvWebPort.Vfs.SdvFileShim" && c.Name == "GetFiles");
+    }
+
+    [Fact]
+    public void Rewrite_DirectoryExists_RedirectsToSdvFileShimDirectoryExists()
+    {
+        var testAsmPath = Assembly.GetExecutingAssembly().Location;
+        var testAsmBytes = File.ReadAllBytes(testAsmPath);
+        var rewrittenBytes = SdvFileSystemRewriter.Rewrite(testAsmBytes);
+
+        using var ms = new MemoryStream(rewrittenBytes);
+        using var asmDef = AssemblyDefinition.ReadAssembly(ms);
+        var module = asmDef.MainModule;
+        var targetType = module.GetType("SdvWebPort.Rewriter.Tests.TestTarget");
+        var dirExistsMethod = targetType.Methods.FirstOrDefault(m => m.Name == "CheckDirExists");
+        Assert.NotNull(dirExistsMethod);
+
+        var calls = dirExistsMethod.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            .Select(i => i.Operand as MethodReference)
+            .Where(m => m != null)
+            .ToList();
+
+        // Note: Directory.Exists → SdvFileShim.DirectoryExists (renamed)
+        Assert.Contains(calls, c => c!.DeclaringType?.FullName == "SdvWebPort.Vfs.SdvFileShim" && c.Name == "DirectoryExists");
+        Assert.DoesNotContain(calls, c => c!.DeclaringType?.FullName == "System.IO.Directory" && c.Name == "Exists");
+    }
 }
 
 /// <summary>
@@ -117,5 +211,20 @@ public static class TestTarget
     public static byte[] ReadBytes(string path)
     {
         return File.ReadAllBytes(path);
+    }
+
+    public static string ReadText(string path)
+    {
+        return File.ReadAllText(path);
+    }
+
+    public static string[] ListFilesWithPattern(string dir, string pattern)
+    {
+        return Directory.GetFiles(dir, pattern);
+    }
+
+    public static bool CheckDirExists(string dir)
+    {
+        return Directory.Exists(dir);
     }
 }

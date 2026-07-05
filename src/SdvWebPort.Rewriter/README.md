@@ -35,3 +35,22 @@ bytes before `AssemblyLoadContext.LoadFromStream`.
 The user's SDV.dll file on disk is NEVER modified. Only the in-memory
 copy fetched via HttpClient is rewritten. This respects constraint C4
 (no rewriting game code on disk).
+
+## Known gaps (Phase 2.75 PoC scope)
+
+The `_rewriteMap` currently covers only 7 method patterns (the ones
+MockSdv.Target's `FileSystemTestGame` uses). Real SDV likely calls
+many more `System.IO` methods that are NOT yet covered:
+
+- `File.Open`, `File.Create`, `File.Delete`, `File.Copy`, `File.Move`
+- `File.WriteAllBytes`, `File.WriteAllText`, `File.ReadAllLines`
+- `Directory.CreateDirectory`, `Directory.GetDirectories`, `Directory.Delete`
+- `FileStream` constructor (`new FileStream(path, ...)` patterns)
+- `Path.Combine` (path manipulation — may need different handling)
+
+**Phase 2.8 strategy:** Run the rewriter on real GOG SDV.dll, observe
+`MissingMethodException` for un-routed calls at runtime, add entries
+to `_rewriteMap` iteratively until the title screen renders.
+
+See spec v2 R6 (40% probability of coverage gap) and MEMORY.md
+Phase 2.8 Next Steps.

@@ -96,19 +96,26 @@ public static class SdvFileShim
     }
 
     /// <summary>Equivalent to System.IO.Directory.Exists(string path)</summary>
+    /// <remarks>
+    /// NOTE: This is a heuristic. We check if the directory has any files OR
+    /// if EnumerateFiles throws. This is correct for throwing VFS implementations
+    /// (e.g., a future real VFS that throws DirectoryNotFoundException for
+    /// nonexistent dirs). For InMemoryVfs (which never throws), this returns
+    /// true if the directory has files, false otherwise — which is WRONG for
+    /// empty-but-existing directories.
+    /// TODO (Phase 2.8): Add DirectoryExists to IVirtualFileSystem for correctness.
+    /// Real SDV gates on Directory.Exists (e.g., save directory checks).
+    /// </remarks>
     public static bool DirectoryExists(string path)
     {
-        // VFS doesn't have a direct DirectoryExists, but Exists on a file
-        // returning false doesn't mean the directory doesn't exist.
-        // For now, return true if EnumerateFiles returns anything.
         try
         {
             var files = RequireVfs().EnumerateFiles(path, "*").ToArray();
-            return true; // if no exception, directory exists
+            return files.Length > 0; // directory exists if it has files
         }
         catch
         {
-            return false;
+            return false; // directory doesn't exist (VFS threw)
         }
     }
 }

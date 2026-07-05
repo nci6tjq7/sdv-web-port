@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 
 namespace SdvWebPort.Rewriter;
 
@@ -27,6 +28,16 @@ namespace SdvWebPort.Rewriter;
 public static class SdvFileSystemRewriter
 {
     // Maps (DeclaringTypeFullName, MethodName, ParameterCount) → ShimMethodName
+    //
+    // Phase 2.75 PoC — covers MockSdv.Target's File.OpenRead pattern.
+    // EXPAND for real SDV (see spec v2 R6, MEMORY.md Phase 2.8 Next Steps).
+    // Likely missing methods real SDV uses:
+    //   - File.Open / File.Create / File.Delete / File.Copy / File.Move
+    //   - File.WriteAllBytes / File.WriteAllText / File.ReadAllLines
+    //   - Directory.CreateDirectory / Directory.GetDirectories / Directory.Delete
+    //   - FileStream constructor (for new FileStream(path, ...) patterns)
+    // Phase 2.8 strategy: run rewriter on real SDV, observe MissingMethodException
+    // for un-routed calls, add entries iteratively.
     private static readonly Dictionary<(string Type, string Method, int ParamCount), string> _rewriteMap = new()
     {
         { ("System.IO.File", "OpenRead", 1),       "OpenRead" },
@@ -86,8 +97,21 @@ public static class SdvFileSystemRewriter
 
         // Try to find the SdvWebPort.Vfs assembly via the resolver.
         // First check if it's already loaded in the current AppDomain.
+        // If not, try to load it by name (it may be referenced but not yet loaded).
         var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+        if (vfsAsm == null)
+        {
+            try
+            {
+                vfsAsm = Assembly.Load("SdvWebPort.Vfs");
+                Console.WriteLine($"[Rewriter] Loaded SdvWebPort.Vfs assembly: {vfsAsm.FullName}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Rewriter] Could not load SdvWebPort.Vfs: {ex.Message}");
+            }
+        }
         if (vfsAsm != null)
         {
             var shimType = vfsAsm.GetType("SdvWebPort.Vfs.SdvFileShim");
@@ -126,31 +150,18 @@ public static class SdvFileSystemRewriter
             }
         }
 
-        // Fallback: create an AssemblyReference to SdvWebPort.Vfs and a
-        // TypeReference scoped to it (less reliable — return types may not match).
-        Console.WriteLine($"[Rewriter] WARN: SdvWebPort.Vfs assembly not found in AppDomain — using fallback TypeReference");
-        var vfsAsmRef = new AssemblyNameReference("SdvWebPort.Vfs", new Version(1, 0, 0, 0));
-        var existingRef = module.AssemblyReferences.FirstOrDefault(ar => ar.Name == "SdvWebPort.Vfs");
-        if (existingRef != null)
-            vfsAsmRef = existingRef;
-        else
-            module.AssemblyReferences.Add(vfsAsmRef);
-
-        shimTypeRef = new TypeReference(
-            @namespace: "SdvWebPort.Vfs",
-            name: "SdvFileShim",
-            module: module,
-            scope: vfsAsmRef);
-
-        foreach (var type in module.GetTypes())
-        {
-            foreach (var method in type.Methods)
-            {
-                if (method.Body == null) continue;
-                rewrites += RewriteMethodFallback(method, shimTypeRef);
-            }
-        }
-        return rewrites;
+        // Fallback: SdvWebPort.Vfs assembly not found in AppDomain.
+        // This is an error — the rewriter cannot produce correct IL without
+        // importing the real shim method signatures (return types differ:
+        // File.OpenRead returns FileStream, SdvFileShim.OpenRead returns Stream).
+        // The old fallback used callee.ReturnType which caused MissingMethodException.
+        // See MEMORY.md Critical Knowledge #15.
+        throw new InvalidOperationException(
+            "SdvWebPort.Vfs assembly must be loaded in the AppDomain before rewriting. " +
+            "Call SdvFileShim.SetVfs() first, or ensure SdvWebPort.Vfs is referenced " +
+            "by the host project. The rewriter needs to import the real shim method " +
+            "signatures via module.ImportReference(MethodInfo) to avoid return-type " +
+            "mismatches (e.g., FileStream vs Stream).");
     }
 
     private static int RewriteMethod(MethodDefinition method, TypeReference shimTypeRef, Dictionary<(string Name, int ParamCount), MethodReference> shimMethods)
@@ -181,33 +192,6 @@ public static class SdvFileSystemRewriter
             instr.Operand = newCallee;
             rewrites++;
             Console.WriteLine($"[Rewriter] {method.DeclaringType.FullName}::{method.Name}: {declaringType}.{callee.Name} → SdvFileShim.{shimMethod}");
-        }
-        return rewrites;
-    }
-
-    private static int RewriteMethodFallback(MethodDefinition method, TypeReference shimTypeRef)
-    {
-        int rewrites = 0;
-        var instructions = method.Body.Instructions;
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            var instr = instructions[i];
-            if (instr.OpCode != OpCodes.Call && instr.OpCode != OpCodes.Callvirt) continue;
-            if (instr.Operand is not MethodReference callee) continue;
-
-            var declaringType = callee.DeclaringType?.FullName;
-            if (declaringType == null) continue;
-
-            if (!_rewriteMap.TryGetValue((declaringType, callee.Name, callee.Parameters.Count), out var shimMethod))
-                continue;
-
-            var newCallee = new MethodReference(shimMethod, callee.ReturnType, shimTypeRef);
-            foreach (var param in callee.Parameters)
-                newCallee.Parameters.Add(param);
-
-            instr.Operand = newCallee;
-            rewrites++;
-            Console.WriteLine($"[Rewriter] {method.DeclaringType.FullName}::{method.Name}: {declaringType}.{callee.Name} → SdvFileShim.{shimMethod} (fallback)");
         }
         return rewrites;
     }
