@@ -28,18 +28,12 @@ public partial class Home : ComponentBase
         set => _http = value;
     }
 
-    // JsRuntime is injected via @inject in Home.razor — no need to redeclare here.
-
     protected override void OnAfterRender(bool firstRender)
     {
         base.OnAfterRender(firstRender);
 
         if (firstRender)
         {
-            // Register this component as a .NET object reference so JS can call
-            // back into our TickDotNet method via invokeMethodAsync('TickDotNet').
-            // This is the KNI Blazor pattern (Phase 2.5b): the game loop is
-            // driven by JS requestAnimationFrame, not by Game.Run() blocking.
             JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
         }
     }
@@ -47,14 +41,13 @@ public partial class Home : ComponentBase
     [JSInvokable]
     public async Task TickDotNet()
     {
-        // First call: load the SDV DLL, instantiate Game1, call Run().
         if (!_loadAttempted)
         {
             _loadAttempted = true;
-            Console.WriteLine("[Home.TickDotNet] First tick — loading SDV DLL");
+            Console.WriteLine("[Home.TickDotNet] First tick — loading real SDV (Phase 2.8)");
             try
             {
-                _game = await LoadAndInstantiateGame1();
+                _game = await LoadRealSdvAsync();
                 if (_game != null)
                 {
                     Console.WriteLine("[Home.TickDotNet] Calling game.Run() (Initialize + LoadContent)");
@@ -66,123 +59,187 @@ public partial class Home : ComponentBase
             {
                 Console.WriteLine($"[Home.TickDotNet] FATAL: {ex.GetType().Name}: {ex.Message}");
                 Console.WriteLine($"[Home.TickDotNet] Stack: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    Console.WriteLine($"[Home.TickDotNet] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    Console.WriteLine($"[Home.TickDotNet] Inner Stack: {ex.InnerException.StackTrace}");
+                }
             }
         }
 
-        // Every call (after init): tick the game loop manually (Update + Draw).
-        // This is the external game loop driven by JS requestAnimationFrame.
         if (_game != null)
         {
             _game.Tick();
         }
     }
 
-    private async Task<Game?> LoadAndInstantiateGame1()
+    /// <summary>
+    /// Load the real GOG SDV.dll + dependencies, set up VFS + NullSDKHelper,
+    /// then instantiate GameRunner (mimicking Program.Main).
+    /// </summary>
+    private async Task<Game?> LoadRealSdvAsync()
     {
-        // 1. Fetch "Stardew Valley.dll" from wwwroot.
-        const string sdvUrl = "Stardew Valley.dll";
-        Console.WriteLine($"[+] Fetching SDV from: {sdvUrl}");
-        Console.WriteLine($"[+] Base address: {HostEnv.BaseAddress}");
-        byte[] sdvBytes;
-        try
-        {
-            var absoluteUri = new Uri(new Uri(HostEnv.BaseAddress), sdvUrl);
-            Console.WriteLine($"[+] Absolute URL: {absoluteUri}");
-            sdvBytes = await _http!.GetByteArrayAsync(absoluteUri);
-            Console.WriteLine($"[+] Fetched SDV: {sdvBytes.Length:N0} bytes");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FAIL] Could not fetch {sdvUrl}: {ex.Message}");
-            return null;
-        }
-
-        // 2. Set up the VFS with a test file (simulates user's uploaded GOG files).
-        //    In production, this is where the user's FSA/OPFS-uploaded files go.
+        // 1. Set up the VFS with a test file (simulates user's uploaded GOG files).
         var vfs = new SdvWebPort.Vfs.InMemoryVfs();
         await vfs.WriteFileAsync("Content/test.txt", System.Text.Encoding.UTF8.GetBytes("Hello from VFS!"));
         SdvWebPort.Vfs.SdvFileShim.SetVfs(vfs);
         Console.WriteLine("[+] VFS set up with Content/test.txt");
 
-        // 3. Run the Cecil rewriter on the SDV bytes (in-memory, user's file untouched).
+        // 2. Fetch SDV.
+        const string sdvUrl = "Stardew Valley.dll";
+        Console.WriteLine($"[+] Fetching SDV from: {sdvUrl}");
+        var absoluteUri = new Uri(new Uri(HostEnv.BaseAddress), sdvUrl);
+        var sdvBytes = await _http!.GetByteArrayAsync(absoluteUri);
+        Console.WriteLine($"[+] Fetched SDV: {sdvBytes.Length:N0} bytes");
+
+        // 3. Run Cecil preprocessors on SDV:
+        //    a. AssemblyRef rewriter: System.* v6→v8, MonoGame.Framework v3.8.0.1641→v3.8.5.0
+        //    b. FileSystem rewriter: File/Directory → SdvFileShim
         byte[] rewrittenBytes;
         try
         {
-            Console.WriteLine("[+] Running Cecil rewriter (redirect File/Directory → SdvFileShim)...");
-            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(sdvBytes);
-            Console.WriteLine($"[+] Rewritten: {rewrittenBytes.Length:N0} bytes");
+            Console.WriteLine("[+] Running Cecil AssemblyRef rewriter (System.* v6→v8, MG v3.8.0.1641→v3.8.5.0)...");
+            var refRewritten = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
+            Console.WriteLine($"[+] Running Cecil FileSystem rewriter (File/Directory → SdvFileShim)...");
+            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(refRewritten);
+            Console.WriteLine($"[+] Final rewritten: {rewrittenBytes.Length:N0} bytes");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
             Console.WriteLine($"    Stack: {ex.StackTrace}");
-            // Fall back to original bytes (rewriter failed — SDV's File calls will throw at runtime)
             rewrittenBytes = sdvBytes;
         }
 
-        // 4. Verify the MonoGame.Framework facade is loaded.
-        Assembly? facadeAssembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "MonoGame.Framework");
-        if (facadeAssembly == null)
-        {
-            Console.WriteLine("[+] Facade not yet loaded — loading explicitly...");
-            try
-            {
-                facadeAssembly = AssemblyLoadContext.Default.LoadFromAssemblyName(
-                    new AssemblyName("MonoGame.Framework"));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[FAIL] Could not load facade: {ex.Message}");
-                return null;
-            }
-        }
-        Console.WriteLine($"[+] Facade assembly: {facadeAssembly.FullName}");
-
-        // 5. Load the rewritten SDV DLL into the DEFAULT ALC.
+        // 4. Load SDV + dependencies into default ALC.
         Assembly sdvAsm;
         try
         {
-            Console.WriteLine("[+] Loading rewritten SDV into default ALC...");
-            sdvAsm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenBytes));
-            Console.WriteLine($"[+] Loaded: {sdvAsm.FullName}");
+            sdvAsm = await SdvLoader.LoadSdvWithDependenciesAsync(_http!, HostEnv.BaseAddress, rewrittenBytes);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] SDV load threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"    Stack: {ex.StackTrace}");
             return null;
         }
 
-        // 6. Find the Game type via reflection.
-        //    Try FileSystemTestGame first (for Phase 2.75 testing), fall back to Game1.
-        Type? gameType = sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.FileSystemTestGame")
-                         ?? sdvAsm.GetTypes().FirstOrDefault(t => t.FullName == "StardewValley.Game1");
-        if (gameType == null)
-        {
-            Console.WriteLine("[FAIL] No Game type found in SDV assembly");
-            foreach (var t in sdvAsm.GetTypes().Take(20))
-                Console.WriteLine($"    - {t.FullName}");
-            return null;
-        }
-        Console.WriteLine($"[+] Found: {gameType.FullName}");
-        Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
-
-        // 7. Instantiate the Game via Activator.CreateInstance.
-        object? gameInstance;
+        // 5. Pre-set Program._sdk = new NullSDKHelper() via reflection.
+        //    Without this, Program.get_sdk() tries new SteamHelper() which fails
+        //    (Steamworks.NET native deps unavailable in WASM).
         try
         {
-            gameInstance = Activator.CreateInstance(gameType);
-            Console.WriteLine($"[+] Game instantiated: {gameInstance?.GetType().FullName}");
+            PreSetNullSdk(sdvAsm);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FAIL] Game instantiation threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"[FAIL] Could not pre-set Program._sdk: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"    Stack: {ex.StackTrace}");
+            // Continue — get_sdk() will throw later if SteamHelper ctor fails
+        }
+
+        // 6. Find GameRunner type (Program.Main creates this — NOT Game1).
+        //    Use GetType() instead of GetTypes() — GetTypes() iterates ALL types
+        //    and fails on the first one that can't be resolved (e.g., types that
+        //    reference GalaxyCSharp). GetType() only loads the requested type.
+        Type? gameRunnerType = null;
+        try
+        {
+            gameRunnerType = sdvAsm.GetType("StardewValley.GameRunner");
+            Console.WriteLine($"[+] Found GameRunner via GetType(): {gameRunnerType?.FullName}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] sdvAsm.GetType(\"StardewValley.GameRunner\") threw: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine($"    Stack: {ex.StackTrace}");
+        }
+        if (gameRunnerType == null)
+        {
+            Console.WriteLine("[FAIL] StardewValley.GameRunner type not found via GetType — trying GetTypes() (will fail on first unresolvable type)");
+            try
+            {
+                var allTypes = sdvAsm.GetTypes();
+                Console.WriteLine($"[+] GetTypes() succeeded — {allTypes.Length} types");
+                gameRunnerType = allTypes.FirstOrDefault(t => t.FullName == "StardewValley.GameRunner");
+            }
+            catch (Exception ex2)
+            {
+                Console.WriteLine($"[FAIL] sdvAsm.GetTypes() also threw: {ex2.GetType().Name}: {ex2.Message}");
+            }
+        }
+        if (gameRunnerType == null)
+        {
+            Console.WriteLine("[FAIL] StardewValley.GameRunner type not found");
+            return null;
+        }
+        Console.WriteLine($"[+] Found GameRunner: {gameRunnerType.FullName}");
+        Console.WriteLine($"[+] GameRunner base: {gameRunnerType.BaseType?.FullName} (asm: {gameRunnerType.BaseType?.Assembly.GetName().Name})");
+
+        // 7. Instantiate GameRunner (calls GameRunner..ctor() — the heavy one).
+        object? gameRunnerInstance;
+        try
+        {
+            Console.WriteLine("[+] Instantiating GameRunner (ctor does GraphicsDeviceManager + LocalMultiplayer.Initialize + ItemRegistry.RegisterItemTypes + Window.AllowUserResizing)...");
+            gameRunnerInstance = Activator.CreateInstance(gameRunnerType);
+            Console.WriteLine($"[+] GameRunner instantiated: {gameRunnerInstance?.GetType().FullName}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] GameRunner instantiation threw: {ex.GetType().Name}: {ex.Message}");
             var inner = ex.InnerException ?? ex;
             Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
             Console.WriteLine($"    Stack: {inner.StackTrace}");
             return null;
         }
 
-        return (Game?)gameInstance;
+        // 8. Set GameRunner.instance static field (Program.Main does this).
+        try
+        {
+            var instanceField = gameRunnerType.GetField("instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (instanceField != null)
+            {
+                instanceField.SetValue(null, gameRunnerInstance);
+                Console.WriteLine("[+] GameRunner.instance set");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Could not set GameRunner.instance: {ex.Message}");
+        }
+
+        return (Game?)gameRunnerInstance;
+    }
+
+    /// <summary>
+    /// Pre-set Program._sdk = new NullSDKHelper() to bypass Steam/Galaxy SDK init.
+    /// Without this, Program.get_sdk() tries new SteamHelper() first, which fails
+    /// because Steamworks.NET has native deps unavailable in WASM.
+    /// </summary>
+    private static void PreSetNullSdk(Assembly sdvAsm)
+    {
+        var programType = sdvAsm.GetType("StardewValley.Program");
+        if (programType == null)
+        {
+            Console.WriteLine("[WARN] StardewValley.Program type not found");
+            return;
+        }
+
+        var sdkField = programType.GetField("_sdk", BindingFlags.NonPublic | BindingFlags.Static);
+        if (sdkField == null)
+        {
+            Console.WriteLine("[WARN] Program._sdk field not found");
+            return;
+        }
+
+        var nullSdkType = sdvAsm.GetType("StardewValley.SDKs.NullSDKHelper");
+        if (nullSdkType == null)
+        {
+            Console.WriteLine("[WARN] StardewValley.SDKs.NullSDKHelper type not found");
+            return;
+        }
+
+        var nullSdk = Activator.CreateInstance(nullSdkType);
+        sdkField.SetValue(null, nullSdk);
+        Console.WriteLine($"[+] Program._sdk = NullSDKHelper (bypass Steam/Galaxy SDK)");
     }
 }

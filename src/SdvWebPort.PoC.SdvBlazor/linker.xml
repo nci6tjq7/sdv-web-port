@@ -1,0 +1,45 @@
+<linker>
+  <!-- Phase 2.8: Keep ALL types in KNI assemblies. The trimmer strips "unused"
+       types from these assemblies because our app doesn't directly reference
+       them — only SDV does (at runtime). TrimmerRootAssembly alone doesn't
+       prevent this; we need an explicit linker descriptor. -->
+  <assembly fullname="Xna.Framework" preserve="all" />
+  <assembly fullname="Xna.Framework.Game" preserve="all" />
+  <assembly fullname="Xna.Framework.Graphics" preserve="all" />
+  <assembly fullname="Xna.Framework.Content" preserve="all" />
+  <assembly fullname="Xna.Framework.Input" preserve="all" />
+  <assembly fullname="Xna.Framework.Audio" preserve="all" />
+  <assembly fullname="Xna.Framework.Media" preserve="all" />
+  <assembly fullname="Xna.Framework.XR" preserve="all" />
+  <assembly fullname="MonoGame.Framework" preserve="all" />
+  <assembly fullname="Kni.Platform" preserve="all" />
+
+  <!-- System.* assemblies: keep all type-forwards. The trimmer strips "unused"
+       type-forwards (e.g., System.IComparable, System.Guid) because our app
+       doesn't reference them via System.Runtime — the compiler resolves typeof()
+       directly to System.Private.CoreLib. But SDV's typerefs reference these
+       types via System.Runtime, and resolution fails at runtime. -->
+  <assembly fullname="System.Runtime" preserve="all" />
+  <assembly fullname="System.Private.CoreLib" preserve="all" />
+  <assembly fullname="System.Collections" preserve="all" />
+  <assembly fullname="System.Collections.Concurrent" preserve="all" />
+  <assembly fullname="System.ComponentModel" preserve="all" />
+  <assembly fullname="System.Console" preserve="all" />
+  <assembly fullname="System.Diagnostics.Process" preserve="all" />
+  <assembly fullname="System.Diagnostics.StackTrace" preserve="all" />
+  <assembly fullname="System.Linq" preserve="all" />
+  <assembly fullname="System.Linq.Expressions" preserve="all" />
+  <assembly fullname="System.Net.NameResolution" preserve="all" />
+  <assembly fullname="System.Net.Primitives" preserve="all" />
+  <assembly fullname="System.Reflection.Emit" preserve="all" />
+  <assembly fullname="System.Reflection.Emit.ILGeneration" preserve="all" />
+  <assembly fullname="System.Reflection.Emit.Lightweight" preserve="all" />
+  <assembly fullname="System.Reflection.Primitives" preserve="all" />
+  <assembly fullname="System.Runtime.InteropServices" preserve="all" />
+  <assembly fullname="System.Runtime.InteropServices.RuntimeInformation" preserve="all" />
+  <assembly fullname="System.Text.RegularExpressions" preserve="all" />
+  <assembly fullname="System.Threading" preserve="all" />
+  <assembly fullname="System.Threading.Thread" preserve="all" />
+  <assembly fullname="System.Xml.ReaderWriter" preserve="all" />
+  <assembly fullname="System.Xml.XmlSerializer" preserve="all" />
+</linker>

@@ -19,7 +19,7 @@ cat > "$TMP/Enumerator.csproj" <<'EOF'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <RootNamespace>Enumerator</RootNamespace>
   </PropertyGroup>
@@ -29,6 +29,9 @@ cat > "$TMP/Enumerator.csproj" <<'EOF'
     <PackageReference Include="nkast.Xna.Framework.Graphics" Version="4.2.9001" />
     <PackageReference Include="nkast.Xna.Framework.Content" Version="4.2.9001" />
     <PackageReference Include="nkast.Xna.Framework.Input" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Audio" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Media" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.XR" Version="4.2.9001" />
   </ItemGroup>
 </Project>
 EOF
@@ -45,6 +48,9 @@ string[] kniAssemblies = new[] {
     "Xna.Framework.Graphics",
     "Xna.Framework.Content",
     "Xna.Framework.Input",
+    "Xna.Framework.Audio",
+    "Xna.Framework.Media",
+    "Xna.Framework.XR",
 };
 
 // Force-load all KNI assemblies explicitly by name.

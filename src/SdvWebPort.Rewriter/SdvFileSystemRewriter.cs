@@ -57,19 +57,12 @@ public static class SdvFileSystemRewriter
     {
         Console.WriteLine($"[Rewriter] Loading assembly ({assemblyBytes.Length:N0} bytes)");
         using var inputMs = new MemoryStream(assemblyBytes);
-        var resolver = new DefaultAssemblyResolver();
-        // Cecil needs to resolve references to System.IO.File etc. — use the current AppDomain.
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            try
-            {
-                var path = asm.Location;
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                    resolver.AddSearchDirectory(Path.GetDirectoryName(path));
-            }
-            catch { /* skip */ }
-        }
-        var parameters = new ReaderParameters { AssemblyResolver = resolver };
+        // Use RefAssemblyResolver — reads System.* ref assemblies from embedded
+        // resources. In WASM, Assembly.Location returns empty, so Cecil's
+        // DefaultAssemblyResolver can't find System.Runtime (needed to encode
+        // constants during Write). See RefAssemblyResolver.cs.
+        var resolver = new RefAssemblyResolver();
+        var parameters = new ReaderParameters { AssemblyResolver = resolver, InMemory = true };
         using var asmDef = AssemblyDefinition.ReadAssembly(inputMs, parameters);
 
         int totalRewrites = 0;

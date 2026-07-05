@@ -16,4 +16,15 @@
     <ProjectReference Include="..\SdvWebPort.Vfs\SdvWebPort.Vfs.csproj" />
   </ItemGroup>
 
+  <!-- .NET 8 reference assemblies (metadata-only) for Cecil's resolver.
+       When Cecil writes the rewritten SDV assembly, it needs to resolve type
+       references to compute metadata tokens for constants (e.g., default
+       parameter values of type System.Guid). In WASM, Assembly.Location is
+       empty, so Cecil's default resolver can't find System.Runtime etc.
+       These ref assemblies are embedded into the Rewriter DLL and read at
+       runtime by RefAssemblyResolver. Total size: ~1.6 MB. -->
+  <ItemGroup>
+    <EmbeddedResource Include="RefAssemblies\**\*.dll" />
+  </ItemGroup>
+
 </Project>

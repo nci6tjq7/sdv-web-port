@@ -4,6 +4,15 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Phase 2.8: Disable trimming so all System.* assemblies (XmlReaderWriter,
+         XmlSerializer, Reflection.Emit, etc.) that SDV references are kept in
+         the bundle. The trimmer strips them because our app doesn't directly
+         reference them, but SDV's GetTypes() needs them at runtime. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- Phase 2.8: Disable AOT. AOT-compiled System.Runtime.wasm doesn't have
+         type-forwards (they're a compile-time construct). Without AOT, the
+         interpreter mode uses the original PE DLLs which DO have type-forwards. -->
+    <RunAOTCompilation>false</RunAOTCompilation>
   </PropertyGroup>
 
   <ItemGroup>
@@ -41,6 +50,7 @@
     <PackageReference Include="nkast.Xna.Framework.Input" Version="4.2.9001" />
     <PackageReference Include="nkast.Xna.Framework.Audio" Version="4.2.9001" />
     <PackageReference Include="nkast.Xna.Framework.Media" Version="4.2.9001" />
+    <PackageReference Include="nkast.Xna.Framework.XR" Version="4.2.9001" />
     <PackageReference Include="nkast.Kni.Platform.Blazor.GL" Version="4.2.9001.2" />
     <PackageReference Include="nkast.Wasm.Canvas" Version="10.0.0" />
   </ItemGroup>
@@ -54,7 +64,49 @@
     <TrimmerRootAssembly Include="Xna.Framework.Graphics" />
     <TrimmerRootAssembly Include="Xna.Framework.Content" />
     <TrimmerRootAssembly Include="Xna.Framework.Input" />
+    <TrimmerRootAssembly Include="Xna.Framework.Audio" />
+    <TrimmerRootAssembly Include="Xna.Framework.Media" />
+    <TrimmerRootAssembly Include="Xna.Framework.XR" />
     <TrimmerRootAssembly Include="Kni.Platform" />
+  </ItemGroup>
+
+  <!-- Phase 2.8: Force the trimmer to keep ALL type-forwards in System.* assemblies.
+       The trimmer strips "unused" type-forwards (e.g., System.IComparable, System.Guid)
+       because our app doesn't reference them via System.Runtime — the compiler resolves
+       typeof() directly to System.Private.CoreLib. But SDV's typerefs go through
+       System.Runtime, and resolution fails at runtime. TrimmerRootAssembly tells
+       the trimmer to keep ALL types and type-forwards in these assemblies. -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="System.Runtime" />
+    <TrimmerRootAssembly Include="System.Private.CoreLib" />
+    <TrimmerRootAssembly Include="System.Collections" />
+    <TrimmerRootAssembly Include="System.Collections.Concurrent" />
+    <TrimmerRootAssembly Include="System.ComponentModel" />
+    <TrimmerRootAssembly Include="System.Console" />
+    <TrimmerRootAssembly Include="System.Diagnostics.Process" />
+    <TrimmerRootAssembly Include="System.Diagnostics.StackTrace" />
+    <TrimmerRootAssembly Include="System.Linq" />
+    <TrimmerRootAssembly Include="System.Linq.Expressions" />
+    <TrimmerRootAssembly Include="System.Net.NameResolution" />
+    <TrimmerRootAssembly Include="System.Net.Primitives" />
+    <TrimmerRootAssembly Include="System.Reflection.Emit" />
+    <TrimmerRootAssembly Include="System.Reflection.Emit.ILGeneration" />
+    <TrimmerRootAssembly Include="System.Reflection.Emit.Lightweight" />
+    <TrimmerRootAssembly Include="System.Reflection.Primitives" />
+    <TrimmerRootAssembly Include="System.Runtime.InteropServices" />
+    <TrimmerRootAssembly Include="System.Runtime.InteropServices.RuntimeInformation" />
+    <TrimmerRootAssembly Include="System.Text.RegularExpressions" />
+    <TrimmerRootAssembly Include="System.Threading" />
+    <TrimmerRootAssembly Include="System.Threading.Thread" />
+    <TrimmerRootAssembly Include="System.Xml.ReaderWriter" />
+    <TrimmerRootAssembly Include="System.Xml.XmlSerializer" />
+  </ItemGroup>
+
+  <!-- Phase 2.8: Custom linker descriptor to preserve ALL types in KNI + System.* assemblies.
+       TrimmerRootAssembly alone doesn't prevent type stripping; an explicit linker
+       descriptor with preserve="all" is stronger. -->
+  <ItemGroup>
+    <TrimmerRootDescriptor Include="linker.xml" />
   </ItemGroup>
 
 </Project>
