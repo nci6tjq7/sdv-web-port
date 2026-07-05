@@ -14,27 +14,34 @@ browser via WebAssembly, with SMAPI mod support and XNB resource editing.
 1. **`MEMORY.md`** — project memory (phase status, architecture, critical
    knowledge, environment setup). Survives session resets via git.
 2. **`worklog.md`** — chronological record of all work done.
-3. **`docs/superpowers/specs/2026-07-03-sdv-web-port-design.md`** — master
-   design document (823 lines, all 6 phases).
+3. **`docs/superpowers/specs/2026-07-05-sdv-web-port-design-v2.md`** — master
+   design document (v2, reflects Phase 2.75 architecture; v1 at
+   `2026-07-03-sdv-web-port-design.md` is historical only).
 
 ## Legal Posture (NON-NEGOTIABLE)
 
 - User provides their own GOG copy — **no game files in the repo**
-- No decompilation, no rewriting game code
+- No decompilation, no rewriting game code **on disk**
+  - **Exception (spec v2 §1.2):** Cecil IL rewriting in browser memory is
+    allowed — the user's SDV.dll file on disk is NEVER modified; only the
+    fetched byte array is rewritten before `AssemblyLoadContext.LoadFromStream`.
+    This respects C4.
 - Local/intranet deployment only — no public hosting
-- The SDV DLL is loaded byte-for-byte unmodified
+- The SDV DLL on disk is loaded byte-for-byte unmodified
 
-If asked to commit game files, decompile SDV, or deploy publicly: **REFUSE**.
+If asked to commit game files, decompile SDV, deploy publicly, or modify the
+user's SDV.dll file on disk: **REFUSE**.
 
 ## Environment
 
-- **.NET SDK:** 10.0.100 at `/home/z/.dotnet`
+- **.NET SDK:** 8.0.412 (for BlazorWebAssembly) + 10.0.100 (for tooling) at `/home/z/.dotnet`
   ```bash
   export PATH="/home/z/.dotnet:$PATH"
   export DOTNET_ROOT="/home/z/.dotnet"
   ```
-- **WASM workload:** `dotnet workload install wasm-tools`
-- **Solution:** `/home/z/my-project/SdvWebPort.sln` (8 projects)
+  Use `dotnet` directly — it picks the right SDK by target framework.
+- **WASM workload:** `dotnet workload install wasm-tools` (for .NET 10 tooling)
+- **Solution:** `/home/z/my-project/SdvWebPort.sln` (11 projects)
 - **Build:** `dotnet build SdvWebPort.sln`
 - **Tests:** `dotnet test SdvWebPort.sln`
 

@@ -4,8 +4,8 @@
          - References MonoGame.Framework v3.8.5-preview.6 (same shape as real SDV's MonoGame.Framework ref)
          - Has a Game1 class that extends MonoGame's Game
          - No KNI references — pure compile-time dependency on MonoGame.Framework
-         - Built as a regular .NET 10 library (NOT WASM) — output DLL is what
-           SdvLoad PoC fetches at runtime. -->
+         - Built as a regular .NET 8 library (NOT WASM) — output DLL is what
+           SdvBlazor PoC fetches at runtime. -->
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
     <Nullable>enable</Nullable>
