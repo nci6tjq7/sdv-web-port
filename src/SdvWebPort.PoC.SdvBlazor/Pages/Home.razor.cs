@@ -233,40 +233,14 @@ public partial class Home : ComponentBase
         Console.WriteLine($"[+] Base type: {gameType.BaseType?.FullName} (asm: {gameType.BaseType?.Assembly.GetName().Name})");
 
         // 7. Instantiate the Game via Activator.CreateInstance.
-        // Debug: list all loaded assemblies containing "Xna" or "MonoGame"
-        Console.WriteLine("[+] === Loaded Xna/MonoGame assemblies ===");
+        // Debug: list all loaded assemblies
+        Console.WriteLine("[+] === Loaded assemblies (count: " + AppDomain.CurrentDomain.GetAssemblies().Length + ") ===");
         foreach (var a in AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => a.GetName().Name?.Contains("Xna") == true || a.GetName().Name?.Contains("MonoGame") == true)
+            .Where(a => a.GetName().Name?.StartsWith("Stardew") == true || a.GetName().Name == "xTile" ||
+                        a.GetName().Name?.StartsWith("MonoGame") == true || a.GetName().Name?.StartsWith("Xna") == true)
             .OrderBy(a => a.GetName().Name))
-        {
-            Console.WriteLine($"    {a.FullName} (ALC: {AssemblyLoadContext.GetLoadContext(a)?.Name ?? "default"})");
-        }
-        Console.WriteLine("[+] === End assembly list ===");
-
-        // Debug: check if WaveBank exists in loaded Xna.Framework.Audio
-        var audioAsm = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Xna.Framework.Audio");
-        if (audioAsm != null)
-        {
-            Console.WriteLine($"[+] Xna.Framework.Audio loaded: {audioAsm.FullName}");
-            var waveBankType = audioAsm.GetType("Microsoft.Xna.Framework.Audio.WaveBank");
-            Console.WriteLine($"[+] WaveBank type found: {waveBankType != null}");
-            if (waveBankType == null)
-            {
-                // List all types in the assembly
-                Console.WriteLine("[+] Types in Xna.Framework.Audio:");
-                Type[] audioTypes;
-                try { audioTypes = audioAsm.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { audioTypes = ex.Types.Where(t => t != null).ToArray()!; }
-                foreach (var t in audioTypes.Where(t => t.Name.Contains("Wave") || t.Name.Contains("Sound") || t.Name.Contains("Audio")).Take(20))
-                    Console.WriteLine($"    - {t.FullName}");
-                Console.WriteLine($"    (total {audioTypes.Length} types)");
-            }
-        }
-        else
-        {
-            Console.WriteLine("[!] Xna.Framework.Audio NOT loaded!");
-        }
+            Console.WriteLine("    " + a.FullName);
+        Console.WriteLine("[+] === End ===");
 
         object? gameInstance;
         try
@@ -280,16 +254,19 @@ public partial class Home : ComponentBase
             var inner = ex.InnerException ?? ex;
             Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
             Console.WriteLine($"    Stack: {inner.StackTrace}");
-            // Drill deeper for TypeInitializationException
+            // Drill deeper
             var deepInner = inner.InnerException;
             int depth = 0;
             while (deepInner != null && depth < 5)
             {
                 depth++;
                 Console.WriteLine($"    Deep[{depth}]: {deepInner.GetType().Name}: {deepInner.Message}");
-                Console.WriteLine($"    Deep[{depth}] Stack: {deepInner.StackTrace?.Split('\n')[0]}");
+                Console.WriteLine($"    Deep[{depth}] Stack: {deepInner.StackTrace}");
                 deepInner = deepInner.InnerException;
             }
+            // Log SdvFileShim activity to see what files SDV tried to access
+            Console.WriteLine("[!] NPE likely from SDV constructor accessing null resource.");
+            Console.WriteLine("[!] Check SdvFileShim logs above for file access patterns.");
             return null;
         }
 
