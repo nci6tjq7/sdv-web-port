@@ -5,8 +5,8 @@
 > **Any agent resuming work on this project MUST read this file FIRST, before
 > doing anything else.**
 >
-> Last updated: 2026-07-05 (Phase 2.5 partial — KNI/.NET 10 incompatibility discovered)
-> Current state: Phase 2.5 partial — Game1 instantiates but game loop doesn't start. Next: pivot to BlazorWebAssembly SDK.
+> Last updated: 2026-07-05 (Phase 2.5b — KNI game loop WORKS on net8.0 BlazorWebAssembly)
+> Current state: Phase 2.5b complete — KNI renders in browser. Next: migrate SdvLoad facade→KNI to net8.0.
 
 ---
 
@@ -109,8 +109,9 @@ DLL patching. See `src/MonoGame.Framework.Facade/README.md` for details.
 | 1b — XNB Loading | ✅ DONE | `v0.4.0-phase1b` | XNB parser + LZX decompression + Canvas decode |
 | 1c — Fonts | ✅ DONE | `v0.5.0-phase1c` | BMFont .fnt parser + SpriteBatch text renderer |
 | 2 — SDV Load | ✅ DONE | `v0.7.0-facade-works` | Real SDV DLL loads; TypeForwardedTo → KNI proven |
-| 2.5 — Game1 Invoke | ⚠️ PARTIAL | — | Game1 instantiates + GraphicsDevice + SpriteBatch work; game loop doesn't start (KNI bug) |
-| 2.5b — Pivot to BlazorWebAssembly SDK | ⏳ NEXT | — | Switch SdvLoad PoC to `Microsoft.NET.Sdk.BlazorWebAssembly` (net8.0) — KNI's native target |
+| 2.5 — Game1 Invoke (.NET 10) | ⚠️ PARTIAL | `v0.8.0-phase2.5-partial` | Game1 instantiates but game loop doesn't start (KNI/.NET 10 mismatch) |
+| 2.5b — Blazor Game Loop (net8.0) | ✅ DONE | `v0.9.0-blazor-loop-works` | KNI game loop WORKS on net8.0 BlazorWebAssembly — canvas renders |
+| 2.6 — Migrate SdvLoad to net8.0 | ⏳ NEXT | — | Migrate facade→KNI + SDV load pipeline to net8.0 BlazorWebAssembly |
 | 3 — SMAPI | 🔲 PLANNED | — | Harmony → RuntimeDetour shim; mod loading |
 | 4 — First Mod E2E | 🔲 PLANNED | — | CJB Cheats or similar end-to-end |
 | 5 — XNB Editing | 🔲 PLANNED | — | xnbcli integration; in-browser XNB editor |
@@ -185,29 +186,35 @@ This is a significant decision — discuss with user before pivoting.
 
 ---
 
-## Next Steps (Phase 2.5b — Pivot to BlazorWebAssembly SDK)
+## Next Steps (Phase 2.6 — Migrate SdvLoad facade→KNI to net8.0)
 
-**Goal:** Get KNI's game loop actually running in the browser by switching to
-the SDK that KNI's Blazor.GL platform is designed for.
+**Goal:** Combine Phase 2 (real SDV DLL load via facade) + Phase 2.5b (working
+game loop on net8.0) into a single PoC that loads the real SDV `Game1` and
+runs its game loop in the browser.
 
 **Required work:**
-1. Create a new PoC project `SdvWebPort.PoC.BlazorGameLoop` using `<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">` + `net8.0`
-2. Reference `nkast.Kni.Platform.Blazor.GL` (same version)
-3. Add a simple `Game : Game` subclass with `Draw()` that clears to a color
-4. Use Blazor's `App.razor` + `Pages/Index.razor` component model (per KNI template)
-5. Verify the game loop runs (canvas has non-black pixels) in headless Chromium
-6. If it works: migrate the SdvLoad facade→KNI pipeline to this new SDK
-7. If it doesn't work: investigate further (KNI may need WebXR mode or other setup)
+1. Create `SdvWebPort.PoC.SdvBlazor` project using `Microsoft.NET.Sdk.BlazorWebAssembly` + `net8.0`
+2. Reference `MonoGame.Framework.Facade` (the TypeForwardedTo → KNI assembly from Phase 2)
+3. Add KNI Blazor.GL packages (same as BlazorGameLoop)
+4. In `Index.razor.cs` TickDotNet:
+   - First tick: fetch `Stardew Valley.dll` (or MockSdv.dll) via HttpClient
+   - Load it into AssemblyLoadContext.Default
+   - Find `StardewValley.Game1` via reflection
+   - Instantiate via `Activator.CreateInstance`
+   - Call `game.Run()` (does Initialize + LoadContent + returns)
+   - Subsequent ticks: call `game.Tick()`
+5. Verify in headless browser that real SDV Game1 (or MockSdv stand-in) renders
 
-**Why this approach:** KNI's Blazor.GL platform + `nkast.Wasm.*` JS layer are
-written for .NET 8's `Microsoft.NET.Sdk.BlazorWebAssembly`, which provides
-`Blazor` + `DotNet` globals and a Blazor component model. Our .NET 10
-`Microsoft.NET.Sdk.WebAssembly` doesn't provide these, and shimming them
-fixed initialization but NOT the game loop (because `StartGameLoop()` is
-empty in KNI's C# code — the loop must be driven by something else in the
-Blazor host model).
+**Why this approach:** Phase 2.5b proved KNI's game loop works on net8.0.
+Phase 2 proved real SDV DLL loads via facade→KNI. Combining them on the
+SAME SDK (net8.0 BlazorWebAssembly) should give us "real SDV code executing
++ rendering in browser" — the holy grail of Phase 2.5.
 
-**Branch:** create `feat/phase2.5b-blazor-sdk-pivot` from `main`.
+**Note on facade version:** The facade's AssemblyVersion may need to match
+what real SDV expects (3.8.0.1641 for GOG SDV, or 3.8.5.0 for MockSdv).
+See Phase 2 plan + `scripts/generate-facade-types.sh`.
+
+**Branch:** create `feat/phase2.6-sdv-blazor` from `main`.
 
 ---
 
@@ -343,25 +350,39 @@ browser Canvas API via `[JSImport]` to decode PNG → RGBA bytes →
 KNI v4.2.9001.2's `nkast.Kni.Platform.Blazor.GL` is designed for .NET 8's
 `Microsoft.NET.Sdk.BlazorWebAssembly`, NOT .NET 10's `Microsoft.NET.Sdk.WebAssembly`.
 
-Symptoms:
+Symptoms on .NET 10:
 - Game1 instantiates ✅
 - GraphicsDevice + SpriteBatch create ✅
 - `game.Run()` returns normally ✅
 - BUT no frames render (canvas stays black) ❌
 
-Root cause: KNI's `ConcreteGame.StartGameLoop()` is an empty stub:
-```csharp
-private void StartGameLoop()
-{
-    // request next frame    ← EMPTY!
-}
-```
-The game loop is supposed to be driven by the Blazor component model (App.razor
-+ Pages/Index.razor), not by `Run()` blocking. On .NET 10 native WASM SDK,
-there's no Blazor component model, so the loop never starts.
+Root cause: KNI's `ConcreteGame.StartGameLoop()` is an empty stub. The game
+loop is supposed to be EXTERNALLY driven by JS requestAnimationFrame calling
+`[JSInvokable] TickDotNet`, not by `Run()` blocking.
 
-Fix: Use `Microsoft.NET.Sdk.BlazorWebAssembly` + `net8.0` for any project
-that needs KNI's game loop. See "Phase 2.5b" in Next Steps.
+**SOLUTION (Phase 2.5b — PROVEN):** Use `Microsoft.NET.Sdk.BlazorWebAssembly`
++ `net8.0`. The game loop pattern (from KNI's CanvasGL sample):
+1. Blazor component `OnAfterRender(firstRender)` calls `JsRuntime.InvokeAsync("initRenderJS", DotNetObjectReference.Create(this))`
+2. JS `initRenderJS` stores the .NET ref + starts `requestAnimationFrame(tickJS)`
+3. JS `tickJS` calls `window.theInstance.invokeMethod('TickDotNet')` each frame + re-queues RAF
+4. C# `[JSInvokable] TickDotNet()` creates the Game once (call `game.Run()`) + calls `game.Tick()` each frame
+
+This is in `src/SdvWebPort.PoC.BlazorGameLoop/` (Phase 2.5b, v0.9.0).
+See `Pages/Home.razor.cs` + `wwwroot/index.html` for the working pattern.
+
+### 12. WebGL canvas pixel verification in headless tests (Phase 2.5b)
+
+`canvas.getContext('webgl2').readPixels()` does NOT work for verifying KNI's
+rendering — getting a new WebGL context doesn't see KNI's framebuffer. Also
+`drawImage(canvas, 0, 0)` to a 2D canvas doesn't work for WebGL canvases.
+
+**Working approach:** Use Playwright's `elementHandle.screenshot()` to capture
+the canvas as a PNG, then analyze with `sharp` (Node package):
+```javascript
+await canvas.screenshot({ path: '/tmp/canvas.png' });
+const { data } = await sharp('/tmp/canvas.png').raw().toBuffer({ resolveWithObject: true });
+// data is a Buffer of RGBA bytes
+```
 
 ---
 
@@ -491,6 +512,20 @@ The GitHub token is in `.env` (gitignored, ephemeral — re-set if needed).
 - Root cause: KNI v4.2.9001.2 targets `Microsoft.NET.Sdk.BlazorWebAssembly` (net8.0), NOT .NET 10's `Microsoft.NET.Sdk.WebAssembly`
 - Applied 5 shims (canvas ID, Blazor.platform, Blazor.runtime.Module, DotNet.invokeMethod, globalThis.Module) — fixed initialization but not the loop
 - **Next: Phase 2.5b — pivot to `Microsoft.NET.Sdk.BlazorWebAssembly` + net8.0**
+
+### Phase 2.5b (v0.9.0 — KNI game loop WORKS on net8.0)
+- Created `SdvWebPort.PoC.BlazorGameLoop` project (`Microsoft.NET.Sdk.BlazorWebAssembly` + `net8.0`)
+- Implemented the externally-driven game loop pattern (from KNI's CanvasGL sample):
+  - Blazor component `OnAfterRender` → `JsRuntime.InvokeAsync("initRenderJS", DotNetObjectReference)`
+  - JS `initRenderJS` → starts `requestAnimationFrame(tickJS)`
+  - JS `tickJS` → `window.theInstance.invokeMethod('TickDotNet')` + re-queue RAF
+  - C# `[JSInvokable] TickDotNet` → creates Game + calls `game.Tick()` each frame
+- `LoopGame` (Game subclass) renders CornflowerBlue background + bouncing red 50x50 box
+- **HEADLESS TEST PASSES:** 300+ frames drawn, canvas has 91 non-black pixel samples,
+  30 CornflowerBlue samples, sampleColor = `[100, 149, 237]` (CornflowerBlue)
+- Screenshot: `download/phase2.5b-blazor-loop-canvas.png`
+- Tagged `v0.9.0-blazor-loop-works`
+- **Next: Phase 2.6 — migrate SdvLoad facade→KNI to net8.0, load real SDV Game1**
 
 ---
 
