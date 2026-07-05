@@ -207,3 +207,109 @@ internal static partial class JsInterop
     [System.Runtime.InteropServices.JavaScript.JSImport("globalThis.getCurrentBaseUrl")]
     public static partial string GetCurrentBaseUrl();
 }
+
+/// <summary>
+/// JS-callable .NET method invoker. Exposed via [JSExport] so the JS-side
+/// `DotNet` shim can route `DotNet.invokeMethod(assemblyName, methodName, ...args)`
+/// calls into .NET 10's runtime.
+///
+/// This bridges the gap between KNI's nkast.Wasm.* JS layer (written for the
+/// .NET 8 Blazor WASM host model which provided `DotNet.invokeMethod`) and
+/// .NET 10's Microsoft.NET.Sdk.WebAssembly (which does NOT provide `DotNet`).
+///
+/// KNI's JS calls patterns like:
+///   DotNet.invokeMethod('nkast.Wasm.Dom', 'JsWindowOnAnimationFrame', uid, ci, time)
+///   DotNet.invokeMethod('nkast.Wasm.JSInterop', 'JsPromiseOnCompleted', uid)
+///
+/// We route these to InvokeStaticMethod, which uses reflection to find and
+/// call the static method on the named assembly.
+/// </summary>
+public static partial class DotNetInvoker
+{
+    [System.Runtime.InteropServices.JavaScript.JSExport]
+    public static int InvokeStaticMethod(string assemblyName, string methodName, int arg1, int arg2, double arg3)
+    {
+        try
+        {
+            var asm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == assemblyName);
+            if (asm == null)
+            {
+                Console.Error.WriteLine($"[DotNetInvoker] Assembly not found: {assemblyName}");
+                return -1;
+            }
+
+            // Look for a public static method with the given name that takes (int, int, double)
+            var type = asm.GetTypes().FirstOrDefault(t => t.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int), typeof(int), typeof(double) }, null) != null);
+            if (type == null)
+            {
+                Console.Error.WriteLine($"[DotNetInvoker] Type with method {methodName}(int,int,double) not found in {assemblyName}");
+                return -2;
+            }
+
+            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int), typeof(int), typeof(double) }, null);
+            method?.Invoke(null, new object[] { arg1, arg2, arg3 });
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DotNetInvoker] Error: {ex.Message}");
+            return -99;
+        }
+    }
+
+    [System.Runtime.InteropServices.JavaScript.JSExport]
+    public static int InvokeStaticMethodIntInt(string assemblyName, string methodName, int arg1, int arg2)
+    {
+        try
+        {
+            var asm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == assemblyName);
+            if (asm == null) return -1;
+
+            var type = asm.GetTypes().FirstOrDefault(t => t.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int), typeof(int) }, null) != null);
+            if (type == null) return -2;
+
+            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int), typeof(int) }, null);
+            method?.Invoke(null, new object[] { arg1, arg2 });
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DotNetInvoker] IntInt Error: {ex.Message}");
+            return -99;
+        }
+    }
+
+    [System.Runtime.InteropServices.JavaScript.JSExport]
+    public static int InvokeStaticMethodInt(string assemblyName, string methodName, int arg1)
+    {
+        try
+        {
+            var asm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == assemblyName);
+            if (asm == null) return -1;
+
+            var type = asm.GetTypes().FirstOrDefault(t => t.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int) }, null) != null);
+            if (type == null) return -2;
+
+            var method = type.GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { typeof(int) }, null);
+            method?.Invoke(null, new object[] { arg1 });
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DotNetInvoker] Int Error: {ex.Message}");
+            return -99;
+        }
+    }
+}

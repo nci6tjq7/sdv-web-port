@@ -98,7 +98,7 @@ statusEl.textContent = 'Loading WASM runtime...';
 
 try {
     const runtime = await dotnet.create();
-    const { runMain } = runtime;
+    const { runMain, getAssemblyExports, getConfig } = runtime;
 
     // KNI's Blazor.GL platform (via nkast.Wasm.JSInterop) expects either
     // globalThis.Module or Blazor.runtime.Module to access WASM memory (HEAP32, HEAPU16, etc).
@@ -122,6 +122,70 @@ try {
         globalThis.Blazor.runtime.Module = runtime.Module;
         console.log('[boot] Blazor.runtime.Module shim set');
     }
+
+    // Get the .NET assembly exports so we can call [JSExport] methods from JS.
+    // The DotNet shim below routes KNI's `DotNet.invokeMethod(asm, method, ...args)`
+    // calls to our DotNetInvoker.[JSExport] methods, which use reflection to
+    // invoke the actual static method on the named assembly.
+    const config = getConfig();
+    const exports = await getAssemblyExports(config.mainAssemblyName);
+    console.log('[boot] Assembly exports keys: ' + Object.keys(exports).join(', '));
+    // The exports object has nested structure: exports.SdvWebPort.PoC.SdvLoad.DotNetInvoker.InvokeStaticMethod
+    // Flatten it for easier access.
+    let dotnetInvoker = null;
+    try {
+        // Walk the exports tree to find DotNetInvoker
+        function findInvoker(obj, path) {
+            for (const key of Object.keys(obj)) {
+                if (key === 'DotNetInvoker') return obj[key];
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    const found = findInvoker(obj[key], path + '.' + key);
+                    if (found) return found;
+                }
+            }
+            return null;
+        }
+        dotnetInvoker = findInvoker(exports, '');
+        console.log('[boot] DotNetInvoker found: ' + (dotnetInvoker ? 'yes' : 'no'));
+        if (dotnetInvoker) {
+            console.log('[boot] DotNetInvoker methods: ' + Object.keys(dotnetInvoker).join(', '));
+        }
+    } catch (e) {
+        console.log('[boot] WARN: Could not find DotNetInvoker in exports: ' + e.message);
+    }
+
+    // SHIM: KNI's nkast.Wasm.* JS layer (Window.10.0.0.js, JSObject.10.0.0.js, etc.)
+    // calls `DotNet.invokeMethod(assemblyName, methodName, ...args)` to invoke
+    // static methods on .NET assemblies (e.g. for requestAnimationFrame callbacks).
+    // In .NET 10's Microsoft.NET.Sdk.WebAssembly, `DotNet` is NOT a global.
+    // We provide a shim that routes these calls to our [JSExport] DotNetInvoker
+    // methods, which use reflection to find and invoke the static method.
+    globalThis.DotNet = {
+        invokeMethod: function(assemblyName, methodName, ...args) {
+            if (!dotnetInvoker) {
+                console.error('[DotNet shim] DotNetInvoker not available — cannot invoke ' + assemblyName + '.' + methodName);
+                return null;
+            }
+            // Route based on arg count. KNI's calls use 1, 2, or 3 args (all ints/doubles).
+            try {
+                if (args.length === 3) {
+                    // (int uid, int ci, double time) — requestAnimationFrame callback
+                    return dotnetInvoker.InvokeStaticMethod(assemblyName, methodName, args[0]|0, args[1]|0, +args[2]);
+                } else if (args.length === 2) {
+                    return dotnetInvoker.InvokeStaticMethodIntInt(assemblyName, methodName, args[0]|0, args[1]|0);
+                } else if (args.length === 1) {
+                    return dotnetInvoker.InvokeStaticMethodInt(assemblyName, methodName, args[0]|0);
+                } else {
+                    console.warn('[DotNet shim] Unsupported arg count ' + args.length + ' for ' + assemblyName + '.' + methodName);
+                    return null;
+                }
+            } catch (e) {
+                console.error('[DotNet shim] Error invoking ' + assemblyName + '.' + methodName + ': ' + e.message);
+                return null;
+            }
+        }
+    };
+    console.log('[boot] DotNet shim installed');
 
     statusEl.textContent = 'Runtime ready. Invoking Main...';
     logEl.textContent = '';
