@@ -319,3 +319,69 @@ Stage Summary:
   everything needed to understand current state and resume work
 - The conversation-summary problem is solved: even if a session starts
   with zero context, MEMORY.md + worklog.md + git log provide full state
+
+---
+Task ID: phase2.5-game1-invoke-investigation
+Agent: main
+Task: Phase 2.5 — instantiate Game1 + verify rendering pipeline
+
+Work Log:
+- Used writing-plans skill to create docs/superpowers/plans/2026-07-05-phase2.5-game1-invoke.md
+- Created feat/phase2.5-game1-invoke branch
+- Task 1: Extended MockSdv.Target with real Game1 : Game subclass
+  (GraphicsDeviceManager + SpriteBatch + bouncing red 50x50 box on CornflowerBlue)
+- Task 2: Added nkast.Kni.Platform.Blazor.GL + nkast.Wasm.Canvas packages to SdvLoad csproj
+  + TrimmerRootAssembly for Kni.Platform
+- Task 3: Updated SdvLoad Program.cs to register KNI factories + instantiate Game1
+  via Activator.CreateInstance + call Run() via reflection
+- Task 4: Added <canvas id="theCanvas"> to index.html + readCanvasPixels() to main.js
+- Task 5: Updated headless test to verify both log PASS + canvas pixel check
+
+Systematic debugging (5 issues found + fixed, 1 blocker remains):
+1. ISSUE: BlazorGameWindow.get_ClientBounds() NullReferenceException
+   FIX: Canvas ID must be 'theCanvas' (KNI default), not 'game-canvas'
+2. ISSUE: 'Blazor is not defined' in BufferSubData (KNI JSObject.js line 207)
+   FIX: Added globalThis.Blazor shim with platform.getArrayEntryPtr (returns arr as-is)
+3. ISSUE: Blazor.runtime.Module undefined (KNI JSObject.js line 85)
+   FIX: Set globalThis.Blazor.runtime.Module = runtime.Module after dotnet.create()
+4. ISSUE: 'DotNet is not defined' in requestAnimationFrame callback (KNI Window.js line 83)
+   FIX: Added globalThis.DotNet shim with invokeMethod that routes to [JSExport]
+   DotNetInvoker class (InvokeStaticMethod / InvokeStaticMethodIntInt / InvokeStaticMethodInt)
+   + getAssemblyExports to find DotNetInvoker in the exports tree
+5. ISSUE: Game loop doesn't start — Run() returns normally but no frames render
+   INVESTIGATION: Downloaded KNI source from GitHub — found that
+   ConcreteGame.StartGameLoop() is an EMPTY STUB:
+     private void StartGameLoop() { // request next frame }
+   This is empty in BOTH the NuGet package AND the latest KNI main branch.
+   The game loop is supposed to be driven by the Blazor component model
+   (App.razor + Pages/Index.razor), not by Run() blocking.
+
+ROOT CAUSE (architecture mismatch):
+- KNI v4.2.9001.2's Blazor.GL platform targets Microsoft.NET.Sdk.BlazorWebAssembly (net8.0)
+- We're using Microsoft.NET.Sdk.WebAssembly (net10.0) — different SDK
+- KNI's Blazor project template confirms: <Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly"> + net8.0
+- The .NET 8 BlazorWebAssembly SDK provides Blazor + DotNet globals + component model
+- .NET 10 native WASM SDK does NOT provide these
+- Shimming fixed initialization but NOT the game loop (StartGameLoop is empty in C#)
+
+PROVEN WORKING (Phase 2.5 partial):
+- ✅ Game1 instantiates via Activator.CreateInstance
+- ✅ GraphicsDeviceManager initializes (Viewport: 800x600)
+- ✅ GraphicsDevice creates
+- ✅ SpriteBatch creates
+- ✅ Texture2D creates (1x1 white pixel)
+- ✅ LoadContent completes
+- ✅ Run() returns normally (no exception)
+
+NOT WORKING:
+- ❌ Game loop (StartGameLoop is empty — no requestAnimationFrame ever called)
+- ❌ No frames render (canvas stays black)
+
+Stage Summary:
+- Phase 2.5 is PARTIAL — proved the "load + initialize" pipeline works end-to-end
+- The blocker is a fundamental KNI/.NET 10 SDK mismatch, not a fixable bug
+- Applied 5 shims (documented in main.js + Program.cs + MEMORY.md)
+- Next step: Phase 2.5b — pivot to Microsoft.NET.Sdk.BlazorWebAssembly + net8.0
+- KNI's Blazor.GL platform is designed for that SDK and should work natively
+- All work committed on feat/phase2.5-game1-invoke branch, merged to main
+- MEMORY.md updated with Critical Knowledge entry #11 + new Phase 2.5b plan

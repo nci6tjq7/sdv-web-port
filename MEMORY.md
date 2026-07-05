@@ -5,8 +5,8 @@
 > **Any agent resuming work on this project MUST read this file FIRST, before
 > doing anything else.**
 >
-> Last updated: 2026-07-05 (v0.7.0-facade-works)
-> Current state: Phase 2 complete, Phase 2.5 next.
+> Last updated: 2026-07-05 (Phase 2.5 partial — KNI/.NET 10 incompatibility discovered)
+> Current state: Phase 2.5 partial — Game1 instantiates but game loop doesn't start. Next: pivot to BlazorWebAssembly SDK.
 
 ---
 
@@ -109,28 +109,105 @@ DLL patching. See `src/MonoGame.Framework.Facade/README.md` for details.
 | 1b — XNB Loading | ✅ DONE | `v0.4.0-phase1b` | XNB parser + LZX decompression + Canvas decode |
 | 1c — Fonts | ✅ DONE | `v0.5.0-phase1c` | BMFont .fnt parser + SpriteBatch text renderer |
 | 2 — SDV Load | ✅ DONE | `v0.7.0-facade-works` | Real SDV DLL loads; TypeForwardedTo → KNI proven |
-| 2.5 — Game1 Invoke | ⏳ NEXT | — | Call Program.Main() / instantiate Game1 with VFS-backed ContentManager |
+| 2.5 — Game1 Invoke | ⚠️ PARTIAL | — | Game1 instantiates + GraphicsDevice + SpriteBatch work; game loop doesn't start (KNI bug) |
+| 2.5b — Pivot to BlazorWebAssembly SDK | ⏳ NEXT | — | Switch SdvLoad PoC to `Microsoft.NET.Sdk.BlazorWebAssembly` (net8.0) — KNI's native target |
 | 3 — SMAPI | 🔲 PLANNED | — | Harmony → RuntimeDetour shim; mod loading |
 | 4 — First Mod E2E | 🔲 PLANNED | — | CJB Cheats or similar end-to-end |
 | 5 — XNB Editing | 🔲 PLANNED | — | xnbcli integration; in-browser XNB editor |
 
 ---
 
-## Next Steps (Phase 2.5)
+## ⚠️ CRITICAL: KNI Blazor.GL + .NET 10 Incompatibility (discovered Phase 2.5)
 
-**Goal:** Call `StardewValley.Program.Main()` or instantiate `Game1` in the
-browser, with SDV's file system calls redirected to the VFS.
+**KNI v4.2.9001.2's `nkast.Kni.Platform.Blazor.GL` does NOT work with .NET 10's
+`Microsoft.NET.Sdk.WebAssembly`.** It targets `Microsoft.NET.Sdk.BlazorWebAssembly`
+(net8.0) and relies on `Blazor` + `DotNet` global JS objects that .NET 10's native
+WASM SDK does not provide.
+
+### Evidence
+
+1. KNI's Blazor project template uses `<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">` + `net8.0`
+2. KNI's `nkast.Wasm.*` JS files unconditionally reference `Blazor.platform.*` and `DotNet.invokeMethod()`
+3. KNI's `ConcreteGame.StartGameLoop()` is an EMPTY STUB:
+   ```csharp
+   private void StartGameLoop()
+   {
+       // request next frame    ← EMPTY! Game loop never starts!
+   }
+   ```
+   (Confirmed in both the NuGet package AND the latest KNI main branch on GitHub)
+
+### What works on .NET 10 native WASM SDK (with shims)
+
+- ✅ DLL loading + TypeForwardedTo facade → KNI resolution
+- ✅ Game1 instantiation via reflection
+- ✅ GraphicsDeviceManager + GraphicsDevice creation
+- ✅ SpriteBatch + Texture2D creation
+- ✅ LoadContent() completes
+
+### What does NOT work
+
+- ❌ Game loop (StartGameLoop is empty — no requestAnimationFrame is ever called)
+- ❌ No frames are rendered (canvas stays black)
+- ❌ `Blazor` + `DotNet` global JS objects don't exist (we shimmed them but the loop still doesn't start)
+
+### Shims we applied (documented for future reference)
+
+In `src/SdvWebPort.PoC.SdvLoad/wwwroot/main.js`:
+- `globalThis.Blazor = { platform: { getArrayEntryPtr: (arr) => arr }, runtime: { Module: null } }`
+- `globalThis.DotNet = { invokeMethod: (asm, method, ...args) => dotnetInvoker.InvokeStatic...(asm, method, ...) }`
+- `globalThis.Module = runtime.Module`
+
+In `src/SdvWebPort.PoC.SdvLoad/Program.cs`:
+- `DotNetInvoker` class with `[JSExport]` methods that route JS→.NET calls via reflection
+
+These shims fixed initialization but the game loop STILL doesn't start because
+`StartGameLoop()` is empty in KNI's C# code (not a JS issue).
+
+### Recommended fix: Pivot to BlazorWebAssembly SDK
+
+Create a new PoC project using:
+```xml
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+```
+
+This is what KNI's Blazor.GL platform is designed for. The .NET 8
+BlazorWebAssembly SDK provides `Blazor` + `DotNet` globals AND a component
+model that may drive the game loop.
+
+**Note:** This means the overall project may need to use .NET 8 for the
+browser runtime, while the build/test toolchain can stay on .NET 10.
+This is a significant decision — discuss with user before pivoting.
+
+---
+
+## Next Steps (Phase 2.5b — Pivot to BlazorWebAssembly SDK)
+
+**Goal:** Get KNI's game loop actually running in the browser by switching to
+the SDK that KNI's Blazor.GL platform is designed for.
 
 **Required work:**
-1. VFS-backed ContentManager that serves SDV's XNB content from user's GOG files
-2. Redirect SDV's `File.OpenRead` / `File.Exists` / etc. to `IVirtualFileSystem`
-   (likely via a Harmony-style method replacement, OR by setting
-   `Environment.CurrentDirectory` to a virtual path and intercepting)
-3. Set SaveGame paths to OPFS-backed locations
-4. Wire up KNI's Blazor.GL platform (already proven in `PoC.Render`)
-5. Call `Program.Main(string[] args)` via reflection
+1. Create a new PoC project `SdvWebPort.PoC.BlazorGameLoop` using `<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">` + `net8.0`
+2. Reference `nkast.Kni.Platform.Blazor.GL` (same version)
+3. Add a simple `Game : Game` subclass with `Draw()` that clears to a color
+4. Use Blazor's `App.razor` + `Pages/Index.razor` component model (per KNI template)
+5. Verify the game loop runs (canvas has non-black pixels) in headless Chromium
+6. If it works: migrate the SdvLoad facade→KNI pipeline to this new SDK
+7. If it doesn't work: investigate further (KNI may need WebXR mode or other setup)
 
-**Branch:** create `feat/phase2.5-game1-invoke` from `main`.
+**Why this approach:** KNI's Blazor.GL platform + `nkast.Wasm.*` JS layer are
+written for .NET 8's `Microsoft.NET.Sdk.BlazorWebAssembly`, which provides
+`Blazor` + `DotNet` globals and a Blazor component model. Our .NET 10
+`Microsoft.NET.Sdk.WebAssembly` doesn't provide these, and shimming them
+fixed initialization but NOT the game loop (because `StartGameLoop()` is
+empty in KNI's C# code — the loop must be driven by something else in the
+Blazor host model).
+
+**Branch:** create `feat/phase2.5b-blazor-sdk-pivot` from `main`.
 
 ---
 
@@ -261,6 +338,31 @@ KNI's `Texture2D.FromStream` doesn't support PNG in WASM. Workaround: use
 browser Canvas API via `[JSImport]` to decode PNG → RGBA bytes →
 `Texture2D.SetData(rgba)`.
 
+### 11. KNI Blazor.GL + .NET 10 Microsoft.NET.Sdk.WebAssembly = INCOMPATIBLE (Phase 2.5)
+
+KNI v4.2.9001.2's `nkast.Kni.Platform.Blazor.GL` is designed for .NET 8's
+`Microsoft.NET.Sdk.BlazorWebAssembly`, NOT .NET 10's `Microsoft.NET.Sdk.WebAssembly`.
+
+Symptoms:
+- Game1 instantiates ✅
+- GraphicsDevice + SpriteBatch create ✅
+- `game.Run()` returns normally ✅
+- BUT no frames render (canvas stays black) ❌
+
+Root cause: KNI's `ConcreteGame.StartGameLoop()` is an empty stub:
+```csharp
+private void StartGameLoop()
+{
+    // request next frame    ← EMPTY!
+}
+```
+The game loop is supposed to be driven by the Blazor component model (App.razor
++ Pages/Index.razor), not by `Run()` blocking. On .NET 10 native WASM SDK,
+there's no Blazor component model, so the loop never starts.
+
+Fix: Use `Microsoft.NET.Sdk.BlazorWebAssembly` + `net8.0` for any project
+that needs KNI's game loop. See "Phase 2.5b" in Next Steps.
+
 ---
 
 ## Environment Setup (Quick Reference)
@@ -380,6 +482,15 @@ The GitHub token is in `.env` (gitignored, ephemeral — re-set if needed).
 - v0.7.0: systematic-debugging revealed trimmer was stripping KNI assemblies;
   added `<TrimmerRootAssembly>` for each KNI assembly → **WORKS**
 - Headless Chromium test PASSES: Game1 base type resolves through facade to KNI
+
+### Phase 2.5 (partial — KNI/.NET 10 incompatibility discovered)
+- Extended `MockSdv.Target` with real `Game1 : Game` subclass (GraphicsDevice + SpriteBatch + bouncing red box)
+- Extended `SdvWebPort.PoC.SdvLoad` to register KNI factories + instantiate Game1 + call Run()
+- **PROVEN WORKING:** Game1 instantiates, GraphicsDevice creates, SpriteBatch creates, LoadContent completes
+- **BLOCKER:** Game loop doesn't start — KNI's `ConcreteGame.StartGameLoop()` is an empty stub
+- Root cause: KNI v4.2.9001.2 targets `Microsoft.NET.Sdk.BlazorWebAssembly` (net8.0), NOT .NET 10's `Microsoft.NET.Sdk.WebAssembly`
+- Applied 5 shims (canvas ID, Blazor.platform, Blazor.runtime.Module, DotNet.invokeMethod, globalThis.Module) — fixed initialization but not the loop
+- **Next: Phase 2.5b — pivot to `Microsoft.NET.Sdk.BlazorWebAssembly` + net8.0**
 
 ---
 
