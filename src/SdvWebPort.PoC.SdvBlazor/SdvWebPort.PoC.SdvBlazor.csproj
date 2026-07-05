@@ -5,8 +5,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Phase 2.8: Disable trimming — real SDV references many System.* assemblies
-         that the trimmer would strip. Bundle is larger but SDV types resolve correctly. -->
+         and rare generic types (Action`7) that the trimmer would strip. -->
     <PublishTrimmed>false</PublishTrimmed>
+    <TrimMode>none</TrimMode>
   </PropertyGroup>
 
   <ItemGroup>

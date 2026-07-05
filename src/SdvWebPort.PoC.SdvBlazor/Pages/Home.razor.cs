@@ -36,24 +36,6 @@ public partial class Home : ComponentBase
 
         if (firstRender)
         {
-            // Register an ALC.Resolving handler that maps .NET 6 version refs → .NET 8.
-            // Real SDV references System.Runtime v6.0.0.0; our runtime is v8.0.0.0.
-            // AppDomain.AssemblyResolve doesn't fire in Blazor WASM — use ALC.Resolving.
-            AssemblyLoadContext.Default.Resolving += (context, name) =>
-            {
-                if (name.Version != null && name.Version.Major < 8)
-                {
-                    var runtimeAsm = AppDomain.CurrentDomain.GetAssemblies()
-                        .FirstOrDefault(a => a.GetName().Name == name.Name);
-                    if (runtimeAsm != null)
-                    {
-                        Console.WriteLine($"[ALC.Resolving] {name.Name} v{name.Version} → {runtimeAsm.GetName().Version}");
-                        return runtimeAsm;
-                    }
-                }
-                return null;
-            };
-
             JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
         }
     }
