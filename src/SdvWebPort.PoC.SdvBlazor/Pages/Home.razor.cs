@@ -106,9 +106,25 @@ public partial class Home : ComponentBase
 
             Console.WriteLine("[+] Running Cecil AssemblyRef rewriter (System.* v6→v8, MG v3.8.0.1641→v3.8.5.0)...");
             var refRewritten = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
-            Console.WriteLine($"[+] Running Cecil FileSystem rewriter (File/Directory → SdvFileShim)...");
-            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(refRewritten);
+            Console.WriteLine("[+] SKIPPING Cecil FileSystem rewriter for debugging...");
+            rewrittenBytes = refRewritten;
             Console.WriteLine($"[+] Final rewritten: {rewrittenBytes.Length:N0} bytes");
+
+            // Diagnostic: verify AssemblyRef version in rewritten bytes using Cecil
+            try
+            {
+                using var verifyMs = new MemoryStream(rewrittenBytes);
+                using var verifyAsm = Mono.Cecil.AssemblyDefinition.ReadAssembly(verifyMs, new Mono.Cecil.ReaderParameters { InMemory = true });
+                var mgRef = verifyAsm.MainModule.AssemblyReferences.FirstOrDefault(ar => ar.Name == "MonoGame.Framework");
+                Console.WriteLine($"[+] VERIFY: MonoGame.Framework AssemblyRef version = {mgRef?.Version}");
+                // Also check ContentTypeReader typeref scope
+                var ctr = verifyAsm.MainModule.GetTypeReferences().FirstOrDefault(tr => tr.FullName.Contains("ContentTypeReader"));
+                Console.WriteLine($"[+] VERIFY: ContentTypeReader typeref = {ctr?.FullName ?? "NOT FOUND"} scope={ctr?.Scope?.Name}");
+            }
+            catch (Exception vex)
+            {
+                Console.WriteLine($"[+] VERIFY failed: {vex.Message}");
+            }
         }
         catch (Exception ex)
         {

@@ -293,6 +293,12 @@ public static class SdvAssemblyRefRewriter
         //   ldc.r4 0.001; stsfld SpriteBatch::TextureTuckAmount  (KNI removed this field)
         PatchGameRunnerCtorBrokenInstructions(asmDef);
 
+        // Pass 8: rewrite stripped collection typerefs to use our replacement types.
+        // The BlazorWebAssembly trimmer strips types from System.Collections.wasm
+        // (Stack<T>, SortedSet<T>, etc.) even though they're defined there in source.
+        // We define equivalent types in SdvWebPort.Vfs.CollectionReplacements.
+        ReplaceMissingCollections(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -701,6 +707,82 @@ public static class SdvAssemblyRefRewriter
         Console.WriteLine($"[AssemblyRefRewriter] Delegate replacements: {rewrites}");
     }
 
+    /// <summary>
+    /// Rewrite stripped collection typerefs to use our replacement types.
+    /// The BlazorWebAssembly trimmer strips types from System.Collections.wasm
+    /// (Stack&lt;T&gt;, SortedSet&lt;T&gt;, etc.) even though they're defined there in source.
+    /// We define equivalent types in SdvWebPort.Vfs.CollectionReplacements.
+    ///
+    /// Like ReplaceMissingDelegates, we walk module.GetTypeReferences() and
+    /// rewrite matching typerefs' namespace + scope.
+    /// </summary>
+    private static void ReplaceMissingCollections(AssemblyDefinition asmDef)
+    {
+        var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+        if (vfsAsm == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SdvWebPort.Vfs not loaded — skipping collection replacement");
+            return;
+        }
+
+        var replacementNamespace = "SdvWebPort.Vfs.CollectionReplacements";
+        var module = asmDef.MainModule;
+
+        // Map of (namespace, name) → replacement arity
+        // These are the collection types stripped from WASM System.Collections
+        var strippedTypes = new HashSet<string>
+        {
+            "System.Collections.Generic.Stack`1",
+            "System.Collections.Generic.SortedSet`1",
+            "System.Collections.Generic.LinkedList`1",
+            "System.Collections.Generic.SortedDictionary`2",
+            "System.Collections.Generic.SortedList`2",
+            "System.Collections.ObjectModel.ObservableCollection`1",
+            "System.Collections.Concurrent.ConcurrentDictionary`2",
+            "System.Collections.Concurrent.ConcurrentStack`1",
+            "System.Collections.Concurrent.ConcurrentBag`1",
+            "System.Collections.Concurrent.ConcurrentQueue`1",
+        };
+
+        // Find or create the SdvWebPort.Vfs AssemblyNameReference
+        var vfsAsmRef = module.AssemblyReferences.FirstOrDefault(a => a.Name == "SdvWebPort.Vfs");
+        if (vfsAsmRef == null)
+        {
+            vfsAsmRef = new AssemblyNameReference("SdvWebPort.Vfs", new Version(1, 0, 0, 0))
+            {
+                PublicKeyToken = null!,
+            };
+            module.AssemblyReferences.Add(vfsAsmRef);
+        }
+
+        int rewrites = 0;
+        foreach (var tr in module.GetTypeReferences())
+        {
+            var fn = tr.FullName ?? "";
+            if (!strippedTypes.Contains(fn)) continue;
+
+            // Verify replacement exists
+            var replacementFullName = replacementNamespace + "." + tr.Name;
+            var replacementType = vfsAsm.GetType(replacementFullName);
+            if (replacementType == null)
+            {
+                Console.WriteLine($"[AssemblyRefRewriter] WARN: no replacement collection for {fn}");
+                continue;
+            }
+
+            var oldNs = tr.Namespace;
+            var oldScope = tr.Scope?.Name;
+            tr.Namespace = replacementNamespace;
+            tr.Scope = vfsAsmRef;
+            rewrites++;
+            if (rewrites <= 10)
+                Console.WriteLine($"[AssemblyRefRewriter] Collection {fn}: scope {oldScope} → SdvWebPort.Vfs (ns {oldNs} → {replacementNamespace})");
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] Collection replacements: {rewrites}");
+    }
+
     private static void CollectGenericInstances(TypeReference tr, List<GenericInstanceType> list)
     {
         if (tr == null) return;
@@ -753,6 +835,12 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static bool TryRewriteTypeRefScope(TypeReference tr, RefAssemblyResolver resolver)
     {
+        // Diagnostic: log ContentTypeReader typerefs (BEFORE the TypeSpecification skip)
+        if (tr.FullName.Contains("ContentTypeReader"))
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] TryRewriteTypeRefScope ENTER: {tr.FullName} scope={tr.Scope?.Name} isSpec={tr is TypeSpecification} type={tr.GetType().Name}");
+        }
+
         // Skip TypeSpecification (arrays, byrefs, pointers, generics) — their
         // scope is derived from their element type. Modifying the element type
         // (which we also collect and rewrite) automatically updates the spec's scope.
@@ -760,12 +848,6 @@ public static class SdvAssemblyRefRewriter
 
         if (tr.Scope is not AssemblyNameReference scopeAsm) return false;
         var scopeName = scopeAsm.Name;
-
-        // Diagnostic: log ContentTypeReader typerefs
-        if (tr.FullName.Contains("ContentTypeReader"))
-        {
-            Console.WriteLine($"[AssemblyRefRewriter] TryRewriteTypeRefScope: {tr.FullName} scope={scopeName}");
-        }
 
         // Rewrite typerefs pointing at:
         // 1. System.* facades (trimmer strips type-forwards)
