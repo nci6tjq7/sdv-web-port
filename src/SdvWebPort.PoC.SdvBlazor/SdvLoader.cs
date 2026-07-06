@@ -338,9 +338,14 @@ public static class SdvLoader
     {
         Console.WriteLine("[SdvLoader] === Phase 2.8 — real SDV load ===");
 
-        // 1. Register a resolving handler that returns empty stubs for
-        //    assemblies with native dependencies (Steamworks, Galaxy, SkiaSharp, TextCopy).
-        //    We do this BEFORE loading any SDV deps so the resolver is in place.
+        // 1. Preload stub assembly bytes (Steamworks.NET, GalaxyCSharp, SkiaSharp, TextCopy).
+        //    These have native deps but the managed DLL loads fine — native methods
+        //    only fail when called. We preload bytes because the resolving event
+        //    can't be async.
+        await PreloadStubAssembliesAsync(http, baseAddress);
+
+        // 1a. Register a resolving handler that returns preloaded stubs for
+        //     assemblies with native dependencies.
         RegisterStubResolver();
 
         // 1b. Preload System.* assemblies that SDV references but the trimmer
@@ -365,7 +370,11 @@ public static class SdvLoader
         Console.WriteLine($"[SdvLoader] Facade: {facadeAsm.FullName}");
 
         // 3. Fetch + load each dependency in order.
-        Console.WriteLine($"[SdvLoader] Loading {_dependencyOrder.Length} dependency DLLs...");
+        // IMPORTANT: Each dependency DLL is also run through the AssemblyRef rewriter
+        // because deps like xTile.dll and BmFont.dll have typerefs to
+        // MonoGame.Framework (e.g., ContentTypeReader`1) that need scope rewriting
+        // to point at KNI assemblies. Without this, GetTypes() on these deps fails.
+        Console.WriteLine($"[SdvLoader] Loading {_dependencyOrder.Length} dependency DLLs (with rewriter)...");
         foreach (var depName in _dependencyOrder)
         {
             try
@@ -373,7 +382,21 @@ public static class SdvLoader
                 var url = new Uri(new Uri(baseAddress), $"deps/{depName}");
                 var bytes = await http.GetByteArrayAsync(url);
                 Console.WriteLine($"[SdvLoader]   fetched {depName}: {bytes.Length:N0} bytes");
-                var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(bytes));
+
+                // Run AssemblyRef rewriter on the dependency
+                byte[] rewrittenDep;
+                try
+                {
+                    rewrittenDep = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(bytes);
+                    Console.WriteLine($"[SdvLoader]   rewritten: {rewrittenDep.Length:N0} bytes");
+                }
+                catch (Exception rex)
+                {
+                    Console.WriteLine($"[SdvLoader]   rewriter FAILED for {depName}: {rex.Message} — using original");
+                    rewrittenDep = bytes;
+                }
+
+                var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(rewrittenDep));
                 Console.WriteLine($"[SdvLoader]   loaded: {asm.FullName}");
             }
             catch (Exception ex)
@@ -464,6 +487,34 @@ public static class SdvLoader
     /// exactly which assembly SDV's GameRunner..ctor() path requires, and can
     /// then decide whether to ship a stub or IL-rewrite the calls.
     /// </summary>
+    private static HttpClient? _resolverHttp;
+    private static string? _resolverBaseAddress;
+
+    /// <summary>
+    /// Preload stub assembly bytes from /deps/ static files. These assemblies
+    /// (Steamworks.NET, GalaxyCSharp, SkiaSharp, TextCopy) have native deps
+    /// but the managed DLL loads fine — native methods only fail when called.
+    /// We preload bytes because the resolving event can't be async.
+    /// </summary>
+    private static async Task PreloadStubAssembliesAsync(HttpClient http, string baseAddress)
+    {
+        Console.WriteLine("[SdvLoader] Preloading stub assembly bytes...");
+        foreach (var name in _stubAssemblyNames)
+        {
+            try
+            {
+                var url = new Uri(new Uri(baseAddress), "deps/" + name + ".dll");
+                var bytes = await http.GetByteArrayAsync(url);
+                _preloadedStubs[name] = bytes;
+                Console.WriteLine("[SdvLoader]   preloaded " + name + ": " + bytes.Length + " bytes");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SdvLoader]   could not preload " + name + ": " + ex.Message);
+            }
+        }
+    }
+
     private static void RegisterStubResolver()
     {
         if (_resolverRegistered) return;
@@ -481,11 +532,28 @@ public static class SdvLoader
             }
             var isStub = _stubAssemblyNames.Contains(name.Name ?? "");
             Console.WriteLine($"[SdvLoader] RESOLVING: {name.FullName}  (stub-expected={isStub})");
-            return null; // let FileNotFoundException surface
+
+            // For stub-expected assemblies, check if we have preloaded bytes.
+            // (The resolving event can't be async, so we preload stub bytes before
+            // loading SDV and cache them here.)
+            if (isStub && _preloadedStubs.TryGetValue(name.Name ?? "", out var stubBytes))
+            {
+                try
+                {
+                    Console.WriteLine($"[SdvLoader]   loading stub {name.Name} from preloaded bytes ({stubBytes.Length:N0} bytes)");
+                    return AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(stubBytes));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SdvLoader]   stub load failed for {name.Name}: {ex.Message}");
+                }
+            }
+            return null;
         };
-        Console.WriteLine("[SdvLoader] Resolving handler registered (logs unresolved assembly requests)");
+        Console.WriteLine("[SdvLoader] Resolving handler registered (loads preloaded stub assemblies)");
     }
 
     private static bool _resolverRegistered = false;
     private static readonly HashSet<string> _seenUnresolved = new();
+    private static readonly Dictionary<string, byte[]> _preloadedStubs = new();
 }
