@@ -197,7 +197,7 @@ public static class SdvAssemblyRefRewriter
         foreach (var type in asmDef.MainModule.GetTypes())
         {
             CollectTypeRefs(type, typeRefsToRewrite);
-            // Collect typerefs from base type, interfaces, fields (signature only — not method bodies)
+            // Collect typerefs from base type, interfaces, fields (signature only)
             if (type.BaseType != null) CollectTypeRefs(type.BaseType, typeRefsToRewrite);
             foreach (var iface in type.Interfaces)
                 CollectTypeRefs(iface.InterfaceType, typeRefsToRewrite);
@@ -207,6 +207,30 @@ public static class SdvAssemblyRefRewriter
                 CollectTypeRefs(prop.PropertyType, typeRefsToRewrite);
             foreach (var ev in type.Events)
                 CollectTypeRefs(ev.EventType, typeRefsToRewrite);
+            // Collect typerefs from method signatures + bodies (instructions)
+            // We need this because some types (like ContentTypeReader`1) are only
+            // referenced in method bodies, not in field/property signatures.
+            foreach (var method in type.Methods)
+            {
+                if (method.ReturnType != null)
+                    CollectTypeRefs(method.ReturnType, typeRefsToRewrite);
+                foreach (var param in method.Parameters)
+                    CollectTypeRefs(param.ParameterType, typeRefsToRewrite);
+                if (method.HasBody)
+                {
+                    foreach (var local in method.Body.Variables)
+                        CollectTypeRefs(local.VariableType, typeRefsToRewrite);
+                    foreach (var instr in method.Body.Instructions)
+                    {
+                        if (instr.Operand is TypeReference tr)
+                            CollectTypeRefs(tr, typeRefsToRewrite);
+                        if (instr.Operand is MethodReference mr && mr.DeclaringType != null)
+                            CollectTypeRefs(mr.DeclaringType, typeRefsToRewrite);
+                        if (instr.Operand is FieldReference fr && fr.DeclaringType != null)
+                            CollectTypeRefs(fr.DeclaringType, typeRefsToRewrite);
+                    }
+                }
+            }
         }
 
         // Process ALL typerefs (no dedup — each TypeReference is a separate object
@@ -737,6 +761,12 @@ public static class SdvAssemblyRefRewriter
         if (tr.Scope is not AssemblyNameReference scopeAsm) return false;
         var scopeName = scopeAsm.Name;
 
+        // Diagnostic: log ContentTypeReader typerefs
+        if (tr.FullName.Contains("ContentTypeReader"))
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] TryRewriteTypeRefScope: {tr.FullName} scope={scopeName}");
+        }
+
         // Rewrite typerefs pointing at:
         // 1. System.* facades (trimmer strips type-forwards)
         // 2. MonoGame.Framework facade (our facade — TypeForwardedTo may be stripped by trimmer)
@@ -819,6 +849,12 @@ public static class SdvAssemblyRefRewriter
                 return cached.TargetAsm == sourceAsmName ? null : cached.TargetAsm;
         }
 
+        // Diagnostic: log ContentTypeReader resolution
+        if (typeFullName.Contains("ContentTypeReader"))
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] ResolveForwardedScope: source={sourceAsmName}, type={typeFullName}");
+        }
+
         var visited = new HashSet<string>();
         var currentAsm = sourceAsmName;
         string? result = null;
@@ -851,6 +887,25 @@ public static class SdvAssemblyRefRewriter
 
             // Check if the type is FORWARDED (ExportedTypes).
             var exported = asmDef.MainModule.ExportedTypes.FirstOrDefault(et => et.FullName == typeFullName);
+            if (exported == null)
+            {
+                // For open generic types (e.g., ContentTypeReader`1), the facade's
+                // generator script skips them (TypeForwardedTo can't forward open
+                // generics). Try matching by stripping the `N suffix — if the
+                // non-generic version is forwarded, the generic version is in the
+                // SAME target assembly.
+                var tickIdx = typeFullName.IndexOf('`');
+                if (tickIdx > 0)
+                {
+                    var baseName = typeFullName.Substring(0, tickIdx);
+                    var baseExported = asmDef.MainModule.ExportedTypes.FirstOrDefault(et => et.FullName == baseName);
+                    if (baseExported != null)
+                    {
+                        exported = baseExported;
+                        Console.WriteLine($"[AssemblyRefRewriter] Open generic {typeFullName} → using non-generic forward target {baseExported.Scope?.Name}");
+                    }
+                }
+            }
             if (exported != null)
             {
                 // Forwarded to another assembly — follow the chain
@@ -865,6 +920,19 @@ public static class SdvAssemblyRefRewriter
             }
 
             // Type not found in this assembly's Types or ExportedTypes.
+            // For MonoGame.Framework source, search KNI Xna.Framework.* assemblies
+            // directly (the facade may be missing the forward for some types).
+            if (currentAsm == "MonoGame.Framework")
+            {
+                var kniTarget = SearchKniAssembliesForType(typeFullName);
+                if (kniTarget != null)
+                {
+                    Console.WriteLine($"[AssemblyRefRewriter] MG type {typeFullName} found in KNI assembly: {kniTarget}");
+                    result = kniTarget;
+                    break;
+                }
+            }
+
             // If this is the INITIAL source, fall back to CoreLib (most System.*
             // types are there). Otherwise, trust the current assembly as the
             // target (the forward chain led us here — the type should be defined
@@ -881,5 +949,36 @@ public static class SdvAssemblyRefRewriter
             _forwardCache[key] = (result ?? sourceAsmName, null);
         }
         return result == sourceAsmName ? null : result;
+    }
+
+    /// <summary>
+    /// Search all KNI Xna.Framework.* assemblies for a type by full name.
+    /// Returns the assembly simple name if found, null otherwise.
+    /// Used as a fallback for MonoGame.Framework types that aren't in the facade's
+    /// ExportedTypes (e.g., open generics that the generator script skipped).
+    /// </summary>
+    private static string? SearchKniAssembliesForType(string typeFullName)
+    {
+        string[] kniAssemblies = new[]
+        {
+            "Xna.Framework",
+            "Xna.Framework.Game",
+            "Xna.Framework.Graphics",
+            "Xna.Framework.Content",
+            "Xna.Framework.Input",
+            "Xna.Framework.Audio",
+            "Xna.Framework.Media",
+            "Xna.Framework.XR",
+        };
+        foreach (var name in kniAssemblies)
+        {
+            var asmDef = LoadRuntimeAssembly(name);
+            if (asmDef == null) continue;
+            // Check direct types
+            var direct = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == typeFullName);
+            if (direct != null)
+                return name;
+        }
+        return null;
     }
 }

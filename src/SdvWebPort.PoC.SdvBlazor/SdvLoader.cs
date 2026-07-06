@@ -145,9 +145,9 @@ public static class SdvLoader
         throw new NotSupportedException("Use PreloadKniAssembliesAsync instead.");
     }
 
-    private static void PreloadSystemAssemblies()
+    private static async Task PreloadSystemAssembliesAsync(HttpClient http, string baseAddress)
     {
-        Console.WriteLine("[SdvLoader] Preloading System.* assemblies...");
+        Console.WriteLine("[SdvLoader] Preloading System.* assemblies (from /deps/sysrt/)...");
         int loaded = 0, already = 0, failed = 0;
         foreach (var name in _systemRefsToPreload)
         {
@@ -160,16 +160,30 @@ public static class SdvLoader
                     already++;
                     continue;
                 }
+                // Try loading from static files first (untrimmed)
+                try
+                {
+                    var url = new Uri(new Uri(baseAddress), "deps/sysrt/" + name + ".dll");
+                    var bytes = await http.GetByteArrayAsync(url);
+                    var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(bytes));
+                    loaded++;
+                    continue;
+                }
+                catch
+                {
+                    // Fall through to LoadFromAssemblyName
+                }
+                // Fallback: load from bundle (may be trimmed)
                 AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName(name));
                 loaded++;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SdvLoader]   could not preload {name}: {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine("[SdvLoader]   could not preload " + name + ": " + ex.GetType().Name + ": " + ex.Message);
                 failed++;
             }
         }
-        Console.WriteLine($"[SdvLoader] System.* preload: {loaded} loaded, {already} already there, {failed} failed");
+        Console.WriteLine("[SdvLoader] System.* preload: " + loaded + " loaded, " + already + " already there, " + failed + " failed");
 
         // Force the trimmer to keep type-forwards for these types. The trimmer
         // strips "unused" type-forwards from System.Runtime — e.g., it strips
@@ -216,6 +230,7 @@ public static class SdvLoader
         _ = typeof(System.Collections.Generic.HashSet<>);
         _ = typeof(System.Collections.Generic.Queue<>);
         _ = typeof(System.Collections.Generic.Stack<>);
+        _ = typeof(System.Collections.Generic.Stack<int>);
         _ = typeof(System.Collections.Generic.KeyValuePair<,>);
         _ = typeof(System.Xml.Serialization.IXmlSerializable);
         _ = typeof(System.Xml.Serialization.XmlSerializer);
@@ -223,6 +238,22 @@ public static class SdvLoader
         _ = typeof(System.Xml.XmlWriter);
         _ = typeof(System.Text.RegularExpressions.Regex);
         _ = typeof(System.Net.IPAddress);
+        // SDV uses these types that may be stripped
+        _ = typeof(System.Collections.Generic.SortedDictionary<,>);
+        _ = typeof(System.Collections.Generic.SortedList<,>);
+        _ = typeof(System.Collections.Generic.SortedSet<>);
+        _ = typeof(System.Collections.Generic.LinkedList<>);
+        _ = typeof(System.Collections.ObjectModel.Collection<>);
+        _ = typeof(System.Collections.ObjectModel.ObservableCollection<>);
+        _ = typeof(System.Collections.Concurrent.ConcurrentDictionary<,>);
+        _ = typeof(System.Collections.Concurrent.ConcurrentQueue<>);
+        _ = typeof(System.Collections.Concurrent.ConcurrentStack<>);
+        _ = typeof(System.Collections.Concurrent.ConcurrentBag<>);
+        _ = typeof(System.Threading.CancellationTokenSource);
+        _ = typeof(System.IO.StringReader);
+        _ = typeof(System.IO.StringWriter);
+        _ = typeof(System.Text.StringBuilder);
+        _ = typeof(System.Globalization.CultureInfo);
         _ = typeof(System.IDisposable);
         _ = typeof(System.IFormattable);
         _ = typeof(System.IConvertible);
@@ -313,9 +344,8 @@ public static class SdvLoader
         RegisterStubResolver();
 
         // 1b. Preload System.* assemblies that SDV references but the trimmer
-        //     may have stripped. If Assembly.Load fails, the assembly isn't in
-        //     the bundle — we need to add TrimmerRootAssembly entries.
-        PreloadSystemAssemblies();
+        //     may have stripped. Load from /deps/sysrt/ static files (untrimmed).
+        await PreloadSystemAssembliesAsync(http, baseAddress);
 
         // 1c. Preload KNI Xna.Framework.* assemblies (Audio, Media, etc.) by fetching
         //     them from wwwroot/deps/kni/ as static files. This bypasses the trimmer,
@@ -391,6 +421,33 @@ public static class SdvLoader
                     string msg = "  arity " + arity.ToString() + ": Action=" + (action != null).ToString() + " Func=" + (func != null).ToString() + " <-- MISSING!";
                     Console.WriteLine(msg);
                 }
+            }
+            // Check collection types SDV uses
+            Console.WriteLine("[SdvLoader] Checking collection types:");
+            string[] collectionTypes = new[]
+            {
+                "System.Collections.Generic.Stack`1",
+                "System.Collections.Generic.Queue`1",
+                "System.Collections.Generic.HashSet`1",
+                "System.Collections.Generic.SortedSet`1",
+                "System.Collections.Generic.LinkedList`1",
+                "System.Collections.Generic.SortedDictionary`2",
+                "System.Collections.Generic.SortedList`2",
+                "System.Collections.ObjectModel.Collection`1",
+                "System.Collections.ObjectModel.ObservableCollection`1",
+                "System.Collections.Concurrent.ConcurrentDictionary`2",
+                "System.Collections.Concurrent.ConcurrentQueue`1",
+                "System.Collections.Concurrent.ConcurrentStack`1",
+                "System.Collections.Concurrent.ConcurrentBag`1",
+                "System.Lazy`1",
+                "System.Lazy`2",
+                "System.Threading.CancellationTokenSource",
+            };
+            foreach (var typeName in collectionTypes)
+            {
+                var t = coreLib.GetType(typeName);
+                if (t == null)
+                    Console.WriteLine("  " + typeName + ": MISSING  <--!");
             }
         }
 
