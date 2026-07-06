@@ -261,6 +261,14 @@ public static class SdvAssemblyRefRewriter
         // point at them.
         ReplaceMissingDelegates(asmDef);
 
+        // Pass 7: patch out instructions in GameRunner..ctor() that reference
+        // fields/methods KNI doesn't have. SDV was built against MonoGame.Framework
+        // v3.8.0.1641; KNI v4.2.9001 is a fork with some API differences.
+        //
+        // Known-broken instructions:
+        //   ldc.r4 0.001; stsfld SpriteBatch::TextureTuckAmount  (KNI removed this field)
+        PatchGameRunnerCtorBrokenInstructions(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -412,6 +420,51 @@ public static class SdvAssemblyRefRewriter
         cctor.Body.ExceptionHandlers.Clear();
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Game1..cctor() → ret (no-op, {instrs.Count} instructions)");
+    }
+
+    /// <summary>
+    /// Patch out instructions in GameRunner..ctor() that reference fields/methods
+    /// KNI doesn't have. SDV was built against MonoGame.Framework v3.8.0.1641;
+    /// KNI v4.2.9001 is a fork with some API differences.
+    ///
+    /// Known-broken instructions (removed by setting to Nop):
+    ///   ldc.r4 0.001; stsfld SpriteBatch::TextureTuckAmount
+    ///     — KNI removed this static field. We Nop both instructions to skip the
+    ///       field set. The field is a render tweak; skipping it is harmless.
+    /// </summary>
+    private static void PatchGameRunnerCtorBrokenInstructions(AssemblyDefinition asmDef)
+    {
+        var gameRunner = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.GameRunner");
+        if (gameRunner == null) return;
+        var ctor = gameRunner.Methods.FirstOrDefault(m => m.Name == ".ctor");
+        if (ctor == null) return;
+
+        var instrs = ctor.Body.Instructions;
+        int patched = 0;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            var ins = instrs[i];
+            // Look for: stsfld SpriteBatch::TextureTuckAmount
+            if (ins.OpCode == OpCodes.Stsfld && ins.Operand is FieldReference fr
+                && fr.Name == "TextureTuckAmount"
+                && fr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Graphics.SpriteBatch")
+            {
+                // Nop the stsfld
+                ins.OpCode = OpCodes.Nop;
+                ins.Operand = null;
+                patched++;
+                // Also Nop the preceding ldc.r4 (the value to store)
+                if (i > 0 && instrs[i - 1].OpCode == OpCodes.Ldc_R4)
+                {
+                    instrs[i - 1].OpCode = OpCodes.Nop;
+                    instrs[i - 1].Operand = null;
+                    patched++;
+                }
+                Console.WriteLine($"[AssemblyRefRewriter] Patched out stsfld SpriteBatch::TextureTuckAmount (KNI doesn't have this field)");
+            }
+        }
+        if (patched > 0)
+            Console.WriteLine($"[AssemblyRefRewriter] GameRunner..ctor() broken-instruction patches: {patched}");
     }
 
     /// <summary>
