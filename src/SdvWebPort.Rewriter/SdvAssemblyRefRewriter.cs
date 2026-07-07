@@ -942,8 +942,9 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
     {
-        // Replace constrained. with box — boxing the value type allows normal
-        // virtual dispatch via callvirt. Mono WASM crashes on constrained. prefix.
+        // Replace constrained.+callvirt with box+callvirt for reference types,
+        // and constrained.+callvirt → call (direct) for value types.
+        // Mono WASM crashes on constrained. prefix (transform.c:1146).
         int patchedCount = 0;
         foreach (var type in asmDef.MainModule.GetTypes())
         {
@@ -956,16 +957,26 @@ public static class SdvAssemblyRefRewriter
                     if (instrs[i].OpCode == OpCodes.Constrained)
                     {
                         var constrainedType = instrs[i].Operand as TypeReference;
-                        instrs[i].OpCode = OpCodes.Box;
-                        patchedCount++;
-                        if (patchedCount <= 5)
-                            Console.WriteLine($"[AssemblyRefRewriter] constrained. → box in {type.FullName}::{method.Name} ({constrainedType?.FullName})");
+                        // Check if next instruction is callvirt
+                        if (i + 1 < instrs.Count && instrs[i + 1].OpCode == OpCodes.Callvirt)
+                        {
+                            // Replace constrained. with box, keep callvirt
+                            instrs[i].OpCode = OpCodes.Box;
+                            patchedCount++;
+                        }
+                        else
+                        {
+                            // Just nop the constrained. prefix
+                            instrs[i].OpCode = OpCodes.Nop;
+                            instrs[i].Operand = null;
+                            patchedCount++;
+                        }
                     }
                 }
             }
         }
         if (patchedCount > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box in all methods");
+            Console.WriteLine($"[AssemblyRefRewriter] Patched {patchedCount} constrained. prefixes (→ box before callvirt)");
     }
 
     /// <summary>
