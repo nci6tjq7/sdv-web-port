@@ -130,8 +130,17 @@ public sealed class RefAssemblyResolver : BaseAssemblyResolver
                 AssemblyResolver = this,
                 InMemory = true,
                 ReadWrite = false,
+                ReadingMode = ReadingMode.Immediate,  // Load all types (incl. nested) immediately
             };
             var asmDef = AssemblyDefinition.ReadAssembly(ms, parameters);
+            // Force-read all nested types so Cecil's MetadataResolver can find them
+            // during Write. Without this, nested types like QuantityModifier/QuantityModifierMode
+            // can't be resolved, causing ResolutionException during asmDef.Write().
+            foreach (var t in asmDef.MainModule.Types)
+            {
+                // Accessing NestedTypes forces Cecil to read them
+                _ = t.NestedTypes.Count;
+            }
             Console.WriteLine($"[RefAssemblyResolver] Loaded {simpleName} from {matchingName} ({bytes.Length:N0} bytes)");
             return asmDef;
         }
