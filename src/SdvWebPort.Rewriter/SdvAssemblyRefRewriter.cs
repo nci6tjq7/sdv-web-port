@@ -558,6 +558,22 @@ public static class SdvAssemblyRefRewriter
                         i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
                     }
 
+                    // Patch out AudioEngine methods that KNI doesn't implement
+                    // (GetReverbSettings, etc. — KNI Blazor.GL has limited audio support)
+                    if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Audio.AudioEngine")
+                    {
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out AudioEngine::{mr.Name} in {type.FullName}::{method.Name}");
+                        int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                        ins.OpCode = OpCodes.Nop;
+                        ins.Operand = null;
+                        for (int p = 0; p < paramCount; p++)
+                            instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                        if (mr.ReturnType.FullName != "System.Void")
+                            instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldnull));
+                        patched++;
+                        i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
+                    }
+
                     // Patch out KNI methods that throw NotImplementedException in Blazor.GL
                     // GraphicsAdapter.get_SupportedDisplayModes, GraphicsAdapter.get_CurrentDisplayMode, etc.
                     // Redirect to our GraphicsStubs helper methods that return empty/null values.
