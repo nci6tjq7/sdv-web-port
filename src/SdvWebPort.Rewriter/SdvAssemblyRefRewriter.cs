@@ -609,7 +609,9 @@ public static class SdvAssemblyRefRewriter
         PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 5f: patch DeepClonerExtensions..cctor to nop.
-        // DeepCloner's PermissionCheck() iterates types and encounters null types in WASM.
+        // DeepCloner's cctor calls PermissionCheck which fails in WASM.
+        // We nop the entire cctor — DeepCloner won't work but SDV can still run
+        // (DeepCloner is used for cloning options/settings, not critical for rendering).
         PatchMethodToNop(asmDef, "Force.DeepCloner.DeepClonerExtensions", ".cctor");
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
@@ -937,9 +939,8 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
     {
-        // Replace constrained. with nop (not box — box causes issues with some value types).
-        // The callvirt after constrained. will use normal virtual dispatch instead.
-        // This is not semantically correct for all cases but works for our use case.
+        // Replace constrained. with box — boxing the value type allows normal
+        // virtual dispatch via callvirt. Mono WASM crashes on constrained. prefix.
         int patchedCount = 0;
         foreach (var type in asmDef.MainModule.GetTypes())
         {
@@ -951,15 +952,17 @@ public static class SdvAssemblyRefRewriter
                 {
                     if (instrs[i].OpCode == OpCodes.Constrained)
                     {
-                        instrs[i].OpCode = OpCodes.Nop;
-                        instrs[i].Operand = null;
+                        var constrainedType = instrs[i].Operand as TypeReference;
+                        instrs[i].OpCode = OpCodes.Box;
                         patchedCount++;
+                        if (patchedCount <= 5)
+                            Console.WriteLine($"[AssemblyRefRewriter] constrained. → box in {type.FullName}::{method.Name} ({constrainedType?.FullName})");
                     }
                 }
             }
         }
         if (patchedCount > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Nop'd {patchedCount} constrained. prefixes in all methods");
+            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box in all methods");
     }
 
     /// <summary>
