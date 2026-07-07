@@ -527,15 +527,44 @@ public static class SdvAssemblyRefRewriter
                     if (mr.Name == "add_TextInput" || mr.Name == "remove_TextInput")
                     {
                         Console.WriteLine($"[AssemblyRefRewriter] Patching out {mr.Name} in {type.FullName}::{method.Name} (replaced with pop;pop)");
-                        // Replace the call with pop; pop (consume this + delegate)
                         var pop1 = Instruction.Create(OpCodes.Pop);
                         var pop2 = Instruction.Create(OpCodes.Pop);
                         ins.OpCode = pop1.OpCode;
                         ins.Operand = null;
-                        // Insert pop2 after the current instruction
                         instrs.Insert(i + 1, pop2);
                         patched++;
-                        i++; // skip the inserted instruction
+                        i++;
+                    }
+
+                    // Patch out KeyboardInput method calls (Windows P/Invoke keyboard hooks)
+                    if (mr.DeclaringType?.FullName == "StardewValley.KeyboardInput")
+                    {
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out KeyboardInput::{mr.Name} in {type.FullName}::{method.Name}");
+                        int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                        ins.OpCode = OpCodes.Nop;
+                        ins.Operand = null;
+                        for (int p = 0; p < paramCount; p++)
+                            instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                        if (mr.ReturnType.FullName != "System.Void")
+                            instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldnull));
+                        patched++;
+                        i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
+                    }
+
+                    // Patch out KNI methods that throw NotImplementedException in Blazor.GL
+                    // GraphicsAdapter.get_SupportedDisplayModes, GraphicsAdapter.get_CurrentDisplayMode, etc.
+                    if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Graphics.GraphicsAdapter")
+                    {
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out GraphicsAdapter::{mr.Name} in {type.FullName}::{method.Name}");
+                        int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                        ins.OpCode = OpCodes.Nop;
+                        ins.Operand = null;
+                        for (int p = 0; p < paramCount; p++)
+                            instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                        if (mr.ReturnType.FullName != "System.Void")
+                            instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldnull));
+                        patched++;
+                        i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
                     }
                 }
             }
