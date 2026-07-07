@@ -134,11 +134,22 @@ public static class SdvLoader
                     {
                         bytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(bytes);
                         Console.WriteLine($"[SdvLoader]   {name}: FS-rewritten ({bytes.Length:N0} bytes)");
+                        // Cache for resolving handler (in case bundle already loaded it)
+                        _preloadedStubs[name] = bytes;
                     }
                     catch (Exception rex)
                     {
                         Console.WriteLine($"[SdvLoader]   {name}: FS rewrite failed: {rex.Message}");
                     }
+                }
+
+                var existing2 = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == name);
+                if (existing2 != null)
+                {
+                    already++;
+                    Console.WriteLine($"[SdvLoader]   {name}: already loaded (bundle version, FS-rewrite cached for resolver)");
+                    continue;
                 }
 
                 var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(bytes));

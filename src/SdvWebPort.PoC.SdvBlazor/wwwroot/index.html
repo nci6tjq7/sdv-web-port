@@ -47,6 +47,18 @@
       Uses invokeMethodAsync because TickDotNet returns Task.
     -->
     <script>
+        // Synchronous fetch for VFS (WASM can't block on async HttpClient)
+        window.syncFetch = function(url) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, false);  // false = synchronous
+            xhr.responseType = 'arraybuffer';
+            xhr.send();
+            if (xhr.status === 200) {
+                return new Uint8Array(xhr.response);
+            }
+            throw new Error('HTTP ' + xhr.status + ': ' + url);
+        };
+
         function tickJS() {
             var canvas = document.getElementById('theCanvas');
             if (canvas) {

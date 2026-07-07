@@ -61,8 +61,10 @@ public static class SdvFileShim
     /// </summary>
     public static Stream TitleContainerOpenStream(string name)
     {
-        // Normalize: Content/Data/BigCraftables.xnb
-        var path = "Content/" + name.Replace('\\', '/');
+        // The 'name' is already relative to Content root (e.g., "Data\BigCraftables")
+        // because ContentManager prepends RootDirectory ("Content") before calling OpenStream.
+        // So we just normalize the path and add .xnb extension.
+        var path = name.Replace('\\', '/');
         if (!path.EndsWith(".xnb"))
             path += ".xnb";
         Console.WriteLine($"[SdvFileShim] TitleContainerOpenStream: {name} → {path}");

@@ -318,6 +318,12 @@ public static class SdvAssemblyRefRewriter
         // We replace the entire method body with: return "Content";
         PatchGetContentRoot(asmDef);
 
+        // Pass 13: patch DoesAssetExist to always return true.
+        // SDV checks _manifest HashSet for asset existence, but _manifest
+        // initialization depends on File.Exists which may not work with our VFS.
+        // We bypass the check and let ContentManager.Load handle the actual loading.
+        PatchDoesAssetExist(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -718,6 +724,31 @@ public static class SdvAssemblyRefRewriter
         }
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched LocalizedContentManager.GetContentRoot → return \"Content\"");
+    }
+
+    /// <summary>
+    /// Patch DoesAssetExist to always return true.
+    /// SDV checks _manifest HashSet for asset existence, but _manifest
+    /// initialization depends on File.Exists which may not work with our VFS.
+    /// We bypass the check and let ContentManager.Load handle the actual loading.
+    /// </summary>
+    private static void PatchDoesAssetExist(AssemblyDefinition asmDef)
+    {
+        var lcm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.LocalizedContentManager");
+        if (lcm == null) return;
+        // DoesAssetExist has a generic parameter, find it
+        var method = lcm.Methods.FirstOrDefault(m => m.Name == "DoesAssetExist" && m.HasGenericParameters);
+        if (method == null) return;
+
+        var instrs = method.Body.Instructions;
+        instrs.Clear();
+        method.Body.ExceptionHandlers.Clear();
+
+        // New body: return true
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_1));  // push true
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched DoesAssetExist → return true (bypass manifest check)");
     }
 
     /// <summary>

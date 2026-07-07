@@ -85,6 +85,7 @@ public partial class Home : ComponentBase
     private async Task<Game?> LoadRealSdvAsync()
     {
         // 1. Set up the VFS — use HttpVfs to fetch Content from /deps/content/
+        SdvWebPort.Vfs.HttpVfs.SetJsRuntime(JsRuntime);
         var vfs = new SdvWebPort.Vfs.HttpVfs(_http!, HostEnv.BaseAddress);
         SdvWebPort.Vfs.SdvFileShim.SetVfs(vfs);
         Console.WriteLine("[+] VFS set up (HttpVfs → /deps/content/)");
