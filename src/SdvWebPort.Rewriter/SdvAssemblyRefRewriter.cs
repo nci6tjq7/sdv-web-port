@@ -624,8 +624,23 @@ public static class SdvAssemblyRefRewriter
                         i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
                     }
 
+                    // Patch out GameWindow.GetDisplayIndex (not in KNI Blazor.GL)
+                    if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.GameWindow"
+                        && mr.Name == "GetDisplayIndex")
+                    {
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out GameWindow::GetDisplayIndex in {type.FullName}::{method.Name}");
+                        int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                        ins.OpCode = OpCodes.Nop;
+                        ins.Operand = null;
+                        for (int p = 0; p < paramCount; p++)
+                            instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                        // Return 0 (display index 0)
+                        instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldc_I4_0));
+                        patched++;
+                        i += paramCount + 1;
+                    }
+
                     // Patch out AudioEngine methods that KNI doesn't implement
-                    // (GetReverbSettings, etc. — KNI Blazor.GL has limited audio support)
                     if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Audio.AudioEngine")
                     {
                         Console.WriteLine($"[AssemblyRefRewriter] Patching out AudioEngine::{mr.Name} in {type.FullName}::{method.Name}");
