@@ -291,6 +291,60 @@ public static class SdvAssemblyRefRewriter
                 Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite TypeRef {tr.FullName}: {oldScope} → {target}");
         }
         Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite MonoGame.Framework typerefs: {forceRewrites}");
+
+        // Pass 2a2: Force-rewrite method body instruction operands' DeclaringType scopes.
+        // Even though we rewrote typerefs in the typeref table (Pass 2a), method body
+        // instructions hold their own MethodReference objects whose DeclaringType may
+        // still point at MonoGame.Framework. We walk all method bodies and fix these.
+        int instrRewrites = 0;
+        foreach (var type in forceModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                foreach (var ins in method.Body.Instructions)
+                {
+                    if (ins.Operand is MethodReference mr && mr.DeclaringType != null)
+                    {
+                        var dt = mr.DeclaringType;
+                        if (dt is TypeSpecification) continue; // skip specs
+                        if (dt.Scope is AssemblyNameReference dtScope && dtScope.Name == "MonoGame.Framework")
+                        {
+                            var target = ResolveForwardedScope("MonoGame.Framework", dt.FullName, resolver);
+                            if (target != null && target != "MonoGame.Framework")
+                            {
+                                var targetRef = forceModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+                                if (targetRef != null)
+                                {
+                                    dt.Scope = targetRef;
+                                    instrRewrites++;
+                                }
+                            }
+                        }
+                    }
+                    // Also handle FieldReference DeclaringType
+                    if (ins.Operand is FieldReference fr && fr.DeclaringType != null)
+                    {
+                        var dt = fr.DeclaringType;
+                        if (dt is TypeSpecification) continue;
+                        if (dt.Scope is AssemblyNameReference dtScope && dtScope.Name == "MonoGame.Framework")
+                        {
+                            var target = ResolveForwardedScope("MonoGame.Framework", dt.FullName, resolver);
+                            if (target != null && target != "MonoGame.Framework")
+                            {
+                                var targetRef = forceModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+                                if (targetRef != null)
+                                {
+                                    dt.Scope = targetRef;
+                                    instrRewrites++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"[AssemblyRefRewriter] Instruction operand scope rewrites: {instrRewrites}");
         int errors = 0;
         foreach (var tr in typeRefsToRewrite)
         {
@@ -739,11 +793,13 @@ public static class SdvAssemblyRefRewriter
                         i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
                     }
 
-                    // Patch out GameWindow.GetDisplayIndex (not in KNI Blazor.GL)
+                    // Patch out GameWindow methods not in KNI Blazor.GL
+                    // (GetDisplayIndex, CenterOnDisplay, GetDisplayBounds, etc.)
                     if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.GameWindow"
-                        && mr.Name == "GetDisplayIndex")
+                        && (mr.Name == "GetDisplayIndex" || mr.Name == "CenterOnDisplay"
+                            || mr.Name == "GetDisplayBounds" || mr.Name == "SetDisplayResolution"))
                     {
-                        Console.WriteLine($"[AssemblyRefRewriter] Patching out GameWindow::GetDisplayIndex in {type.FullName}::{method.Name}");
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out GameWindow::{mr.Name} in {type.FullName}::{method.Name}");
                         int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
                         ins.OpCode = OpCodes.Nop;
                         ins.Operand = null;
