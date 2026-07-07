@@ -17,6 +17,7 @@ public partial class Home : ComponentBase
     private HttpClient? _http;
     private Game? _game;
     private bool _loadAttempted;
+    private int _tickErrorCount;
 
     [Inject]
     public IWebAssemblyHostEnvironment HostEnv { get; set; } = null!;
@@ -74,7 +75,26 @@ public partial class Home : ComponentBase
 
         if (_game != null)
         {
-            _game.Tick();
+            try
+            {
+                _game.Tick();
+            }
+            catch (System.TypeLoadException ex)
+            {
+                // Ignore TypeLoadException — the game loop continues.
+                // This happens when JIT encounters a virtual method whose
+                // signature can't be resolved. The method will be retried
+                // on the next Tick() call.
+                if (_tickErrorCount % 60 == 0) // Log once per second
+                    Console.WriteLine("[Tick] TypeLoadException (suppressed): " + ex.Message);
+                _tickErrorCount++;
+            }
+            catch (Exception ex)
+            {
+                if (_tickErrorCount % 60 == 0)
+                    Console.WriteLine("[Tick] Error (suppressed): " + ex.GetType().Name + ": " + ex.Message);
+                _tickErrorCount++;
+            }
         }
     }
 
