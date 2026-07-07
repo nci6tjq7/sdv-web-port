@@ -457,6 +457,10 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
+        // Pass 5e: TEMPORARY — patch _update to nop to test if Draw path works.
+        // If Tick() succeeds with _update=nop, the crash is in Update, not Draw.
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
+
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
         // Func`6..`17 from System.Private.CoreLib. We define equivalent delegates
