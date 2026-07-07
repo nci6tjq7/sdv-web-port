@@ -629,3 +629,58 @@ Stage Summary:
 - Next blocker: TypeLoadException 'Could not resolve signature of virtual method'
   during Game1.Initialize() — needs investigation of method override type resolution
 - All work committed + pushed to GitHub (main + feat/phase2.8-real-sdv)
+
+---
+Task ID: phase2.8-real-sdv-tick-progress
+Agent: main
+Task: Push Tick() path past transform.c:1146 — find what specifically crashes the WASM Mono interpreter when _update runs in full
+
+Work Log:
+- Resumed from previous session's blocker: Tick() path with full _update crashes
+  with transform.c:1146 (Run() path was already working with bisect=10)
+- Inspected Game1._update IL (1507 instructions):
+  - Found 1 constrained.+callvirt pattern (foreach Dispose on List<Game1>.Enumerator)
+  - Found 1 callvirt IEnumerator::MoveNext (no constrained., on reference type — fine)
+- Scanned whole SDV.dll for constrained.+callvirt patterns:
+  - 1906 total patterns; 1872 with &-preceding instruction (ldloca/ldflda/etc.)
+  - Previous fix replaced ALL constrained. with box — but box on a &T is INVALID IL
+    (box expects value, not managed pointer). The invalid IL was tolerated by Mono
+    WASM in Run() path (code paths never executed) but crashed in Tick() path
+- Refined PatchUpdateRemoveConstrained into 4 cases:
+  1. &-preceded + IDisposable::Dispose() (1790 sites):
+     Replace constrained.→nop, callvirt→pop. Dispose() is no-op for struct enumerators
+     (List<T>.Enumerator, Dictionary<K,V>.Enumerator, etc.) — semantically safe.
+     Bug fixed: initial attempt nopped the &-producer too, leaving 'this' on stack
+     unconsumed (e.g., ldarg.0 before ldflda left dangling 'this'). Fixed by keeping
+     the &-producer as-is and replacing callvirt with pop (consumes &T).
+  2. &-preceded + MoveNext/get_Current:
+     Convert to nop + call T::M (direct call on struct method).
+     Bug fixed: initial GenericInstanceType method instantiation created
+     MethodReference with closed generic DeclaringType but ReturnType still pointed
+     at open generic's T (unbound). Fixed by using module.ImportReference(found, git)
+     which handles generic parameter substitution correctly.
+  3. &-preceded + other methods (ToString/GetHashCode/GetType — 80 sites):
+     Fall back to box T with preceding &-producer fixup (ldloca→ldloc etc.)
+     to make box valid (value, not &T).
+  4. Value-preceded patterns (34 sites): keep old box T behavior (worked in Run()).
+- Disabled _update bisect (BisectUpdateCount = -1) — full _update now runs.
+- Tried extending direct call to ToString/GetHashCode — caused class.c:2188
+  (some types fail to initialize when their ToString is called directly without
+  boxing). Reverted; kept conservative MoveNext/get_Current only.
+- Added scripts/run-sdv-blazor.sh — build + serve + headless test helper.
+
+Stage Summary:
+- Run() succeeds (Initialize + LoadContent complete) ✅
+- 1790 foreach Dispose patterns safely removed (nop+pop)
+- Tick() still hits transform.c:1146 from box fallback on
+  ToString/GetHashCode/GetType patterns (80 sites)
+- All 40 unit tests still pass (Rewriter 7 + VFS 14 + Content 19)
+- Committed to main as b9f2ca1
+
+Next steps:
+- Find a way to handle the 71 ToString + 5 GetType + 2 GetHashCode patterns
+  without box (which crashes). Options:
+  a) Direct call to T's override if T has one (need correct override detection)
+  b) Skip the call entirely (semantically wrong but valid IL — accept as a port limitation)
+  c) Find what specifically about box on these value types triggers transform.c:1146
+     (might be specific to enum types like LanguageCode/DisconnectType)

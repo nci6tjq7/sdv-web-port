@@ -1046,6 +1046,13 @@ public static class SdvAssemblyRefRewriter
                             //     as context, which should handle substitution correctly)
                             // Skip ToString/GetHashCode/GetType (require boxing for Object virtual dispatch)
                             // and other methods for now.
+                            // CONSERVATIVE: only convert MoveNext and get_Current (foreach loop patterns).
+                            //   - MoveNext: returns bool (no generic params)
+                            //   - get_Current: returns T (TryFindDirectMethod uses ImportReference
+                            //     with the GenericInstanceType as context for proper substitution)
+                            // Skip ToString/GetHashCode/GetType (these inherit from Object and require
+                            // boxing for virtual dispatch — direct call would skip overrides) and
+                            // other methods (may have unexpected signatures).
                             bool canDirectCall = (interfaceMethod.Name == "MoveNext" && interfaceMethod.Parameters.Count == 0)
                                               || (interfaceMethod.Name == "get_Current" && interfaceMethod.Parameters.Count == 0);
                             if (canDirectCall)
