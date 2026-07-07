@@ -609,10 +609,13 @@ public static class SdvAssemblyRefRewriter
         PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 5f: patch DeepClonerExtensions..cctor to nop.
-        // DeepCloner's cctor calls PermissionCheck which fails in WASM.
-        // We nop the entire cctor — DeepCloner won't work but SDV can still run
-        // (DeepCloner is used for cloning options/settings, not critical for rendering).
         PatchMethodToNop(asmDef, "Force.DeepCloner.DeepClonerExtensions", ".cctor");
+
+        // Pass 5g: patch SetInstanceDefaults to nop — it calls DeepCloner which
+        // has uninitialized static fields (from cctor nop). SetInstanceDefaults
+        // clones default instance settings; skipping it means defaults aren't set
+        // but the game can still run.
+        PatchMethodToNop(asmDef, "StardewValley.GameRunner", "SetInstanceDefaults");
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
