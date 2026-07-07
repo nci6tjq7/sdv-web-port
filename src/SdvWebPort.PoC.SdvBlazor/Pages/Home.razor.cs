@@ -197,9 +197,21 @@ public partial class Home : ComponentBase
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] GameRunner instantiation threw: {ex.GetType().Name}: {ex.Message}");
-            var inner = ex.InnerException ?? ex;
-            Console.WriteLine($"    Inner: {inner.GetType().Name}: {inner.Message}");
-            Console.WriteLine($"    Stack: {inner.StackTrace}");
+            // Log ALL nested inner exceptions
+            var inner = ex;
+            int depth = 0;
+            while (inner.InnerException != null && depth < 5)
+            {
+                inner = inner.InnerException;
+                depth++;
+                Console.WriteLine($"    Inner[{depth}]: {inner.GetType().Name}: {inner.Message}");
+                Console.WriteLine($"    Inner[{depth}] Stack: {inner.StackTrace}");
+            }
+            // Also check TypeInitializationException's special _typeName field
+            if (ex is System.TypeInitializationException tie)
+            {
+                Console.WriteLine($"    TypeInit Stack: {tie.StackTrace}");
+            }
             return null;
         }
 

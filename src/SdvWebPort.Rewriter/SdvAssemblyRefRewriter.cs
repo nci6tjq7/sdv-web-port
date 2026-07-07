@@ -273,12 +273,17 @@ public static class SdvAssemblyRefRewriter
         // TypeLoadException then causes a Mono assertion (exception.c:172)
         // because the exception handler can't find the method.
         //
-        // Pass 5: patch Game1..cctor() (static constructor) to be a no-op.
-        // Game1's .cctor triggers TypeInitializationException because it has
-        // fields with types that can't resolve. We patch it to ret and instead
-        // initialize critical static fields (like Game1.log) via reflection in
-        // Home.razor.cs before calling game.Run().
-        PatchGame1Cctor(asmDef);
+        // Pass 5: Game1..cctor() — DISABLED no-op patch.
+        // Previously we patched .cctor to ret, but that leaves 453 static fields
+        // null. Now that delegate/collection replacements are in place, let's
+        // try running the real .cctor. If it still fails, we'll patch specific
+        // failing instructions instead.
+        // PatchGame1Cctor(asmDef);
+
+        // Pass 5b: patch xxHash constructor to skip Enumerable call.
+        // xxHash..ctor calls System.Linq.Enumerable which is stripped from WASM
+        // CoreLib, causing TypeLoadException. We patch it to just ret.
+        PatchXxHashCtor(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -483,6 +488,42 @@ public static class SdvAssemblyRefRewriter
         cctor.Body.ExceptionHandlers.Clear();
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Game1..cctor() → ret (no-op, {instrs.Count} instructions)");
+    }
+
+    /// <summary>
+    /// Patch xxHash constructor to just ret (skip Enumerable call).
+    /// xxHash..ctor calls System.Linq.Enumerable which is stripped from WASM
+    /// CoreLib, causing TypeLoadException in HashUtility..cctor → Game1..cctor.
+    /// </summary>
+    private static void PatchXxHashCtor(AssemblyDefinition asmDef)
+    {
+        // xxHash is in System.Data.HashFunction.xxHash.dll — not in SDV.
+        // But the dependency DLLs are also run through the rewriter.
+        // Find xxHash type
+        TypeDefinition? xxHashType = null;
+        foreach (var t in asmDef.MainModule.Types)
+        {
+            if (t.Name == "xxHash" || t.FullName.Contains("xxHash"))
+            {
+                xxHashType = t;
+                break;
+            }
+        }
+        if (xxHashType == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] xxHash type not found — skipping patch");
+            return;
+        }
+
+        // Patch all constructors to just ret
+        foreach (var ctor in xxHashType.Methods.Where(m => m.Name == ".ctor"))
+        {
+            var instrs = ctor.Body.Instructions;
+            instrs.Clear();
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+            ctor.Body.ExceptionHandlers.Clear();
+            Console.WriteLine($"[AssemblyRefRewriter] Patched {xxHashType.FullName}..ctor({ctor.Parameters.Count} params) → ret");
+        }
     }
 
     /// <summary>
