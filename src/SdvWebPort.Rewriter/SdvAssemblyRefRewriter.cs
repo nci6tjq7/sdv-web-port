@@ -296,8 +296,15 @@ public static class SdvAssemblyRefRewriter
         // Pass 8: rewrite stripped collection typerefs to use our replacement types.
         ReplaceMissingCollections(asmDef);
 
-        // Pass 9: patch out method calls that fail at runtime due to KNI/MonoGame
-        // API differences (e.g., add_TextInput event accessor).
+        // Pass 9: patch Options.setToDefaults() to skip SupportedDisplayModes lookup.
+        // MUST run before Pass 10 (PatchBrokenMethodCalls) because Pass 10 would
+        // redirect the get_SupportedDisplayModes call to a stub, which returns
+        // an empty array, causing .Last() to throw.
+        // We patch out the entire display mode lookup block and hardcode 1280x720.
+        PatchOptionsSetToDefaults(asmDef);
+
+        // Pass 10: patch out method calls that fail at runtime due to KNI/MonoGame
+        // API differences (e.g., add_TextInput event accessor, KeyboardInput P/Invoke).
         PatchBrokenMethodCalls(asmDef);
 
         using var outputMs = new MemoryStream();
@@ -615,6 +622,131 @@ public static class SdvAssemblyRefRewriter
         }
         if (patched > 0)
             Console.WriteLine($"[AssemblyRefRewriter] Broken method call patches: {patched}");
+    }
+
+    /// <summary>
+    /// Patch Options.setToDefaults() to skip SupportedDisplayModes lookup.
+    /// SDV calls GraphicsAdapter.get_SupportedDisplayModes().Last() to get
+    /// the highest resolution display mode. KNI Blazor.GL doesn't implement
+    /// this, so we patch out the lookup and hardcode 1280x720.
+    ///
+    /// The IL pattern is:
+    ///   callvirt GraphicsAdapter::get_SupportedDisplayModes()
+    ///   call Enumerable::Last<DisplayMode>(IEnumerable<DisplayMode>)
+    ///   stloc.0  (store DisplayMode in local 0)
+    ///   ldarg.0
+    ///   ldloc.0
+    ///   callvirt DisplayMode::get_Width()
+    ///   stfld preferredResolutionX
+    ///   ldarg.0
+    ///   ldloc.0
+    ///   callvirt DisplayMode::get_Height()
+    ///   stfld preferredResolutionY
+    ///
+    /// We replace the get_SupportedDisplayModes + Last + stloc.0 with:
+    ///   ldc.i4 1280  (hardcode width)
+    ///   stfld preferredResolutionX
+    ///   ldc.i4 720   (hardcode height)
+    ///   stfld preferredResolutionY
+    /// </summary>
+    private static void PatchOptionsSetToDefaults(AssemblyDefinition asmDef)
+    {
+        var options = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Options");
+        if (options == null) return;
+        var setDefaults = options.Methods.FirstOrDefault(m => m.Name == "setToDefaults");
+        if (setDefaults == null) return;
+
+        var instrs = setDefaults.Body.Instructions;
+
+        // Find the get_SupportedDisplayModes call
+        int supportedModesIndex = -1;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Callvirt && instrs[i].Operand is MethodReference mr
+                && mr.Name == "get_SupportedDisplayModes"
+                && mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Graphics.GraphicsAdapter")
+            {
+                supportedModesIndex = i;
+                break;
+            }
+        }
+
+        if (supportedModesIndex < 0) return;
+
+        // Walk backwards from supportedModesIndex to find the start of the
+        // GraphicsAdapter loading sequence. The pattern is:
+        //   ldsfld Game1::graphics
+        //   callvirt GraphicsDeviceManager::get_GraphicsDevice()
+        //   callvirt GraphicsDevice::get_Adapter()
+        //   callvirt GraphicsAdapter::get_SupportedDisplayModes()  ← supportedModesIndex
+        int startIndex = supportedModesIndex;
+        while (startIndex > 0)
+        {
+            var prev = instrs[startIndex - 1];
+            // Stop when we hit an instruction that doesn't produce a value on the stack
+            // (e.g., stfld, ret, or a standalone instruction)
+            if (prev.OpCode == OpCodes.Stfld || prev.OpCode == OpCodes.Stsfld ||
+                prev.OpCode == OpCodes.Pop || prev.OpCode == OpCodes.Ret ||
+                prev.OpCode == OpCodes.Br || prev.OpCode == OpCodes.Br_S ||
+                prev.OpCode == OpCodes.Brtrue || prev.OpCode == OpCodes.Brtrue_S ||
+                prev.OpCode == OpCodes.Brfalse || prev.OpCode == OpCodes.Brfalse_S)
+                break;
+            // These instructions push a value (the adapter chain)
+            if (prev.OpCode == OpCodes.Ldsfld || prev.OpCode == OpCodes.Callvirt ||
+                prev.OpCode == OpCodes.Call)
+                startIndex--;
+            else
+                break;
+        }
+
+        // Find the stfld preferredResolutionY (end of the display mode block)
+        int endYIndex = -1;
+        for (int i = supportedModesIndex; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Stfld && instrs[i].Operand is FieldReference fr
+                && fr.Name == "preferredResolutionY")
+            {
+                endYIndex = i;
+                break;
+            }
+        }
+
+        if (endYIndex < 0) return;
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patching Options.setToDefaults: replacing display mode lookup (instrs {startIndex}-{endYIndex}) with hardcoded 1280x720");
+
+        // Find the stfld preferredResolutionX index (within the block)
+        int startXIndex = -1;
+        for (int i = startIndex; i < endYIndex; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Stfld && instrs[i].Operand is FieldReference fr
+                && fr.Name == "preferredResolutionX")
+            {
+                startXIndex = i;
+                break;
+            }
+        }
+        if (startXIndex < 0) return;
+
+        // Get field references
+        var xField = instrs[startXIndex].Operand as FieldReference;
+        var yField = instrs[endYIndex].Operand as FieldReference;
+
+        // Remove instructions from startIndex to endYIndex (inclusive)
+        int removeCount = endYIndex - startIndex + 1;
+        for (int r = 0; r < removeCount; r++)
+            instrs.RemoveAt(startIndex);
+
+        // Insert hardcoded resolution at startIndex
+        int insertAt = startIndex;
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldarg_0));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldc_I4, 1280));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Stfld, xField!));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldarg_0));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldc_I4, 720));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Stfld, yField!));
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched Options.setToDefaults: hardcoded 1280x720 resolution");
     }
 
     /// <summary>
