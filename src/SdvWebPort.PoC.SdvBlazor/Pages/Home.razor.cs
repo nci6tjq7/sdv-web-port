@@ -59,10 +59,15 @@ public partial class Home : ComponentBase
             {
                 Console.WriteLine($"[Home.TickDotNet] FATAL: {ex.GetType().Name}: {ex.Message}");
                 Console.WriteLine($"[Home.TickDotNet] Stack: {ex.StackTrace}");
-                if (ex.InnerException != null)
+                // Log all nested inner exceptions
+                var inner = ex;
+                int depth = 0;
+                while (inner.InnerException != null && depth < 5)
                 {
-                    Console.WriteLine($"[Home.TickDotNet] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
-                    Console.WriteLine($"[Home.TickDotNet] Inner Stack: {ex.InnerException.StackTrace}");
+                    inner = inner.InnerException;
+                    depth++;
+                    Console.WriteLine($"[Home.TickDotNet] Inner[{depth}]: {inner.GetType().Name}: {inner.Message}");
+                    Console.WriteLine($"[Home.TickDotNet] Inner[{depth}] Stack: {inner.StackTrace}");
                 }
             }
         }
@@ -213,7 +218,68 @@ public partial class Home : ComponentBase
             Console.WriteLine($"[WARN] Could not set GameRunner.instance: {ex.Message}");
         }
 
+        // 9. Initialize critical Game1 static fields (since .cctor is patched to no-op).
+        //    Game1.log is accessed by Instance_Initialize — without it, NRE.
+        try
+        {
+            InitializeGame1Statics(sdvAsm);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Could not init Game1 statics: {ex.Message}");
+        }
+
         return (Game?)gameRunnerInstance;
+    }
+
+    /// <summary>
+    /// Initialize critical Game1 static fields that the .cctor would have set.
+    /// We only set fields that are accessed before LoadContent — others will
+    /// be set by the game's own init code.
+    /// </summary>
+    private static void InitializeGame1Statics(Assembly sdvAsm)
+    {
+        var game1Type = sdvAsm.GetType("StardewValley.Game1");
+        if (game1Type == null) return;
+
+        // Set Game1.log to DefaultLogger (implements IGameLogger)
+        var logField = game1Type.GetField("log", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (logField != null)
+        {
+            var logType = logField.FieldType;
+            if (logType.IsInterface)
+            {
+                // Find a concrete implementor in the SDV assembly
+                var defaultLoggerType = sdvAsm.GetType("StardewValley.Logging.DefaultLogger");
+                if (defaultLoggerType != null)
+                {
+                    try
+                    {
+                        // DefaultLogger(bool, bool) — pass false, false
+                        var logger = Activator.CreateInstance(defaultLoggerType, false, false);
+                        logField.SetValue(null, logger);
+                        Console.WriteLine("[+] Game1.log set to DefaultLogger(false,false)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("[WARN] Could not create DefaultLogger: " + ex.Message);
+                    }
+                }
+            }
+            else
+            {
+                try
+                {
+                    var logger = Activator.CreateInstance(logType);
+                    logField.SetValue(null, logger);
+                    Console.WriteLine("[+] Game1.log set to stub instance");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[WARN] Could not create Game1.log stub: " + ex.Message);
+                }
+            }
+        }
     }
 
     /// <summary>

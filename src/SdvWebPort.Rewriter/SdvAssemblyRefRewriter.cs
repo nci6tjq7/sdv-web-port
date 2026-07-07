@@ -273,9 +273,11 @@ public static class SdvAssemblyRefRewriter
         // TypeLoadException then causes a Mono assertion (exception.c:172)
         // because the exception handler can't find the method.
         //
-        // Fix: replace .cctor body with just `ret`. Game1's static fields
-        // won't be initialized, but that's acceptable for Phase 2.8 — we
-        // just need to get past the ctor to prove the game loop works.
+        // Pass 5: patch Game1..cctor() (static constructor) to be a no-op.
+        // Game1's .cctor triggers TypeInitializationException because it has
+        // fields with types that can't resolve. We patch it to ret and instead
+        // initialize critical static fields (like Game1.log) via reflection in
+        // Home.razor.cs before calling game.Run().
         PatchGame1Cctor(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
