@@ -292,6 +292,10 @@ public static class SdvAssemblyRefRewriter
         }
         Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite MonoGame.Framework typerefs: {forceRewrites}");
 
+        // Diagnostic: verify scope changes after force-rewrite
+        var verifyMs2 = forceModule.GetTypeReferences().FirstOrDefault(tr => tr.Name == "MouseState");
+        Console.WriteLine($"[AssemblyRefRewriter] VERIFY MouseState scope after force-rewrite: {verifyMs2?.Scope?.Name}");
+
         // Pass 2a2: Force-rewrite method body instruction operands' DeclaringType scopes.
         // Even though we rewrote typerefs in the typeref table (Pass 2a), method body
         // instructions hold their own MethodReference objects whose DeclaringType may
