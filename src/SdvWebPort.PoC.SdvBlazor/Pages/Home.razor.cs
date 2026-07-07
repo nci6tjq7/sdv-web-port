@@ -145,19 +145,30 @@ public partial class Home : ComponentBase
             Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
             Console.WriteLine($"    Stack: {ex.StackTrace}");
             // Rewriter failed during Write (Cecil can't resolve nested types).
-            // Try running AssemblyRef rewriter WITHOUT the method signature
-            // scope rewrite (Pass 2b) which causes the issue.
+            // Retry with CustomMetadataResolver's dummy type fallback.
             try
             {
-                Console.WriteLine("[+] Retrying rewriter without method signature scope rewrite...");
-                SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = true;
+                Console.WriteLine("[+] Retrying rewriter (with dummy type fallback)...");
+                SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = false;
                 rewrittenBytes = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
                 Console.WriteLine($"[+] Retry succeeded: {rewrittenBytes.Length:N0} bytes");
             }
             catch (Exception ex2)
             {
                 Console.WriteLine($"[FAIL] Retry also failed: {ex2.Message}");
-                rewrittenBytes = sdvBytes;
+                // Last resort: skip method signature rewrite
+                try
+                {
+                    Console.WriteLine("[+] Last resort: skip method signature rewrite...");
+                    SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = true;
+                    rewrittenBytes = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
+                    Console.WriteLine($"[+] Last resort succeeded: {rewrittenBytes.Length:N0} bytes");
+                }
+                catch (Exception ex3)
+                {
+                    Console.WriteLine($"[FAIL] Last resort also failed: {ex3.Message}");
+                    rewrittenBytes = sdvBytes;
+                }
             }
         }
 

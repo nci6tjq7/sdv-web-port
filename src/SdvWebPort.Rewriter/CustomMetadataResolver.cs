@@ -23,11 +23,31 @@ public class CustomMetadataResolver : MetadataResolver
         {
             return base.Resolve(type);
         }
-        catch
+        catch (Exception ex)
         {
             // Fallback: manually search for the type in all loaded assemblies
-            return ResolveManual(type);
+            var result = ResolveManual(type);
+            if (result != null)
+                return result;
+            // If we can't resolve, return a dummy TypeDefinition to prevent
+            // ResolutionException from crashing the Write.
+            // This is safe because Cecil only uses the resolved type for
+            // metadata token calculation, not for actual code execution.
+            Console.WriteLine("[CustomMetadataResolver] WARNING: Could not resolve " + type.FullName + " — returning dummy");
+            return CreateDummyType(type);
         }
+    }
+
+    private static TypeDefinition? CreateDummyType(TypeReference type)
+    {
+        // Create a minimal TypeDefinition that satisfies Cecil's requirements
+        var module = ModuleDefinition.CreateModule("Dummy", new ModuleParameters { Kind = ModuleKind.Dll });
+        var td = new TypeDefinition(type.Namespace, type.Name, TypeAttributes.Public)
+        {
+            BaseType = module.TypeSystem.Object,
+        };
+        module.Types.Add(td);
+        return td;
     }
 
     private TypeDefinition? ResolveManual(TypeReference type)
