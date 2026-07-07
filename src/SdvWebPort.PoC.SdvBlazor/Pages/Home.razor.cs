@@ -119,7 +119,21 @@ public partial class Home : ComponentBase
         {
             Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
             Console.WriteLine($"    Stack: {ex.StackTrace}");
-            rewrittenBytes = sdvBytes;
+            // Rewriter failed during Write (Cecil can't resolve nested types).
+            // Try running AssemblyRef rewriter WITHOUT the method signature
+            // scope rewrite (Pass 2b) which causes the issue.
+            try
+            {
+                Console.WriteLine("[+] Retrying rewriter without method signature scope rewrite...");
+                SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = true;
+                rewrittenBytes = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
+                Console.WriteLine($"[+] Retry succeeded: {rewrittenBytes.Length:N0} bytes");
+            }
+            catch (Exception ex2)
+            {
+                Console.WriteLine($"[FAIL] Retry also failed: {ex2.Message}");
+                rewrittenBytes = sdvBytes;
+            }
         }
 
         // 4. Load SDV + dependencies into default ALC.

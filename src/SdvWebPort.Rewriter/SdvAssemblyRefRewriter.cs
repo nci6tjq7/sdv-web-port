@@ -80,6 +80,13 @@ public static class SdvAssemblyRefRewriter
     public static int BisectMode { get; set; } = 0;
 
     /// <summary>
+    /// When true, skip Pass 2b (method signature scope rewrite).
+    /// This can be set to true as a fallback if the full rewrite fails during Write
+    /// due to Cecil's inability to resolve nested types.
+    /// </summary>
+    public static bool SkipMethodSignatureRewrite { get; set; } = false;
+
+    /// <summary>
     /// Cached forward map: (source assembly name, type full name) → (target assembly name, target type full name).
     /// Populated lazily from the embedded RUNTIME assemblies (which have type-forwards).
     /// </summary>
@@ -256,6 +263,12 @@ public static class SdvAssemblyRefRewriter
         Console.WriteLine($"[AssemblyRefRewriter] TypeRef scope rewrites: {typeRefRewrites} ({errors} errors)");
 
         // Pass 2b: Also rewrite method signature types (parameters + return types).
+        if (SkipMethodSignatureRewrite)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Skipping method signature scope rewrite (SkipMethodSignatureRewrite=true)");
+        }
+        else
+        {
         // module.GetTypeReferences() may not include all typerefs used in method
         // signatures. We walk all methods and rewrite their parameter/return type
         // scopes directly.
@@ -301,6 +314,7 @@ public static class SdvAssemblyRefRewriter
             }
         }
         Console.WriteLine($"[AssemblyRefRewriter] Method signature scope rewrites: {sigRewrites}");
+        } // end if (!SkipMethodSignatureRewrite)
 
         // Pass 3 (optional): patch GameRunner..ctor() for bisection debugging.
         // This is used to isolate which step in GameRunner..ctor() triggers the
