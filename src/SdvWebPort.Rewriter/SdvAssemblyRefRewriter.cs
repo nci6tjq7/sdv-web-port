@@ -446,6 +446,9 @@ public static class SdvAssemblyRefRewriter
         // CoreLib, causing TypeLoadException. We patch it to just ret.
         PatchXxHashCtor(asmDef);
 
+        // Pass 5c: patch Game1.updateMusic to no-op (audio not initialized in WASM).
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateMusic");
+
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
         // Func`6..`17 from System.Private.CoreLib. We define equivalent delegates
@@ -693,6 +696,24 @@ public static class SdvAssemblyRefRewriter
             ctor.Body.ExceptionHandlers.Clear();
             Console.WriteLine($"[AssemblyRefRewriter] Patched {xxHashType.FullName}..ctor({ctor.Parameters.Count} params) → ret");
         }
+    }
+
+    /// <summary>
+    /// Patch a method to just ret (no-op). Used for methods that access
+    /// uninitialized state (e.g., audio in WASM).
+    /// </summary>
+    private static void PatchMethodToNop(AssemblyDefinition asmDef, string typeFullName, string methodName)
+    {
+        var type = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == typeFullName);
+        if (type == null) return;
+        var method = type.Methods.FirstOrDefault(m => m.Name == methodName);
+        if (method == null) return;
+
+        var instrs = method.Body.Instructions;
+        instrs.Clear();
+        method.Body.ExceptionHandlers.Clear();
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        Console.WriteLine($"[AssemblyRefRewriter] Patched {typeFullName}::{methodName} → ret (no-op)");
     }
 
     /// <summary>

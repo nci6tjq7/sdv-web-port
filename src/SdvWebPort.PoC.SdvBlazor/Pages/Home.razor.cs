@@ -81,18 +81,17 @@ public partial class Home : ComponentBase
             }
             catch (System.TypeLoadException ex)
             {
-                // Ignore TypeLoadException — the game loop continues.
-                // This happens when JIT encounters a virtual method whose
-                // signature can't be resolved. The method will be retried
-                // on the next Tick() call.
-                if (_tickErrorCount % 60 == 0) // Log once per second
-                    Console.WriteLine("[Tick] TypeLoadException (suppressed): " + ex.Message);
+                if (_tickErrorCount % 60 == 0)
+                    Console.WriteLine("[Tick] TypeLoadException (suppressed): " + ex.Message + "\n  Stack: " + ex.StackTrace);
                 _tickErrorCount++;
             }
             catch (Exception ex)
             {
-                if (_tickErrorCount % 60 == 0)
+                if (_tickErrorCount < 3 || _tickErrorCount % 60 == 0)
+                {
                     Console.WriteLine("[Tick] Error (suppressed): " + ex.GetType().Name + ": " + ex.Message);
+                    Console.WriteLine("  Stack: " + ex.StackTrace);
+                }
                 _tickErrorCount++;
             }
         }
@@ -392,12 +391,9 @@ public partial class Home : ComponentBase
                 var lcmType = sdvAsm.GetType("StardewValley.LocalizedContentManager");
                 if (lcmType != null)
                 {
-                    // Use 3-arg constructor: (IServiceProvider, string, CultureInfo)
-                    // The 2-arg constructor calls Thread.get_CurrentUICulture() which fails in WASM
                     var ctor = lcmType.GetConstructor(new[] { typeof(System.IServiceProvider), typeof(string), typeof(System.Globalization.CultureInfo) });
                     if (ctor != null)
                     {
-                        // Create a minimal IServiceProvider that returns null for all services
                         var sp = new SimpleServiceProvider();
                         var lcm = ctor.Invoke(new object?[] { sp, "Content", System.Globalization.CultureInfo.InvariantCulture });
                         contentField.SetValue(null, lcm);
@@ -406,6 +402,30 @@ public partial class Home : ComponentBase
                 }
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.content: " + ex.Message); }
+        }
+
+        // Initialize audio-related fields (updateMusic NRE)
+        // Game1.musicCategory, ambientCategory — these are IAudioCategory interfaces
+        // Game1.soundBank — ISoundBank interface
+        // For now, just set them to null-safe stubs or skip
+        var musicCatField = game1Type.GetField("musicCategory", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (musicCatField != null && musicCatField.GetValue(null) == null)
+        {
+            Console.WriteLine("[+] Game1.musicCategory is null — updateMusic will NRE (expected)");
+        }
+
+        // Set Game1.currentGameTime = new GameTime()
+        var cgtField = game1Type.GetField("currentGameTime", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (cgtField != null && cgtField.GetValue(null) == null)
+        {
+            try
+            {
+                var gtType = typeof(Microsoft.Xna.Framework.GameTime);
+                var gt = Activator.CreateInstance(gtType);
+                cgtField.SetValue(null, gt);
+                Console.WriteLine("[+] Game1.currentGameTime set to new GameTime()");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.currentGameTime: " + ex.Message); }
         }
     }
 
