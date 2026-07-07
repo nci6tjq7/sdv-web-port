@@ -48,13 +48,21 @@
     -->
     <script>
         // Synchronous fetch for VFS (WASM can't block on async HttpClient)
+        // Note: synchronous XHR can't use responseType='arraybuffer', so we
+        // use a base64-encoded response and decode it on the JS side.
         window.syncFetch = function(url) {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', url, false);  // false = synchronous
-            xhr.responseType = 'arraybuffer';
+            xhr.overrideMimeType('text/plain; charset=x-user-defined');
             xhr.send();
             if (xhr.status === 200) {
-                return new Uint8Array(xhr.response);
+                // Convert binary string to Uint8Array
+                var text = xhr.responseText;
+                var bytes = new Uint8Array(text.length);
+                for (var i = 0; i < text.length; i++) {
+                    bytes[i] = text.charCodeAt(i) & 0xff;
+                }
+                return bytes;
             }
             throw new Error('HTTP ' + xhr.status + ': ' + url);
         };

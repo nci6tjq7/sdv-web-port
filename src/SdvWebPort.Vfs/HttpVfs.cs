@@ -10,7 +10,7 @@ namespace SdvWebPort.Vfs;
 /// HTTP-backed VFS that fetches files from a web server.
 /// Used for loading SDV's Content directory (544MB of XNB files) from /deps/content/.
 /// </summary>
-public class HttpVfs : IVirtualFileSystem
+public partial class HttpVfs : IVirtualFileSystem
 {
     private readonly HttpClient _http;
     private readonly string _baseUrl;
@@ -48,14 +48,14 @@ public class HttpVfs : IVirtualFileSystem
     /// </summary>
     private static byte[] SyncFetch(string url)
     {
-        // JS interop in Blazor WASM is synchronous when called from .NET,
-        // so GetAwaiter().GetResult() on ValueTask is safe here (unlike HttpClient).
-        if (_jsRuntime == null)
-            throw new InvalidOperationException("JSRuntime not set. Call HttpVfs.SetJsRuntime() first.");
-        // Call JS function that does synchronous XHR
-        var result = _jsRuntime.InvokeAsync<byte[]>("syncFetch", url).GetAwaiter().GetResult();
-        return result;
+        // In Blazor WASM, we can't block on async (Monitor.Wait not supported).
+        // Use the low-level [JSImport] API which is truly synchronous.
+        // We call a JS function that does synchronous XHR.
+        return SyncFetchJs(url);
     }
+
+    [System.Runtime.InteropServices.JavaScript.JSImport("globalThis.syncFetch")]
+    private static partial byte[] SyncFetchJs(string url);
 
     private static Microsoft.JSInterop.IJSRuntime? _jsRuntime;
     public static void SetJsRuntime(Microsoft.JSInterop.IJSRuntime jsRuntime) { _jsRuntime = jsRuntime; }
