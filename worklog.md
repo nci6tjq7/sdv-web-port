@@ -600,3 +600,32 @@ Stage Summary:
   KNI assemblies even with all preservation settings enabled
 - Next: ship KNI DLLs as static files + load via LoadFromStream (bypasses trimmer)
 - All work committed on feat/phase2.8-real-sdv branch
+
+---
+Task ID: phase2.8-real-sdv-deep
+Agent: main
+Task: Phase 2.8 — deep progress into Game1.Initialize()
+
+Work Log:
+- ContentTypeReader`1 error fixed (deps xTile/BmFont now rewritten)
+- GalaxyCSharp/Steamworks/SkiaSharp/TextCopy stubs preloaded
+- Action`7-`16, Func`6-`17 delegate replacements
+- Stack<T>, SortedSet<T> etc. collection replacements
+- SpriteBatch::TextureTuckAmount patched out
+- Program.get_sdk() patched (ldsfld _sdk; ret)
+- Game1..cctor() patched to no-op
+- TextInputEventArgs namespace fixed (MG→Input)
+- add_TextInput patched (pop;pop)
+- KeyboardInput P/Invoke patched out
+- GraphicsAdapter calls redirected to stubs
+- Options.setToDefaults patched (hardcode 1280x720)
+- AudioEngine.GetReverbSettings patched out
+- DoThreadedInitTask patched (synchronous Invoke)
+
+Stage Summary:
+- GameRunner instantiates ✅
+- game.Run() executes ✅
+- Game1.Initialize() runs ✅ (past Options.setToDefaults, AudioEngine, DoThreadedInitTask)
+- Next blocker: TypeLoadException 'Could not resolve signature of virtual method'
+  during Game1.Initialize() — needs investigation of method override type resolution
+- All work committed + pushed to GitHub (main + feat/phase2.8-real-sdv)
