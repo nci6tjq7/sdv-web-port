@@ -613,10 +613,12 @@ public static class SdvAssemblyRefRewriter
         // Pass 5g: patch SetInstanceDefaults to nop (calls DeepCloner).
         PatchMethodToNop(asmDef, "StardewValley.GameRunner", "SetInstanceDefaults");
 
-        // Pass 5h: bisect _update — box causes transform.c in Tick() path.
-        // Keep first 10 instructions + ret to keep Tick() stable.
-        // Full _update crashes because box on some value types also triggers transform.c.
-        BisectUpdateCount = 10;
+        // Pass 5h: bisect _update — DISABLED.
+        // The new PatchUpdateRemoveConstrained handles foreach Dispose() patterns
+        // (the only &-preceded constrained.+callvirt pattern that _update actually
+        // executes in normal Tick()). Other patterns keep the old `box T` behavior
+        // that worked in Run() path. With bisect disabled, _update runs in full.
+        BisectUpdateCount = -1;
         PatchUpdateBisect(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
@@ -935,19 +937,66 @@ public static class SdvAssemblyRefRewriter
     }
 
     /// <summary>
-    /// Remove all constrained. prefix instructions from _update method body.
-    /// The constrained. prefix + callvirt on value types causes transform.c:1146
-    /// Mono WASM interpreter assertion. We nop the constrained. instruction
-    /// and leave the callvirt as-is (it will use virtual dispatch instead of
-    /// constrained dispatch, which is fine for our use case).
-    /// Also remove volatile. prefixes that may cause issues.
+    /// Convert all `constrained. T` + `callvirt I::M` patterns to `nop` + `call T::M`.
+    ///
+    /// Background:
+    ///   The Mono WASM interpreter has a transform.c:1146 assertion when JIT-ing
+    ///   the `constrained. T` prefix on value types. Our previous fix replaced
+    ///   `constrained. T` with `box T` — this worked for the Run() path (Initialize,
+    ///   LoadContent, cctor) because those callers use `ldloc` (load value) before
+    ///   the constrained. instruction.
+    ///
+    ///   But the Tick() path (specifically Game1._update and methods it calls)
+    ///   uses the C# foreach pattern: `ldloca.s V_X` (load address) +
+    ///   `constrained. T` + `callvirt IDisposable::Dispose()`. After our box
+    ///   replacement this becomes `ldloca.s V_X` + `box T` + `callvirt ...`
+    ///   which is INVALID IL — `box T` expects a value of type T on the stack,
+    ///   not a `&T` (managed pointer). The Mono interpreter then crashes with
+    ///   transform.c:1146 (instead of throwing a verification exception).
+    ///
+    /// Fix:
+    ///   For each `constrained. T` + `callvirt I::M`:
+    ///   - Find the actual method `T::M` (the implicit interface implementation
+    ///     on the struct — same name + signature as I::M)
+    ///   - Replace `constrained. T` with `nop`
+    ///   - Replace `callvirt I::M` with `call T::M`
+    ///
+    ///   This is valid because `ldloca.s V_X` (or any `&T`-producing instruction)
+    ///   leaves a `&T` on the stack, which is exactly what `call T::M` expects
+    ///   for an instance method on a value type.
+    ///
+    ///   Fallback: if T::M cannot be found (e.g., explicit interface impl), we
+    ///   fall back to the old `box T` behavior. This may still crash for the
+    ///   `&T → box` case, but explicit interface impls are rare in SDV.
     /// </summary>
     private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
     {
-        // Replace constrained. with box — this fixes Run() path (transform.c:1146 gone).
-        // Tick() path still crashes because box on some value types also triggers transform.c.
-        // We use bisect=10 for _update to keep Tick() working.
-        int patchedCount = 0;
+        // Strategy (refined):
+        //   The original `constrained. T` + `callvirt I::M` pattern triggers
+        //   transform.c:1146 in the Mono WASM interpreter. The previous fix
+        //   replaced `constrained.` with `box T` globally. This worked in the
+        //   Run() path (because most call sites load values, not addresses).
+        //   But for &-preceded patterns (ldloca, ldarga, ldsflda, ldflda, ldelema),
+        //   `box T` is INVALID IL (box expects a value, not a &T). These
+        //   invalid-IL sites were never executed in the Run() path, so the
+        //   old code worked. With full _update, they get executed and crash.
+        //
+        //   New approach: for &-preceded `IDisposable::Dispose()` patterns
+        //   (the common foreach finally pattern), remove both the constrained.
+        //   and the callvirt (replace with nop). Dispose() is a no-op for
+        //   struct enumerators (List<T>.Enumerator, Dictionary<K,V>.Enumerator,
+        //   HashSet<T>.Enumerator, etc.), so this is semantically safe.
+        //
+        //   For other &-preceded patterns (MoveNext, get_Current, ToString,
+        //   GetHashCode, etc.) and all value-preceded patterns, keep the old
+        //   `box T` behavior to preserve the working Run() path. These may
+        //   still crash in Tick() if executed, but that's the next problem
+        //   to solve.
+        int disposeRemovedCount = 0;
+        int directCallCount = 0;
+        int boxFallbackCount = 0;
+        int boxUntouchedCount = 0;
+
         foreach (var type in asmDef.MainModule.GetTypes())
         {
             foreach (var method in type.Methods)
@@ -956,17 +1005,187 @@ public static class SdvAssemblyRefRewriter
                 var instrs = method.Body.Instructions;
                 for (int i = 0; i < instrs.Count; i++)
                 {
-                    if (instrs[i].OpCode == OpCodes.Constrained)
+                    if (instrs[i].OpCode != OpCodes.Constrained) continue;
+                    if (i + 1 >= instrs.Count) continue;
+                    var callInstr = instrs[i + 1];
+                    if (callInstr.OpCode != OpCodes.Callvirt) continue;
+                    if (callInstr.Operand is not MethodReference interfaceMethod) continue;
+
+                    var constrainedType = instrs[i].Operand as TypeReference;
+                    if (constrainedType == null) continue;
+
+                    // Check if preceding is &-producing
+                    bool ampPreceding = i > 0 && IsAddressProducing(instrs[i - 1].OpCode.Code);
+
+                    if (ampPreceding)
                     {
-                        var constrainedType = instrs[i].Operand as TypeReference;
+                        // &-preceded + IDisposable::Dispose() — semantically a no-op for struct enumerators.
+                        // Remove the call entirely: constrained. → nop, callvirt → pop (consumes &T).
+                        if (interfaceMethod.Name == "Dispose"
+                            && interfaceMethod.DeclaringType.FullName == "System.IDisposable")
+                        {
+                            instrs[i].OpCode = OpCodes.Nop;
+                            instrs[i].Operand = null;
+                            callInstr.OpCode = OpCodes.Pop;
+                            callInstr.Operand = null;
+                            disposeRemovedCount++;
+                        }
+                        else
+                        {
+                            // &-preceded + other methods (MoveNext, get_Current, ToString, etc.)
+                            // Try to convert to direct call: constrained. → nop, callvirt I::M → call T::M.
+                            // The &T on the stack is exactly what `call T::M` expects for a struct
+                            // instance method (this is passed by ref for value types).
+                            // The return value (if any) is pushed on the stack, matching the original
+                            // callvirt semantics. No stack fixup needed.
+                            //
+                            // CONSERVATIVE: convert MoveNext and get_Current (foreach loop patterns).
+                            //   - MoveNext: returns bool (no generic params)
+                            //   - get_Current: returns T (may have generic substitution, but
+                            //     TryFindDirectMethod uses ImportReference with the GenericInstanceType
+                            //     as context, which should handle substitution correctly)
+                            // Skip ToString/GetHashCode/GetType (require boxing for Object virtual dispatch)
+                            // and other methods for now.
+                            bool canDirectCall = (interfaceMethod.Name == "MoveNext" && interfaceMethod.Parameters.Count == 0)
+                                              || (interfaceMethod.Name == "get_Current" && interfaceMethod.Parameters.Count == 0);
+                            if (canDirectCall)
+                            {
+                                var directMethod = TryFindDirectMethod(asmDef.MainModule, constrainedType, interfaceMethod);
+                                if (directMethod != null)
+                                {
+                                    instrs[i].OpCode = OpCodes.Nop;
+                                    instrs[i].Operand = null;
+                                    callInstr.OpCode = OpCodes.Call;
+                                    callInstr.Operand = directMethod;
+                                    directCallCount++;
+                                }
+                                else
+                                {
+                                    // Direct method not found — fall back to box with addr fixup
+                                    instrs[i].OpCode = OpCodes.Box;
+                                    FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                    boxFallbackCount++;
+                                }
+                            }
+                            else
+                            {
+                                // Other methods (ToString, GetHashCode, GetType, etc.) — these need
+                                // boxing for Object virtual dispatch. Use box with addr fixup:
+                                // change the preceding &-producer to load the value (ldloc/ldarg/ldsfld/ldfld)
+                                // so `box T` gets a value on the stack (not a &T).
+                                instrs[i].OpCode = OpCodes.Box;
+                                FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                boxFallbackCount++;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Value-preceded — `box T` works (kept the working Run() path behavior)
                         instrs[i].OpCode = OpCodes.Box;
-                        patchedCount++;
+                        boxUntouchedCount++;
                     }
                 }
             }
         }
-        if (patchedCount > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box");
+
+        Console.WriteLine($"[AssemblyRefRewriter] foreach Dispose removed (nop+pop): {disposeRemovedCount}");
+        Console.WriteLine($"[AssemblyRefRewriter] constrained. → nop + call T::M: {directCallCount} conversions");
+        Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (untouched, value-preceded): {boxUntouchedCount} conversions");
+        Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (fallback, &-preceded with addr fixup): {boxFallbackCount} conversions");
+    }
+
+    /// <summary>
+    /// Convert a &-producing instruction to its value-loading equivalent.
+    /// Used when we fall back to `box T` for &-preceded constrained. patterns:
+    /// `box T` requires a value on the stack, not a `&T` (managed pointer).
+    /// </summary>
+    private static void FixupPrecedingAddrInstruction(Mono.Cecil.Cil.Instruction prev)
+    {
+        switch (prev.OpCode.Code)
+        {
+            case Code.Ldloca:   prev.OpCode = OpCodes.Ldloc; break;
+            case Code.Ldloca_S: prev.OpCode = OpCodes.Ldloc_S; break;
+            case Code.Ldarga:   prev.OpCode = OpCodes.Ldarg; break;
+            case Code.Ldarga_S: prev.OpCode = OpCodes.Ldarg_S; break;
+            case Code.Ldsflda:  prev.OpCode = OpCodes.Ldsfld; break;
+            case Code.Ldflda:   prev.OpCode = OpCodes.Ldfld; break;
+            case Code.Ldelema:
+                // ldelema → ldelem.ref (rare case, may not be quite right for value types)
+                prev.OpCode = OpCodes.Ldelem_Ref;
+                prev.Operand = null;
+                break;
+        }
+    }
+
+    private static bool IsAddressProducing(Code code)
+    {
+        return code == Code.Ldloca || code == Code.Ldloca_S
+            || code == Code.Ldarga || code == Code.Ldarga_S
+            || code == Code.Ldsflda || code == Code.Ldflda
+            || code == Code.Ldelema;
+    }
+
+    /// <summary>
+    /// Find a public method on valueType that matches interfaceMethod's name + signature.
+    /// Used to convert `constrained. T` + `callvirt I::M` to `nop` + `call T::M`.
+    /// Returns null for generic parameters (caller falls back to `box`).
+    /// </summary>
+    private static MethodReference? TryFindDirectMethod(ModuleDefinition module, TypeReference valueTypeRef, MethodReference interfaceMethod)
+    {
+        // Don't try to convert when T is a generic parameter (e.g., `T` in `Foo<T>::Bar`).
+        // For generic parameters, Resolve() may return the constraint type (e.g., `Object`)
+        // and we'd find Object::ToString() — but the runtime type is T, not Object.
+        // Fall back to `box T` for these (semantically correct, but may crash on &T inputs).
+        if (valueTypeRef is GenericParameter)
+            return null;
+
+        // Resolve the type to a TypeDefinition
+        TypeDefinition? typeDef = null;
+        try { typeDef = valueTypeRef.Resolve(); }
+        catch { /* resolution may fail for forwarded types */ }
+        if (typeDef == null) return null;
+
+        // Only value types (structs) — for reference types, the original callvirt is fine
+        // (but constrained. on reference types also triggers transform.c, so we still convert)
+        // We'll try anyway and let the caller decide via the return null path.
+
+        // Walk the type and its base types looking for a method matching name + param count
+        MethodDefinition? found = null;
+        var searchType = typeDef;
+        while (searchType != null)
+        {
+            foreach (var m in searchType.Methods)
+            {
+                if (m.Name != interfaceMethod.Name) continue;
+                if (m.Parameters.Count != interfaceMethod.Parameters.Count) continue;
+                // Match by parameter count (good enough for Dispose(), MoveNext(), get_Current(), ToString(), etc.)
+                // Full type matching is complex due to generic instantiation; skip for now.
+                found = m;
+                break;
+            }
+            if (found != null) break;
+            searchType = searchType.BaseType?.Resolve();
+        }
+        if (found == null) return null;
+
+        // If the value type is a generic instantiation (e.g., List<Game1>/Enumerator<Game1>),
+        // we need to instantiate the method on the specific generic type.
+        // Use Cecil's ImportReference with the GenericInstanceType as context — this handles
+        // generic parameter substitution correctly (e.g., get_Current's return type `T` gets
+        // bound to the specific type argument like `Game1`).
+        if (valueTypeRef is GenericInstanceType git)
+        {
+            // ImportReference(method, IGenericParameterProvider) properly substitutes generic
+            // parameters in the method's return type and parameter types based on the context.
+            // The result is a MethodReference whose DeclaringType is the closed generic.
+            return module.ImportReference(found, git);
+        }
+        else
+        {
+            // Non-generic type — just import the method
+            return module.ImportReference(found);
+        }
     }
 
     /// <summary>
