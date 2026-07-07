@@ -324,6 +324,11 @@ public static class SdvAssemblyRefRewriter
         // We bypass the check and let ContentManager.Load handle the actual loading.
         PatchDoesAssetExist(asmDef);
 
+        // Pass 14: patch GameRunner..ctor() to set GraphicsProfile = HiDef.
+        // KNI defaults to Reach profile (max texture 2048px). SDV's Cursors.xnb
+        // is larger than 2048, causing NotSupportedException. HiDef allows 8192.
+        PatchGraphicsProfileToHiDef(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -749,6 +754,105 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched DoesAssetExist → return true (bypass manifest check)");
+    }
+
+    /// <summary>
+    /// Patch GameRunner..ctor() to set GraphicsProfile = HiDef.
+    /// KNI defaults to Reach profile (max texture 2048px). SDV's Cursors.xnb
+    /// is larger than 2048, causing NotSupportedException. HiDef allows 8192.
+    ///
+    /// We insert 'ldsfld graphics; ldc.i4.1; callvirt set_GraphicsProfile' after
+    /// the 'stsfld graphics' instruction in GameRunner..ctor().
+    /// </summary>
+    private static void PatchGraphicsProfileToHiDef(AssemblyDefinition asmDef)
+    {
+        var gameRunner = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.GameRunner");
+        if (gameRunner == null) return;
+        var ctor = gameRunner.Methods.FirstOrDefault(m => m.Name == ".ctor");
+        if (ctor == null) return;
+
+        var instrs = ctor.Body.Instructions;
+        var module = asmDef.MainModule;
+
+        // Find the stsfld Game1::graphics instruction
+        int stsfldIndex = -1;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Stsfld && instrs[i].Operand is FieldReference fr
+                && fr.Name == "graphics" && fr.DeclaringType?.FullName == "StardewValley.Game1")
+            {
+                stsfldIndex = i;
+                break;
+            }
+        }
+        if (stsfldIndex < 0)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] PatchGraphicsProfile: stsfld graphics not found");
+            return;
+        }
+
+        // Find GraphicsDeviceManager type reference in the module
+        TypeReference? gdmRef = null;
+        foreach (var tr in module.GetTypeReferences())
+        {
+            if (tr.Name == "GraphicsDeviceManager")
+            {
+                gdmRef = tr;
+                break;
+            }
+        }
+        if (gdmRef == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] PatchGraphicsProfile: GraphicsDeviceManager type not found");
+            return;
+        }
+
+        // Find GraphicsProfile type reference — try module first, then create one
+        // pointing at the same assembly as GraphicsDeviceManager
+        TypeReference? profileType = null;
+        foreach (var tr in module.GetTypeReferences())
+        {
+            if (tr.Name == "GraphicsProfile")
+            {
+                profileType = tr;
+                break;
+            }
+        }
+        if (profileType == null)
+        {
+            // GraphicsProfile is in Xna.Framework.Graphics, not Xna.Framework.Game
+            // Find the AssemblyNameReference for Xna.Framework.Graphics
+            var graphicsAsmRef = module.AssemblyReferences.FirstOrDefault(a => a.Name == "Xna.Framework.Graphics");
+            if (graphicsAsmRef == null)
+            {
+                Console.WriteLine("[AssemblyRefRewriter] PatchGraphicsProfile: Xna.Framework.Graphics AssemblyRef not found");
+                return;
+            }
+            profileType = new TypeReference("Microsoft.Xna.Framework.Graphics", "GraphicsProfile", module, graphicsAsmRef);
+            // GraphicsProfile is an enum (value type) — must set IsValueType
+            // otherwise Cecil emits it as a reference type, causing BadImageFormatException
+            profileType.IsValueType = true;
+            Console.WriteLine("[AssemblyRefRewriter] PatchGraphicsProfile: created GraphicsProfile typeref (scope: Xna.Framework.Graphics)");
+        }
+
+        // Create set_GraphicsProfile method reference
+        var setProfileMethod = new MethodReference("set_GraphicsProfile", module.TypeSystem.Void, gdmRef)
+        {
+            HasThis = true,
+        };
+        setProfileMethod.Parameters.Add(new ParameterDefinition(profileType));
+
+        // Insert after stsfldIndex:
+        //   ldsfld Game1::graphics    (the GraphicsDeviceManager)
+        //   ldc.i4.1                  (GraphicsProfile.HiDef = 1)
+        //   callvirt set_GraphicsProfile
+        int insertAt = stsfldIndex + 1;
+        var graphicsField = instrs[stsfldIndex].Operand as FieldReference;
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldsfld, graphicsField!));
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Ldc_I4_1));  // HiDef = 1
+        instrs.Insert(insertAt++, Instruction.Create(OpCodes.Callvirt, setProfileMethod));
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched GameRunner..ctor: set GraphicsProfile = HiDef (after stsfld graphics at instr {stsfldIndex})");
     }
 
     /// <summary>
