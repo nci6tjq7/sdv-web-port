@@ -307,6 +307,10 @@ public static class SdvAssemblyRefRewriter
         // API differences (e.g., add_TextInput event accessor, KeyboardInput P/Invoke).
         PatchBrokenMethodCalls(asmDef);
 
+        // Pass 11: patch Game1.DoThreadedInitTask to run synchronously (no threading).
+        // WASM doesn't support System.Threading.Thread.
+        PatchDoThreadedInitTask(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -638,6 +642,32 @@ public static class SdvAssemblyRefRewriter
         }
         if (patched > 0)
             Console.WriteLine($"[AssemblyRefRewriter] Broken method call patches: {patched}");
+    }
+
+    /// <summary>
+    /// Patch Game1.DoThreadedInitTask to run synchronously (no threading).
+    /// WASM doesn't support System.Threading.Thread — SDV creates a Thread for
+    /// incremental loading. We patch the method body to just call the delegate
+    /// directly (Invoke) instead of creating a Thread.
+    /// </summary>
+    private static void PatchDoThreadedInitTask(AssemblyDefinition asmDef)
+    {
+        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1 == null) return;
+        var method = game1.Methods.FirstOrDefault(m => m.Name == "DoThreadedInitTask");
+        if (method == null) return;
+
+        var instrs = method.Body.Instructions;
+        instrs.Clear();
+        method.Body.ExceptionHandlers.Clear();
+
+        // New body: just call ldarg.1 (the ThreadStart delegate).Invoke()
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));  // load the ThreadStart delegate
+        instrs.Add(Instruction.Create(OpCodes.Callvirt, method.Module.ImportReference(
+            typeof(System.Threading.ThreadStart).GetMethod("Invoke"))));
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched Game1.DoThreadedInitTask → synchronous Invoke (no threading)");
     }
 
     /// <summary>
