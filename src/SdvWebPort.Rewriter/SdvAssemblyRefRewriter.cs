@@ -553,18 +553,62 @@ public static class SdvAssemblyRefRewriter
 
                     // Patch out KNI methods that throw NotImplementedException in Blazor.GL
                     // GraphicsAdapter.get_SupportedDisplayModes, GraphicsAdapter.get_CurrentDisplayMode, etc.
+                    // Redirect to our GraphicsStubs helper methods that return empty/null values.
                     if (mr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Graphics.GraphicsAdapter")
                     {
-                        Console.WriteLine($"[AssemblyRefRewriter] Patching out GraphicsAdapter::{mr.Name} in {type.FullName}::{method.Name}");
-                        int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
-                        ins.OpCode = OpCodes.Nop;
-                        ins.Operand = null;
-                        for (int p = 0; p < paramCount; p++)
-                            instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
-                        if (mr.ReturnType.FullName != "System.Void")
-                            instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldnull));
-                        patched++;
-                        i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
+                        Console.WriteLine($"[AssemblyRefRewriter] Redirecting GraphicsAdapter::{mr.Name} in {type.FullName}::{method.Name} to stub");
+                        // Find SdvWebPort.Vfs assembly
+                        var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+                            .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+                        if (vfsAsm != null)
+                        {
+                            var stubType = vfsAsm.GetType("SdvWebPort.Vfs.StubHelpers.GraphicsStubs");
+                            if (stubType != null)
+                            {
+                                // Pick the right stub method based on return type
+                                System.Reflection.MethodInfo? stubMethod = null;
+                                var returnType = mr.ReturnType?.FullName ?? "System.Void";
+                                if (mr.Name == "get_SupportedDisplayModes")
+                                    stubMethod = stubType.GetMethod("GetEmptyDisplayModes");
+                                else if (returnType == "System.Boolean")
+                                    stubMethod = stubType.GetMethod("GetFalse");
+                                else if (returnType == "System.Int32" || returnType == "System.Int64" ||
+                                         returnType == "System.Single" || returnType == "System.Double")
+                                    stubMethod = stubType.GetMethod("GetZero");
+                                else if (returnType != "System.Void")
+                                    stubMethod = stubType.GetMethod("GetNull");
+
+                                if (stubMethod != null)
+                                {
+                                    // Replace the call operand with our stub method
+                                    // First pop the 'this' argument (GraphicsAdapter) if it's an instance method
+                                    int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                                    // Pop all args (including 'this')
+                                    ins.OpCode = OpCodes.Nop;
+                                    ins.Operand = null;
+                                    for (int p = 0; p < paramCount; p++)
+                                        instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                                    // Call our stub method (static, no args)
+                                    var stubRef = asmDef.MainModule.ImportReference(stubMethod);
+                                    instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Call, stubRef));
+                                    patched++;
+                                    i += paramCount + 1;
+                                }
+                                else
+                                {
+                                    // Fallback: just return null/void
+                                    int paramCount = mr.Parameters.Count + (mr.HasThis ? 1 : 0);
+                                    ins.OpCode = OpCodes.Nop;
+                                    ins.Operand = null;
+                                    for (int p = 0; p < paramCount; p++)
+                                        instrs.Insert(i + 1 + p, Instruction.Create(OpCodes.Pop));
+                                    if (mr.ReturnType.FullName != "System.Void")
+                                        instrs.Insert(i + 1 + paramCount, Instruction.Create(OpCodes.Ldnull));
+                                    patched++;
+                                    i += paramCount + (mr.ReturnType.FullName != "System.Void" ? 1 : 0);
+                                }
+                            }
+                        }
                     }
                 }
             }
