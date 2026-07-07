@@ -87,6 +87,77 @@ public static class SdvAssemblyRefRewriter
     public static bool SkipMethodSignatureRewrite { get; set; } = false;
 
     /// <summary>
+    /// Type full name → KNI assembly name. Used by PeTypeRefPatcher.
+    /// </summary>
+    private static readonly Dictionary<string, string> _typeToKniAssembly = new()
+    {
+        { "Microsoft.Xna.Framework.Vector2", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Vector3", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Vector4", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Matrix", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Quaternion", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Point", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Rectangle", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.MathHelper", "Xna.Framework" },
+        { "Microsoft.Xna.Framework.Game", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.GameTime", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.GameServiceContainer", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.GameComponent", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.DrawableGameComponent", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.GameWindow", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.GraphicsDeviceManager", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.TitleContainer", "Xna.Framework.Game" },
+        { "Microsoft.Xna.Framework.Graphics.GraphicsDevice", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.SpriteBatch", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.Texture2D", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.RenderTarget2D", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Color", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.PresentationParameters", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.SurfaceFormat", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.DepthFormat", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.BlendState", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.SamplerState", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.DepthStencilState", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.RasterizerState", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.SpriteSortMode", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.Effect", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.GraphicsAdapter", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.DisplayMode", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Graphics.GraphicsProfile", "Xna.Framework.Graphics" },
+        { "Microsoft.Xna.Framework.Content.ContentManager", "Xna.Framework.Content" },
+        { "Microsoft.Xna.Framework.Content.ContentReader", "Xna.Framework.Content" },
+        { "Microsoft.Xna.Framework.Content.ContentTypeReader", "Xna.Framework.Content" },
+        { "Microsoft.Xna.Framework.Content.ContentLoadException", "Xna.Framework.Content" },
+        { "Microsoft.Xna.Framework.Input.MouseState", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.KeyboardState", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.GamePadState", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.Keys", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.Buttons", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.GamePadThumbSticks", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.GamePadDPad", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.GamePadButtons", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.Mouse", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.Keyboard", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.GamePad", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Input.InputKeyEventArgs", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.TextInputEventArgs", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.FileDropEventArgs", "Xna.Framework.Input" },
+        { "Microsoft.Xna.Framework.Audio.AudioEngine", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.SoundBank", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.WaveBank", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.SoundEffect", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.AudioListener", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.AudioEmitter", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.CueDefinition", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.AudioCategory", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.ReverbSettings", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.NoAudioHardwareException", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Audio.OggStreamSoundEffect", "Xna.Framework.Audio" },
+        { "Microsoft.Xna.Framework.Media.MediaPlayer", "Xna.Framework.Media" },
+        { "Microsoft.Xna.Framework.Media.Song", "Xna.Framework.Media" },
+    };
+
+    /// <summary>
     /// Cached forward map: (source assembly name, type full name) → (target assembly name, target type full name).
     /// Populated lazily from the embedded RUNTIME assemblies (which have type-forwards).
     /// </summary>
@@ -533,9 +604,8 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
-        // Pass 5e: _update=nop — transform.c:1146 crash persists even with
-        // TypeReference replacement. Cecil doesn't persist scope changes in PE.
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
+        // Pass 5e: _update=nop — DISABLED to test PE byte patching.
+        // PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -601,6 +671,11 @@ public static class SdvAssemblyRefRewriter
         }
         var result = outputMs.ToArray();
         Console.WriteLine($"[AssemblyRefRewriter] Rewritten assembly: {result.Length:N0} bytes");
+
+        // Post-Cecil: directly patch PE bytes to fix TypeRef ResolutionScope.
+        // Cecil doesn't persist scope changes, so we patch the raw PE typeref table.
+        result = PeTypeRefPatcher.PatchTypeRefScopes(result, _typeToKniAssembly, "MonoGame.Framework");
+        Console.WriteLine($"[AssemblyRefRewriter] After PE patch: {result.Length:N0} bytes");
         return result;
     }
 
