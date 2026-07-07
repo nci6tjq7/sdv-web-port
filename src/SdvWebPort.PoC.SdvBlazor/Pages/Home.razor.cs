@@ -246,39 +246,119 @@ public partial class Home : ComponentBase
         var logField = game1Type.GetField("log", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (logField != null)
         {
-            var logType = logField.FieldType;
-            if (logType.IsInterface)
-            {
-                // Find a concrete implementor in the SDV assembly
-                var defaultLoggerType = sdvAsm.GetType("StardewValley.Logging.DefaultLogger");
-                if (defaultLoggerType != null)
-                {
-                    try
-                    {
-                        // DefaultLogger(bool, bool) — pass false, false
-                        var logger = Activator.CreateInstance(defaultLoggerType, false, false);
-                        logField.SetValue(null, logger);
-                        Console.WriteLine("[+] Game1.log set to DefaultLogger(false,false)");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine("[WARN] Could not create DefaultLogger: " + ex.Message);
-                    }
-                }
-            }
-            else
+            var defaultLoggerType = sdvAsm.GetType("StardewValley.Logging.DefaultLogger");
+            if (defaultLoggerType != null)
             {
                 try
                 {
-                    var logger = Activator.CreateInstance(logType);
+                    var logger = Activator.CreateInstance(defaultLoggerType, false, false);
                     logField.SetValue(null, logger);
-                    Console.WriteLine("[+] Game1.log set to stub instance");
+                    Console.WriteLine("[+] Game1.log set to DefaultLogger(false,false)");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("[WARN] Could not create Game1.log stub: " + ex.Message);
+                    Console.WriteLine("[WARN] Could not create DefaultLogger: " + ex.Message);
                 }
             }
+        }
+
+        // Set Game1.random = new Random()
+        var randomField = game1Type.GetField("random", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (randomField != null && randomField.GetValue(null) == null)
+        {
+            try
+            {
+                randomField.SetValue(null, new Random());
+                Console.WriteLine("[+] Game1.random set to new Random()");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.random: " + ex.Message); }
+        }
+
+        // Set Game1.onScreenMenus = new List<IClickableMenu>()
+        var osmField = game1Type.GetField("onScreenMenus", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (osmField != null && osmField.GetValue(null) == null)
+        {
+            try
+            {
+                var listType = typeof(System.Collections.Generic.List<>);
+                var elementType = sdvAsm.GetType("StardewValley.Menus.IClickableMenu");
+                if (elementType != null)
+                {
+                    var concreteListType = listType.MakeGenericType(elementType);
+                    var list = Activator.CreateInstance(concreteListType);
+                    osmField.SetValue(null, list);
+                    Console.WriteLine("[+] Game1.onScreenMenus set to new List<IClickableMenu>()");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.onScreenMenus: " + ex.Message); }
+        }
+
+        // Set Game1._shortDayDisplayName = new string[7]
+        var sdnField = game1Type.GetField("_shortDayDisplayName", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (sdnField != null && sdnField.GetValue(null) == null)
+        {
+            try
+            {
+                sdnField.SetValue(null, new string[7]);
+                Console.WriteLine("[+] Game1._shortDayDisplayName set to new string[7]");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1._shortDayDisplayName: " + ex.Message); }
+        }
+
+        // Set Game1.rainDrops = new RainDrop[...]
+        var rdField = game1Type.GetField("rainDrops", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (rdField != null && rdField.GetValue(null) == null)
+        {
+            try
+            {
+                var rainDropType = sdvAsm.GetType("StardewValley.RainDrop");
+                if (rainDropType != null)
+                {
+                    var array = Array.CreateInstance(rainDropType, 100);
+                    for (int i = 0; i < 100; i++)
+                        array.SetValue(Activator.CreateInstance(rainDropType), i);
+                    rdField.SetValue(null, array);
+                    Console.WriteLine("[+] Game1.rainDrops set to new RainDrop[100]");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.rainDrops: " + ex.Message); }
+        }
+
+        // Set Game1.dynamicPixelRects = new Texture2D[0]
+        var dprField = game1Type.GetField("dynamicPixelRects", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (dprField != null && dprField.GetValue(null) == null)
+        {
+            try
+            {
+                var textureType = typeof(Microsoft.Xna.Framework.Graphics.Texture2D);
+                dprField.SetValue(null, Array.CreateInstance(textureType, 0));
+                Console.WriteLine("[+] Game1.dynamicPixelRects set to empty array");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.dynamicPixelRects: " + ex.Message); }
+        }
+
+        // Set Game1.content = new LocalizedContentManager(serviceProvider, "Content")
+        var contentField = game1Type.GetField("content", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (contentField != null && contentField.GetValue(null) == null)
+        {
+            try
+            {
+                var lcmType = sdvAsm.GetType("StardewValley.LocalizedContentManager");
+                if (lcmType != null)
+                {
+                    // LocalizedContentManager(IServiceProvider, string rootDirectory)
+                    var ctor = lcmType.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 2);
+                    if (ctor != null)
+                    {
+                        // Create a minimal IServiceProvider
+                        var spType = typeof(System.IServiceProvider);
+                        var lcm = ctor.Invoke(new object?[] { null, "Content" });
+                        contentField.SetValue(null, lcm);
+                        Console.WriteLine("[+] Game1.content set to new LocalizedContentManager(null, Content)");
+                    }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.content: " + ex.Message); }
         }
     }
 
