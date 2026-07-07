@@ -255,6 +255,53 @@ public static class SdvAssemblyRefRewriter
         }
         Console.WriteLine($"[AssemblyRefRewriter] TypeRef scope rewrites: {typeRefRewrites} ({errors} errors)");
 
+        // Pass 2b: Also rewrite method signature types (parameters + return types).
+        // module.GetTypeReferences() may not include all typerefs used in method
+        // signatures. We walk all methods and rewrite their parameter/return type
+        // scopes directly.
+        int sigRewrites = 0;
+        var sigModule = asmDef.MainModule;
+        foreach (var type in sigModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                // Rewrite return type scope (skip TypeSpecification — can't set Scope directly)
+                if (method.ReturnType != null && !(method.ReturnType is TypeSpecification)
+                    && method.ReturnType.Scope is AssemblyNameReference retScope)
+                {
+                    var target = ResolveForwardedScope(retScope.Name, method.ReturnType.FullName, resolver);
+                    if (target != null && target != retScope.Name)
+                    {
+                        var targetRef = sigModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+                        if (targetRef != null)
+                        {
+                            method.ReturnType.Scope = targetRef;
+                            sigRewrites++;
+                        }
+                    }
+                }
+                // Rewrite parameter type scopes (skip TypeSpecification)
+                foreach (var param in method.Parameters)
+                {
+                    if (param.ParameterType != null && !(param.ParameterType is TypeSpecification)
+                        && param.ParameterType.Scope is AssemblyNameReference paramScope)
+                    {
+                        var target = ResolveForwardedScope(paramScope.Name, param.ParameterType.FullName, resolver);
+                        if (target != null && target != paramScope.Name)
+                        {
+                            var targetRef = sigModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+                            if (targetRef != null)
+                            {
+                                param.ParameterType.Scope = targetRef;
+                                sigRewrites++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"[AssemblyRefRewriter] Method signature scope rewrites: {sigRewrites}");
+
         // Pass 3 (optional): patch GameRunner..ctor() for bisection debugging.
         // This is used to isolate which step in GameRunner..ctor() triggers the
         // Mono runtime assertion (exception.c:172, condition `method' not met).
@@ -338,7 +385,15 @@ public static class SdvAssemblyRefRewriter
         // via KniGraphicsPatcher (run in SdvLoader.PreloadKniAssembliesAsync).
 
         using var outputMs = new MemoryStream();
-        asmDef.Write(outputMs);
+        try
+        {
+            asmDef.Write(outputMs, new WriterParameters { WriteSymbols = false });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] Write failed ({ex.GetType().Name}: {ex.Message})");
+            throw;
+        }
         var result = outputMs.ToArray();
         Console.WriteLine($"[AssemblyRefRewriter] Rewritten assembly: {result.Length:N0} bytes");
         return result;
