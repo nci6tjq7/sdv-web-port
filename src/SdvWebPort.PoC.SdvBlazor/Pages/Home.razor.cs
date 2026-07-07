@@ -106,9 +106,9 @@ public partial class Home : ComponentBase
 
             Console.WriteLine("[+] Running Cecil AssemblyRef rewriter (System.* v6→v8, MG v3.8.0.1641→v3.8.5.0)...");
             var refRewritten = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
-            Console.WriteLine($"[+] Running Cecil FileSystem rewriter (File/Directory → SdvFileShim)...");
-            rewrittenBytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(refRewritten);
-            Console.WriteLine($"[+] Final rewritten: {rewrittenBytes.Length:N0} bytes");
+            // SKIP FileSystem rewriter to test if it's undoing scope changes
+            rewrittenBytes = refRewritten;
+            Console.WriteLine($"[+] Final rewritten (no FS rewriter): {rewrittenBytes.Length:N0} bytes");
         }
         catch (Exception ex)
         {

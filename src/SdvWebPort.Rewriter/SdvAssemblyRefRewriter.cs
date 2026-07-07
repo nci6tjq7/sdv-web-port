@@ -294,10 +294,11 @@ public static class SdvAssemblyRefRewriter
         PatchGameRunnerCtorBrokenInstructions(asmDef);
 
         // Pass 8: rewrite stripped collection typerefs to use our replacement types.
-        // The BlazorWebAssembly trimmer strips types from System.Collections.wasm
-        // (Stack<T>, SortedSet<T>, etc.) even though they're defined there in source.
-        // We define equivalent types in SdvWebPort.Vfs.CollectionReplacements.
         ReplaceMissingCollections(asmDef);
+
+        // Pass 9: patch out method calls that fail at runtime due to KNI/MonoGame
+        // API differences (e.g., add_TextInput event accessor).
+        PatchBrokenMethodCalls(asmDef);
 
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
@@ -479,22 +480,68 @@ public static class SdvAssemblyRefRewriter
                 && fr.Name == "TextureTuckAmount"
                 && fr.DeclaringType?.FullName == "Microsoft.Xna.Framework.Graphics.SpriteBatch")
             {
-                // Nop the stsfld
                 ins.OpCode = OpCodes.Nop;
                 ins.Operand = null;
                 patched++;
-                // Also Nop the preceding ldc.r4 (the value to store)
                 if (i > 0 && instrs[i - 1].OpCode == OpCodes.Ldc_R4)
                 {
                     instrs[i - 1].OpCode = OpCodes.Nop;
                     instrs[i - 1].Operand = null;
                     patched++;
                 }
-                Console.WriteLine($"[AssemblyRefRewriter] Patched out stsfld SpriteBatch::TextureTuckAmount (KNI doesn't have this field)");
+                Console.WriteLine($"[AssemblyRefRewriter] Patched out stsfld SpriteBatch::TextureTuckAmount");
             }
         }
         if (patched > 0)
             Console.WriteLine($"[AssemblyRefRewriter] GameRunner..ctor() broken-instruction patches: {patched}");
+    }
+
+    /// <summary>
+    /// Patch out method calls that fail at runtime due to KNI/MonoGame API differences.
+    /// These are calls that compile fine but fail at runtime with MissingMethodException
+    /// because the method signature or declaring type doesn't match exactly.
+    ///
+    /// Known-broken calls:
+    ///   GameWindow::add_TextInput — KNI has the method but the runtime can't find it
+    ///     (likely due to EventHandler<T> scope mismatch). We Nop the call + its args.
+    /// </summary>
+    private static void PatchBrokenMethodCalls(AssemblyDefinition asmDef)
+    {
+        int patched = 0;
+        foreach (var type in asmDef.MainModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    var ins = instrs[i];
+                    if (ins.OpCode != OpCodes.Call && ins.OpCode != OpCodes.Callvirt) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+
+                    // Patch out add_TextInput / remove_TextInput calls
+                    // These are event accessors: callvirt GameWindow::add_TextInput(EventHandler<TextInputEventArgs>)
+                    // Stack before call: [this_GameWindow] [delegate] → void
+                    // Replace callvirt with 2x pop to consume the 2 stack items
+                    if (mr.Name == "add_TextInput" || mr.Name == "remove_TextInput")
+                    {
+                        Console.WriteLine($"[AssemblyRefRewriter] Patching out {mr.Name} in {type.FullName}::{method.Name} (replaced with pop;pop)");
+                        // Replace the call with pop; pop (consume this + delegate)
+                        var pop1 = Instruction.Create(OpCodes.Pop);
+                        var pop2 = Instruction.Create(OpCodes.Pop);
+                        ins.OpCode = pop1.OpCode;
+                        ins.Operand = null;
+                        // Insert pop2 after the current instruction
+                        instrs.Insert(i + 1, pop2);
+                        patched++;
+                        i++; // skip the inserted instruction
+                    }
+                }
+            }
+        }
+        if (patched > 0)
+            Console.WriteLine($"[AssemblyRefRewriter] Broken method call patches: {patched}");
     }
 
     /// <summary>
@@ -835,8 +882,8 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static bool TryRewriteTypeRefScope(TypeReference tr, RefAssemblyResolver resolver)
     {
-        // Diagnostic: log ContentTypeReader typerefs (BEFORE the TypeSpecification skip)
-        if (tr.FullName.Contains("ContentTypeReader"))
+        // Diagnostic: log ContentTypeReader + TextInput typerefs (BEFORE the TypeSpecification skip)
+        if (tr.FullName.Contains("ContentTypeReader") || tr.FullName.Contains("TextInputEventArgs"))
         {
             Console.WriteLine($"[AssemblyRefRewriter] TryRewriteTypeRefScope ENTER: {tr.FullName} scope={tr.Scope?.Name} isSpec={tr is TypeSpecification} type={tr.GetType().Name}");
         }
@@ -906,6 +953,26 @@ public static class SdvAssemblyRefRewriter
             _rewrittenTypeRefLogs++;
         }
         tr.Scope = targetAsmRef;
+
+        // Also check if the type's namespace needs to be updated (KNI may have
+        // moved the type to a different namespace than MonoGame had).
+        // E.g., TextInputEventArgs moved from Microsoft.Xna.Framework to
+        // Microsoft.Xna.Framework.Input.
+        if (targetScope.StartsWith("Xna.Framework"))
+        {
+            var targetAsm = LoadRuntimeAssembly(targetScope);
+            if (targetAsm != null)
+            {
+                var typeName = tr.Name;
+                var correctType = targetAsm.MainModule.Types.FirstOrDefault(t => t.Name == typeName);
+                if (correctType != null && correctType.Namespace != tr.Namespace)
+                {
+                    Console.WriteLine($"[AssemblyRefRewriter] Namespace fix: {tr.FullName} → {correctType.FullName}");
+                    tr.Namespace = correctType.Namespace;
+                }
+            }
+        }
+
         return true;
     }
 
@@ -931,8 +998,8 @@ public static class SdvAssemblyRefRewriter
                 return cached.TargetAsm == sourceAsmName ? null : cached.TargetAsm;
         }
 
-        // Diagnostic: log ContentTypeReader resolution
-        if (typeFullName.Contains("ContentTypeReader"))
+        // Diagnostic: log ContentTypeReader + TextInput resolution
+        if (typeFullName.Contains("ContentTypeReader") || typeFullName.Contains("TextInputEventArgs"))
         {
             Console.WriteLine($"[AssemblyRefRewriter] ResolveForwardedScope: source={sourceAsmName}, type={typeFullName}");
         }
@@ -943,9 +1010,19 @@ public static class SdvAssemblyRefRewriter
 
         while (visited.Add(currentAsm))
         {
+            // Diagnostic for TextInputEventArgs
+            if (typeFullName.Contains("TextInputEventArgs"))
+            {
+                Console.WriteLine($"[AssemblyRefRewriter]   ResolveForwardedScope loop: currentAsm={currentAsm}");
+            }
+
             // Use the RUNTIME assembly (has type-forwards), not the ref assembly
             // (which has direct type defs — Cecil's resolver uses those).
             var asmDef = LoadRuntimeAssembly(currentAsm);
+            if (typeFullName.Contains("TextInputEventArgs"))
+            {
+                Console.WriteLine($"[AssemblyRefRewriter]   LoadRuntimeAssembly({currentAsm}) = {(asmDef == null ? "NULL" : asmDef.FullName)}");
+            }
             if (asmDef == null)
             {
                 // No runtime assembly for this source. If this is the INITIAL
@@ -961,6 +1038,10 @@ public static class SdvAssemblyRefRewriter
 
             // Check if the type is DEFINED DIRECTLY in this assembly (Types).
             var directMatch = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == typeFullName);
+            if (typeFullName.Contains("TextInputEventArgs"))
+            {
+                Console.WriteLine($"[AssemblyRefRewriter]   directMatch = {(directMatch == null ? "NULL" : directMatch.FullName)}");
+            }
             if (directMatch != null)
             {
                 result = currentAsm;
@@ -969,6 +1050,14 @@ public static class SdvAssemblyRefRewriter
 
             // Check if the type is FORWARDED (ExportedTypes).
             var exported = asmDef.MainModule.ExportedTypes.FirstOrDefault(et => et.FullName == typeFullName);
+            if (typeFullName.Contains("TextInputEventArgs"))
+            {
+                Console.WriteLine($"[AssemblyRefRewriter]   exported = {(exported == null ? "NULL" : exported.FullName + " -> " + exported.Scope?.Name)}");
+                Console.WriteLine($"[AssemblyRefRewriter]   ExportedTypes count = {asmDef.MainModule.ExportedTypes.Count}");
+                // List first 5 exported types for diagnostic
+                foreach (var et2 in asmDef.MainModule.ExportedTypes.Take(5))
+                    Console.WriteLine($"[AssemblyRefRewriter]     - {et2.FullName} -> {et2.Scope?.Name}");
+            }
             if (exported == null)
             {
                 // For open generic types (e.g., ContentTypeReader`1), the facade's
@@ -1038,6 +1127,9 @@ public static class SdvAssemblyRefRewriter
     /// Returns the assembly simple name if found, null otherwise.
     /// Used as a fallback for MonoGame.Framework types that aren't in the facade's
     /// ExportedTypes (e.g., open generics that the generator script skipped).
+    /// Also searches by type NAME (ignoring namespace) to handle cases where
+    /// KNI moved a type to a different namespace (e.g., TextInputEventArgs
+    /// moved from Microsoft.Xna.Framework to Microsoft.Xna.Framework.Input).
     /// </summary>
     private static string? SearchKniAssembliesForType(string typeFullName)
     {
@@ -1052,14 +1144,27 @@ public static class SdvAssemblyRefRewriter
             "Xna.Framework.Media",
             "Xna.Framework.XR",
         };
+        // Extract the type name (without namespace) for fuzzy matching
+        var typeName = typeFullName;
+        var lastDot = typeFullName.LastIndexOf('.');
+        if (lastDot >= 0)
+            typeName = typeFullName.Substring(lastDot + 1);
+
         foreach (var name in kniAssemblies)
         {
             var asmDef = LoadRuntimeAssembly(name);
             if (asmDef == null) continue;
-            // Check direct types
+            // Check direct types — exact full name match first
             var direct = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == typeFullName);
             if (direct != null)
                 return name;
+            // Fuzzy match by type name only (handles namespace changes between MG and KNI)
+            var fuzzy = asmDef.MainModule.Types.FirstOrDefault(t => t.Name == typeName);
+            if (fuzzy != null)
+            {
+                Console.WriteLine($"[AssemblyRefRewriter] Fuzzy match: {typeFullName} → {fuzzy.FullName} in {name}");
+                return name;
+            }
         }
         return null;
     }
