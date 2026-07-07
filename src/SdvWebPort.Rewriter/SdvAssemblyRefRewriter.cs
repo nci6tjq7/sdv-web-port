@@ -166,7 +166,8 @@ public static class SdvAssemblyRefRewriter
         Console.WriteLine($"[AssemblyRefRewriter] Loading assembly ({assemblyBytes.Length:N0} bytes)");
         using var inputMs = new MemoryStream(assemblyBytes);
         var resolver = new RefAssemblyResolver();
-        var parameters = new ReaderParameters { AssemblyResolver = resolver, InMemory = true };
+        var metadataResolver = new CustomMetadataResolver(resolver);
+        var parameters = new ReaderParameters { AssemblyResolver = resolver, InMemory = true, MetadataResolver = metadataResolver };
         using var asmDef = AssemblyDefinition.ReadAssembly(inputMs, parameters);
 
         // Pass 1: rewrite AssemblyRef versions (v6→v8, MG v3.8.0.1641→v3.8.5.0)
