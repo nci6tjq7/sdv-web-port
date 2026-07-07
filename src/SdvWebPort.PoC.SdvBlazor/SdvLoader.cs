@@ -143,6 +143,22 @@ public static class SdvLoader
                     }
                 }
 
+                // Run GraphicsPatcher on Xna.Framework.Graphics to fix
+                // IsProfileSupported (OffscreenCanvas error in Blazor.GL)
+                if (name == "Xna.Framework.Graphics")
+                {
+                    try
+                    {
+                        bytes = SdvWebPort.Rewriter.KniGraphicsPatcher.Patch(bytes);
+                        Console.WriteLine($"[SdvLoader]   {name}: Graphics-patched ({bytes.Length:N0} bytes)");
+                        _preloadedStubs[name] = bytes;
+                    }
+                    catch (Exception rex)
+                    {
+                        Console.WriteLine($"[SdvLoader]   {name}: Graphics patch failed: {rex.Message}");
+                    }
+                }
+
                 var existing2 = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == name);
                 if (existing2 != null)

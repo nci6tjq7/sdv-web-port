@@ -329,6 +329,9 @@ public static class SdvAssemblyRefRewriter
         // is larger than 2048, causing NotSupportedException. HiDef allows 8192.
         PatchGraphicsProfileToHiDef(asmDef);
 
+        // Note: IsProfileSupported is patched in KNI's Xna.Framework.Graphics.dll
+        // via KniGraphicsPatcher (run in SdvLoader.PreloadKniAssembliesAsync).
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
