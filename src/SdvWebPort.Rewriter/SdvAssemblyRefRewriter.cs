@@ -248,12 +248,13 @@ public static class SdvAssemblyRefRewriter
         Console.WriteLine($"[AssemblyRefRewriter] Total typerefs to scan: {typeRefsToRewrite.Count}");
 
         // Pass 2a: Force-rewrite ALL typerefs with MonoGame.Framework scope.
-        // This catches typerefs that CollectTypeRefs missed (e.g., GameTime used
-        // in method body callvirt operands). We walk module.GetTypeReferences()
-        // directly and rewrite any with MonoGame.Framework scope.
+        // Instead of modifying tr.Scope (which Cecil may not persist), we create
+        // NEW TypeReference objects and replace all usages in method bodies.
         int forceRewrites = 0;
         var forceModule = asmDef.MainModule;
-        foreach (var tr in forceModule.GetTypeReferences())
+        var mgTypeRefReplacements = new Dictionary<TypeReference, TypeReference>();
+
+        foreach (var tr in forceModule.GetTypeReferences().ToList())
         {
             if (tr.Scope is not AssemblyNameReference trScope) continue;
             if (trScope.Name != "MonoGame.Framework") continue;
@@ -272,29 +273,69 @@ public static class SdvAssemblyRefRewriter
                 forceModule.AssemblyReferences.Add(targetRef);
             }
 
-            var oldScope = tr.Scope?.Name;
-            tr.Scope = targetRef;
-
+            var ns = tr.Namespace;
+            var name = tr.Name;
             if (target.StartsWith("Xna.Framework"))
             {
                 var targetAsm = LoadRuntimeAssembly(target);
                 if (targetAsm != null)
                 {
-                    var correctType = targetAsm.MainModule.Types.FirstOrDefault(t => t.Name == tr.Name);
-                    if (correctType != null && correctType.Namespace != tr.Namespace)
-                        tr.Namespace = correctType.Namespace;
+                    var correctType = targetAsm.MainModule.Types.FirstOrDefault(t => t.Name == name);
+                    if (correctType != null && correctType.Namespace != ns)
+                        ns = correctType.Namespace;
                 }
             }
+            var newTr = new TypeReference(ns, name, forceModule, targetRef);
+            // Copy IsValueType from original (important for structs like MouseState)
+            newTr.IsValueType = tr.IsValueType;
+            mgTypeRefReplacements[tr] = newTr;
 
             forceRewrites++;
             if (forceRewrites <= 10)
-                Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite TypeRef {tr.FullName}: {oldScope} → {target}");
+                Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite TypeRef {tr.FullName}: MonoGame.Framework -> {target}");
         }
         Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite MonoGame.Framework typerefs: {forceRewrites}");
 
-        // Diagnostic: verify scope changes after force-rewrite
-        var verifyMs2 = forceModule.GetTypeReferences().FirstOrDefault(tr => tr.Name == "MouseState");
-        Console.WriteLine($"[AssemblyRefRewriter] VERIFY MouseState scope after force-rewrite: {verifyMs2?.Scope?.Name}");
+        // Replace all usages of old typerefs with new ones in method bodies
+        int replacementCount = 0;
+        foreach (var type in forceModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                for (int vi = 0; vi < method.Body.Variables.Count; vi++)
+                {
+                    var vt = method.Body.Variables[vi].VariableType;
+                    if (mgTypeRefReplacements.TryGetValue(vt, out var newVt))
+                    {
+                        method.Body.Variables[vi].VariableType = newVt;
+                        replacementCount++;
+                    }
+                }
+                foreach (var ins in method.Body.Instructions)
+                {
+                    if (ins.Operand is MethodReference mr && mr.DeclaringType != null && !(mr is Mono.Cecil.MethodSpecification)
+                        && mgTypeRefReplacements.TryGetValue(mr.DeclaringType, out var newDt))
+                    {
+                        mr.DeclaringType = newDt;
+                        replacementCount++;
+                    }
+                    if (ins.Operand is FieldReference fr && fr.DeclaringType != null
+                        && mgTypeRefReplacements.TryGetValue(fr.DeclaringType, out var newFdt))
+                    {
+                        fr.DeclaringType = newFdt;
+                        replacementCount++;
+                    }
+                    if (ins.Operand is TypeReference tr2
+                        && mgTypeRefReplacements.TryGetValue(tr2, out var newTr2))
+                    {
+                        ins.Operand = newTr2;
+                        replacementCount++;
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"[AssemblyRefRewriter] TypeReference replacements in method bodies: {replacementCount}");
 
         // Pass 2a2: Force-rewrite method body instruction operands' DeclaringType scopes.
         // Even though we rewrote typerefs in the typeref table (Pass 2a), method body
@@ -308,7 +349,7 @@ public static class SdvAssemblyRefRewriter
                 if (method.Body == null) continue;
                 foreach (var ins in method.Body.Instructions)
                 {
-                    if (ins.Operand is MethodReference mr && mr.DeclaringType != null)
+                    if (ins.Operand is MethodReference mr && mr.DeclaringType != null && !(mr is Mono.Cecil.MethodSpecification))
                     {
                         var dt = mr.DeclaringType;
                         if (dt is TypeSpecification) continue; // skip specs
@@ -492,8 +533,8 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
-        // Pass 5e: patch _update to nop — Update path causes transform.c:1146 crash.
-        // Re-enabled: local var scope rewrite didn't fix it (scope changes don't persist in PE).
+        // Pass 5e: _update=nop — transform.c:1146 crash persists even with
+        // TypeReference replacement. Cecil doesn't persist scope changes in PE.
         PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
