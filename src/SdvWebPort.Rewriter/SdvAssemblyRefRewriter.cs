@@ -608,6 +608,10 @@ public static class SdvAssemblyRefRewriter
         // transform.c:1146 Mono assertion. Also set bisect=-1 (no truncation).
         PatchUpdateRemoveConstrained(asmDef);
 
+        // Pass 5f: patch DeepClonerExtensions..cctor to nop.
+        // DeepCloner's PermissionCheck() iterates types and encounters null types in WASM.
+        PatchMethodToNop(asmDef, "Force.DeepCloner.DeepClonerExtensions", ".cctor");
+
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
         // Func`6..`17 from System.Private.CoreLib. We define equivalent delegates
@@ -933,9 +937,9 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
     {
-        // Replace constrained. + callvirt with box + callvirt.
-        // Mono WASM interpreter crashes on constrained. prefix (transform.c:1146).
-        // By boxing the value type first, we use normal virtual dispatch instead.
+        // Replace constrained. with nop (not box — box causes issues with some value types).
+        // The callvirt after constrained. will use normal virtual dispatch instead.
+        // This is not semantically correct for all cases but works for our use case.
         int patchedCount = 0;
         foreach (var type in asmDef.MainModule.GetTypes())
         {
@@ -947,19 +951,15 @@ public static class SdvAssemblyRefRewriter
                 {
                     if (instrs[i].OpCode == OpCodes.Constrained)
                     {
-                        var constrainedType = instrs[i].Operand as TypeReference;
-                        // Replace constrained. with box <type>
-                        instrs[i].OpCode = OpCodes.Box;
-                        // Operand stays the same (the type reference)
+                        instrs[i].OpCode = OpCodes.Nop;
+                        instrs[i].Operand = null;
                         patchedCount++;
-                        if (patchedCount <= 5)
-                            Console.WriteLine($"[AssemblyRefRewriter] constrained. → box in {type.FullName}::{method.Name} ({constrainedType?.FullName})");
                     }
                 }
             }
         }
         if (patchedCount > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box in all methods");
+            Console.WriteLine($"[AssemblyRefRewriter] Nop'd {patchedCount} constrained. prefixes in all methods");
     }
 
     /// <summary>

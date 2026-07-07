@@ -296,7 +296,7 @@ public class ConcurrentDictionary<TKey, TValue> : Dictionary<TKey, TValue>, Syst
         set { lock (_lock) base[key] = value; }
     }
     public bool TryAdd(TKey key, TValue value) { lock (_lock) { if (ContainsKey(key)) return false; base[key] = value; return true; } }
-    public bool TryGetValue(TKey key, out TValue value) { lock (_lock) { if (ContainsKey(key)) { value = base[key]; return true; } value = default!; return false; } }
+    public bool TryGetValue(TKey key, out TValue value) { if (key == null) { value = default!; return false; } lock (_lock) { if (ContainsKey(key)) { value = base[key]; return true; } value = default!; return false; } }
     public bool TryRemove(TKey key, out TValue value) { lock (_lock) { if (ContainsKey(key)) { value = base[key]; base.Remove(key); return true; } value = default!; return false; } }
     public TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory) { lock (_lock) { if (ContainsKey(key)) return base[key]; var v = valueFactory(key); base[key] = v; return v; } }
     public bool TryUpdate(TKey key, TValue newValue, TValue comparisonValue)
