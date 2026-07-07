@@ -604,18 +604,20 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
-        // Pass 5e: _update — patch to remove constrained. prefix that causes
-        // transform.c:1146 Mono assertion. Also set bisect=-1 (no truncation).
+        // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 5f: patch DeepClonerExtensions..cctor to nop.
         PatchMethodToNop(asmDef, "Force.DeepCloner.DeepClonerExtensions", ".cctor");
 
-        // Pass 5g: patch SetInstanceDefaults to nop — it calls DeepCloner which
-        // has uninitialized static fields (from cctor nop). SetInstanceDefaults
-        // clones default instance settings; skipping it means defaults aren't set
-        // but the game can still run.
+        // Pass 5g: patch SetInstanceDefaults to nop (calls DeepCloner).
         PatchMethodToNop(asmDef, "StardewValley.GameRunner", "SetInstanceDefaults");
+
+        // Pass 5h: bisect _update — box causes transform.c in Tick() path.
+        // Keep first 10 instructions + ret to keep Tick() stable.
+        // Full _update crashes because box on some value types also triggers transform.c.
+        BisectUpdateCount = 10;
+        PatchUpdateBisect(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -942,9 +944,9 @@ public static class SdvAssemblyRefRewriter
     /// </summary>
     private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
     {
-        // Replace constrained.+callvirt with box+callvirt for reference types,
-        // and constrained.+callvirt → call (direct) for value types.
-        // Mono WASM crashes on constrained. prefix (transform.c:1146).
+        // Replace constrained. with box — this fixes Run() path (transform.c:1146 gone).
+        // Tick() path still crashes because box on some value types also triggers transform.c.
+        // We use bisect=10 for _update to keep Tick() working.
         int patchedCount = 0;
         foreach (var type in asmDef.MainModule.GetTypes())
         {
@@ -957,26 +959,14 @@ public static class SdvAssemblyRefRewriter
                     if (instrs[i].OpCode == OpCodes.Constrained)
                     {
                         var constrainedType = instrs[i].Operand as TypeReference;
-                        // Check if next instruction is callvirt
-                        if (i + 1 < instrs.Count && instrs[i + 1].OpCode == OpCodes.Callvirt)
-                        {
-                            // Replace constrained. with box, keep callvirt
-                            instrs[i].OpCode = OpCodes.Box;
-                            patchedCount++;
-                        }
-                        else
-                        {
-                            // Just nop the constrained. prefix
-                            instrs[i].OpCode = OpCodes.Nop;
-                            instrs[i].Operand = null;
-                            patchedCount++;
-                        }
+                        instrs[i].OpCode = OpCodes.Box;
+                        patchedCount++;
                     }
                 }
             }
         }
         if (patchedCount > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Patched {patchedCount} constrained. prefixes (→ box before callvirt)");
+            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box");
     }
 
     /// <summary>
