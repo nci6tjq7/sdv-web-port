@@ -346,20 +346,30 @@ public partial class Home : ComponentBase
                 var lcmType = sdvAsm.GetType("StardewValley.LocalizedContentManager");
                 if (lcmType != null)
                 {
-                    // LocalizedContentManager(IServiceProvider, string rootDirectory)
-                    var ctor = lcmType.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 2);
+                    // Use 3-arg constructor: (IServiceProvider, string, CultureInfo)
+                    // The 2-arg constructor calls Thread.get_CurrentUICulture() which fails in WASM
+                    var ctor = lcmType.GetConstructor(new[] { typeof(System.IServiceProvider), typeof(string), typeof(System.Globalization.CultureInfo) });
                     if (ctor != null)
                     {
-                        // Create a minimal IServiceProvider
-                        var spType = typeof(System.IServiceProvider);
-                        var lcm = ctor.Invoke(new object?[] { null, "Content" });
+                        // Create a minimal IServiceProvider that returns null for all services
+                        var sp = new SimpleServiceProvider();
+                        var lcm = ctor.Invoke(new object?[] { sp, "Content", System.Globalization.CultureInfo.InvariantCulture });
                         contentField.SetValue(null, lcm);
-                        Console.WriteLine("[+] Game1.content set to new LocalizedContentManager(null, Content)");
+                        Console.WriteLine("[+] Game1.content set to new LocalizedContentManager(sp, Content, InvariantCulture)");
                     }
                 }
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.content: " + ex.Message); }
         }
+    }
+
+    /// <summary>
+    /// Minimal IServiceProvider that returns null for all service requests.
+    /// Used to construct LocalizedContentManager.
+    /// </summary>
+    private class SimpleServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     /// <summary>
