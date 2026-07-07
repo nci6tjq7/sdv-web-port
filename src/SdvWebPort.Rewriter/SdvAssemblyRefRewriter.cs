@@ -886,7 +886,7 @@ public static class SdvAssemblyRefRewriter
     /// Set BisectUpdateCount to control how many instructions to keep.
     /// 0 = full nop, -1 = no patch, N > 0 = keep first N + ret.
     /// </summary>
-    public static int BisectUpdateCount { get; set; } = 100; // Start with first 50
+    public static int BisectUpdateCount { get; set; } = 10; // Start with first 50
 
     private static void PatchUpdateBisect(AssemblyDefinition asmDef)
     {
