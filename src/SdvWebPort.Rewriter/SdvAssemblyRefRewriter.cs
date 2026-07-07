@@ -604,8 +604,10 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
-        // Pass 5e: _update=nop — DISABLED to test PE byte patching.
-        // PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
+        // Pass 5e: _update — patch to keep only first N instructions (bisect).
+        // transform.c:1146 crash is in _update method body. We binary search
+        // by keeping only the first N instructions + ret.
+        PatchUpdateBisect(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -877,6 +879,49 @@ public static class SdvAssemblyRefRewriter
         method.Body.ExceptionHandlers.Clear();
         instrs.Add(Instruction.Create(OpCodes.Ret));
         Console.WriteLine($"[AssemblyRefRewriter] Patched {typeFullName}::{methodName} → ret (no-op)");
+    }
+
+    /// <summary>
+    /// Patch _update to keep only the first N instructions (bisect mode).
+    /// Set BisectUpdateCount to control how many instructions to keep.
+    /// 0 = full nop, -1 = no patch, N > 0 = keep first N + ret.
+    /// </summary>
+    public static int BisectUpdateCount { get; set; } = 100; // Start with first 50
+
+    private static void PatchUpdateBisect(AssemblyDefinition asmDef)
+    {
+        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1 == null) return;
+        var method = game1.Methods.FirstOrDefault(m => m.Name == "_update");
+        if (method == null) return;
+
+        if (BisectUpdateCount < 0) return; // No patch
+
+        var instrs = method.Body.Instructions;
+        var total = instrs.Count;
+        var keep = Math.Min(BisectUpdateCount, total);
+
+        if (keep == 0)
+        {
+            instrs.Clear();
+            method.Body.ExceptionHandlers.Clear();
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+            Console.WriteLine($"[AssemblyRefRewriter] _update → full nop (0/{total} instructions)");
+            return;
+        }
+
+        // Keep first 'keep' instructions, remove the rest, add ret
+        // But we need to fix up branches that target removed instructions
+        while (instrs.Count > keep)
+            instrs.RemoveAt(keep);
+
+        // Remove exception handlers that reference removed instructions
+        method.Body.ExceptionHandlers.Clear();
+
+        // Add ret at the end
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+
+        Console.WriteLine($"[AssemblyRefRewriter] _update → bisect: kept first {keep}/{total} instructions + ret");
     }
 
     /// <summary>
