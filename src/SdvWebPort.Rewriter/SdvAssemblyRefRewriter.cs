@@ -246,6 +246,51 @@ public static class SdvAssemblyRefRewriter
         // per unique (scope, fullname) pair. Dedup would miss duplicate typerefs
         // that point at the same type but are separate objects.)
         Console.WriteLine($"[AssemblyRefRewriter] Total typerefs to scan: {typeRefsToRewrite.Count}");
+
+        // Pass 2a: Force-rewrite ALL typerefs with MonoGame.Framework scope.
+        // This catches typerefs that CollectTypeRefs missed (e.g., GameTime used
+        // in method body callvirt operands). We walk module.GetTypeReferences()
+        // directly and rewrite any with MonoGame.Framework scope.
+        int forceRewrites = 0;
+        var forceModule = asmDef.MainModule;
+        foreach (var tr in forceModule.GetTypeReferences())
+        {
+            if (tr.Scope is not AssemblyNameReference trScope) continue;
+            if (trScope.Name != "MonoGame.Framework") continue;
+            if (tr is TypeSpecification) continue;
+
+            var target = ResolveForwardedScope("MonoGame.Framework", tr.FullName, resolver);
+            if (target == null || target == "MonoGame.Framework") continue;
+
+            var targetRef = forceModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+            if (targetRef == null)
+            {
+                targetRef = new AssemblyNameReference(target, new Version(4, 2, 9001, 0))
+                {
+                    PublicKeyToken = null!,
+                };
+                forceModule.AssemblyReferences.Add(targetRef);
+            }
+
+            var oldScope = tr.Scope?.Name;
+            tr.Scope = targetRef;
+
+            if (target.StartsWith("Xna.Framework"))
+            {
+                var targetAsm = LoadRuntimeAssembly(target);
+                if (targetAsm != null)
+                {
+                    var correctType = targetAsm.MainModule.Types.FirstOrDefault(t => t.Name == tr.Name);
+                    if (correctType != null && correctType.Namespace != tr.Namespace)
+                        tr.Namespace = correctType.Namespace;
+                }
+            }
+
+            forceRewrites++;
+            if (forceRewrites <= 10)
+                Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite TypeRef {tr.FullName}: {oldScope} → {target}");
+        }
+        Console.WriteLine($"[AssemblyRefRewriter] Force-rewrite MonoGame.Framework typerefs: {forceRewrites}");
         int errors = 0;
         foreach (var tr in typeRefsToRewrite)
         {
