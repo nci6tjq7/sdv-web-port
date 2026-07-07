@@ -349,6 +349,37 @@ public static class SdvAssemblyRefRewriter
             }
         }
         Console.WriteLine($"[AssemblyRefRewriter] Instruction operand scope rewrites: {instrRewrites}");
+
+        // Pass 2a3: Force-rewrite local variable types' scopes.
+        // Local variables in method bodies have their own TypeReference objects.
+        // If they have MonoGame.Framework scope, Mono JIT can't resolve them.
+        int localVarRewrites = 0;
+        foreach (var type in forceModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                foreach (var var in method.Body.Variables)
+                {
+                    var vt = var.VariableType;
+                    if (vt is TypeSpecification) continue; // skip specs
+                    if (vt.Scope is AssemblyNameReference vtScope && vtScope.Name == "MonoGame.Framework")
+                    {
+                        var target = ResolveForwardedScope("MonoGame.Framework", vt.FullName, resolver);
+                        if (target != null && target != "MonoGame.Framework")
+                        {
+                            var targetRef = forceModule.AssemblyReferences.FirstOrDefault(a => a.Name == target);
+                            if (targetRef != null)
+                            {
+                                vt.Scope = targetRef;
+                                localVarRewrites++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"[AssemblyRefRewriter] Local variable scope rewrites: {localVarRewrites}");
         int errors = 0;
         foreach (var tr in typeRefsToRewrite)
         {
@@ -462,8 +493,7 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
         // Pass 5e: patch _update to nop — Update path causes transform.c:1146 crash.
-        // With _update=nop, Tick() succeeds and Draw() renders to canvas.
-        // We keep this until the specific crashing instruction is found.
+        // Re-enabled: local var scope rewrite didn't fix it (scope changes don't persist in PE).
         PatchMethodToNop(asmDef, "StardewValley.Game1", "_update");
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
