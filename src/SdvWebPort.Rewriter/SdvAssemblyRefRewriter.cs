@@ -449,6 +449,14 @@ public static class SdvAssemblyRefRewriter
         // Pass 5c: patch Game1.updateMusic to no-op (audio not initialized in WASM).
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateMusic");
 
+        // Pass 5d: patch more methods that access uninitialized state or cause
+        // Mono interpreter transform.c:1146 assertion.
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateClouds");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateRain");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateWeather");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
+
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
         // Func`6..`17 from System.Private.CoreLib. We define equivalent delegates

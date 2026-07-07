@@ -18,6 +18,7 @@ public partial class Home : ComponentBase
     private Game? _game;
     private bool _loadAttempted;
     private int _tickErrorCount;
+    private int _tickSuccessCount;
 
     [Inject]
     public IWebAssemblyHostEnvironment HostEnv { get; set; } = null!;
@@ -78,6 +79,11 @@ public partial class Home : ComponentBase
             try
             {
                 _game.Tick();
+                if (_tickErrorCount == 0 && _tickSuccessCount < 5)
+                {
+                    Console.WriteLine("[Tick] Tick() succeeded (" + _tickSuccessCount + ")");
+                    _tickSuccessCount++;
+                }
             }
             catch (System.TypeLoadException ex)
             {
