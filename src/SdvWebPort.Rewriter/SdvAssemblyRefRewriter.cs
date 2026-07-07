@@ -604,10 +604,9 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
 
-        // Pass 5e: _update — patch to keep only first N instructions (bisect).
-        // transform.c:1146 crash is in _update method body. We binary search
-        // by keeping only the first N instructions + ret.
-        PatchUpdateBisect(asmDef);
+        // Pass 5e: _update — patch to remove constrained. prefix that causes
+        // transform.c:1146 Mono assertion. Also set bisect=-1 (no truncation).
+        PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -922,6 +921,45 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] _update → bisect: kept first {keep}/{total} instructions + ret");
+    }
+
+    /// <summary>
+    /// Remove all constrained. prefix instructions from _update method body.
+    /// The constrained. prefix + callvirt on value types causes transform.c:1146
+    /// Mono WASM interpreter assertion. We nop the constrained. instruction
+    /// and leave the callvirt as-is (it will use virtual dispatch instead of
+    /// constrained dispatch, which is fine for our use case).
+    /// Also remove volatile. prefixes that may cause issues.
+    /// </summary>
+    private static void PatchUpdateRemoveConstrained(AssemblyDefinition asmDef)
+    {
+        // Replace constrained. + callvirt with box + callvirt.
+        // Mono WASM interpreter crashes on constrained. prefix (transform.c:1146).
+        // By boxing the value type first, we use normal virtual dispatch instead.
+        int patchedCount = 0;
+        foreach (var type in asmDef.MainModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    if (instrs[i].OpCode == OpCodes.Constrained)
+                    {
+                        var constrainedType = instrs[i].Operand as TypeReference;
+                        // Replace constrained. with box <type>
+                        instrs[i].OpCode = OpCodes.Box;
+                        // Operand stays the same (the type reference)
+                        patchedCount++;
+                        if (patchedCount <= 5)
+                            Console.WriteLine($"[AssemblyRefRewriter] constrained. → box in {type.FullName}::{method.Name} ({constrainedType?.FullName})");
+                    }
+                }
+            }
+        }
+        if (patchedCount > 0)
+            Console.WriteLine($"[AssemblyRefRewriter] Replaced {patchedCount} constrained. → box in all methods");
     }
 
     /// <summary>
