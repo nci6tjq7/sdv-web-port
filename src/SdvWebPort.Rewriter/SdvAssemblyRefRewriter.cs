@@ -661,10 +661,9 @@ public static class SdvAssemblyRefRewriter
         instrs.Clear();
         method.Body.ExceptionHandlers.Clear();
 
-        // New body: just call ldarg.1 (the ThreadStart delegate).Invoke()
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));  // load the ThreadStart delegate
-        instrs.Add(Instruction.Create(OpCodes.Callvirt, method.Module.ImportReference(
-            typeof(System.Threading.ThreadStart).GetMethod("Invoke"))));
+        // New body: just return (skip the init task entirely)
+        // We can't call ThreadStart.Invoke because System.Threading.Thread may be
+        // stripped by the trimmer, causing TypeLoadException.
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Game1.DoThreadedInitTask → synchronous Invoke (no threading)");
