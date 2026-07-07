@@ -53,6 +53,22 @@ public static class SdvFileShim
         return RequireVfs().OpenRead(path);
     }
 
+    /// <summary>
+    /// Equivalent to Microsoft.Xna.Framework.TitleContainer.OpenStream(string name).
+    /// KNI's ContentManager.OpenStream calls this. We redirect to VFS.
+    /// The 'name' parameter is relative to Content root (e.g., "Data\BigCraftables").
+    /// We prepend "Content/" to form the full VFS path.
+    /// </summary>
+    public static Stream TitleContainerOpenStream(string name)
+    {
+        // Normalize: Content/Data/BigCraftables.xnb
+        var path = "Content/" + name.Replace('\\', '/');
+        if (!path.EndsWith(".xnb"))
+            path += ".xnb";
+        Console.WriteLine($"[SdvFileShim] TitleContainerOpenStream: {name} → {path}");
+        return RequireVfs().OpenRead(path);
+    }
+
     /// <summary>Equivalent to System.IO.File.Exists(string path)</summary>
     public static bool Exists(string path)
     {

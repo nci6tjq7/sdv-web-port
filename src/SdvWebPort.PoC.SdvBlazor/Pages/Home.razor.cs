@@ -84,11 +84,10 @@ public partial class Home : ComponentBase
     /// </summary>
     private async Task<Game?> LoadRealSdvAsync()
     {
-        // 1. Set up the VFS with a test file (simulates user's uploaded GOG files).
-        var vfs = new SdvWebPort.Vfs.InMemoryVfs();
-        await vfs.WriteFileAsync("Content/test.txt", System.Text.Encoding.UTF8.GetBytes("Hello from VFS!"));
+        // 1. Set up the VFS — use HttpVfs to fetch Content from /deps/content/
+        var vfs = new SdvWebPort.Vfs.HttpVfs(_http!, HostEnv.BaseAddress);
         SdvWebPort.Vfs.SdvFileShim.SetVfs(vfs);
-        Console.WriteLine("[+] VFS set up with Content/test.txt");
+        Console.WriteLine("[+] VFS set up (HttpVfs → /deps/content/)");
 
         // 2. Fetch SDV.
         const string sdvUrl = "Stardew Valley.dll";

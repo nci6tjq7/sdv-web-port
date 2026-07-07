@@ -313,6 +313,11 @@ public static class SdvAssemblyRefRewriter
         // WASM doesn't support System.Threading.Thread.
         PatchDoThreadedInitTask(asmDef);
 
+        // Pass 12: patch LocalizedContentManager.GetContentRoot to return "Content".
+        // SDV uses reflection to get TitleContainer.Location, which KNI doesn't have.
+        // We replace the entire method body with: return "Content";
+        PatchGetContentRoot(asmDef);
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
@@ -669,6 +674,50 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] Patched Game1.DoThreadedInitTask → synchronous Invoke (no threading)");
+    }
+
+    /// <summary>
+    /// Patch LocalizedContentManager.GetContentRoot to return "Content".
+    /// SDV uses reflection to get TitleContainer.Location, which KNI doesn't have.
+    /// We replace the entire method body with a simple return of "Content".
+    /// </summary>
+    private static void PatchGetContentRoot(AssemblyDefinition asmDef)
+    {
+        var lcm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.LocalizedContentManager");
+        if (lcm == null) return;
+        var method = lcm.Methods.FirstOrDefault(m => m.Name == "GetContentRoot");
+        if (method == null) return;
+
+        var instrs = method.Body.Instructions;
+        instrs.Clear();
+        method.Body.ExceptionHandlers.Clear();
+
+        // New body: return "Content"
+        // Also set _CachedContentRoot field so subsequent calls don't re-enter
+        var cachedField = lcm.Fields.FirstOrDefault(f => f.Name == "_CachedContentRoot");
+        if (cachedField != null)
+        {
+            // ldarg.0 (this)
+            // ldstr "Content"
+            // stfld _CachedContentRoot
+            // ldarg.0
+            // ldfld _CachedContentRoot
+            // ret
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "Content"));
+            instrs.Add(Instruction.Create(OpCodes.Stfld, cachedField));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, cachedField));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+        }
+        else
+        {
+            // Just return "Content"
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "Content"));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] Patched LocalizedContentManager.GetContentRoot → return \"Content\"");
     }
 
     /// <summary>

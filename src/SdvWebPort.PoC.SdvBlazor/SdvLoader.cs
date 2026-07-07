@@ -125,6 +125,22 @@ public static class SdvLoader
                 }
                 var url = new Uri(new Uri(baseAddress), $"deps/kni/{name}.dll");
                 var bytes = await http.GetByteArrayAsync(url);
+
+                // Run FileSystem rewriter on Xna.Framework.Content to redirect
+                // TitleContainer.OpenStream → SdvFileShim.TitleContainerOpenStream
+                if (name == "Xna.Framework.Content")
+                {
+                    try
+                    {
+                        bytes = SdvWebPort.Rewriter.SdvFileSystemRewriter.Rewrite(bytes);
+                        Console.WriteLine($"[SdvLoader]   {name}: FS-rewritten ({bytes.Length:N0} bytes)");
+                    }
+                    catch (Exception rex)
+                    {
+                        Console.WriteLine($"[SdvLoader]   {name}: FS rewrite failed: {rex.Message}");
+                    }
+                }
+
                 var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(bytes));
                 loaded++;
                 Console.WriteLine($"[SdvLoader]   {name}: loaded {bytes.Length:N0} bytes (untrimmed)");

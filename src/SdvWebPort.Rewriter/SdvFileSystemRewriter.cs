@@ -47,6 +47,8 @@ public static class SdvFileSystemRewriter
         { ("System.IO.Directory", "GetFiles", 1),   "GetFiles" },
         { ("System.IO.Directory", "GetFiles", 2),   "GetFiles" },
         { ("System.IO.Directory", "Exists", 1),     "DirectoryExists" },
+        // Also rewrite TitleContainer.OpenStream (used by KNI ContentManager)
+        { ("Microsoft.Xna.Framework.TitleContainer", "OpenStream", 1), "TitleContainerOpenStream" },
     };
 
     /// <summary>
