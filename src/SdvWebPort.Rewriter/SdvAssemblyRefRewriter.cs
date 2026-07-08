@@ -612,8 +612,8 @@ public static class SdvAssemblyRefRewriter
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "resetPlayer");
         // Try nopping setGameMode (called by AfterLoadContent at end)
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
-        // setGameMode calls TitleMenu..ctor which crashes. Workaround: nop setGameMode.
-        // Game stays in loading mode but Tick() works and canvas renders.
+        // setGameMode calls TitleMenu..ctor which crashes (box T on generic param).
+        // Workaround: nop setGameMode. Game stays in loading mode but Tick() works.
         PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
@@ -1088,7 +1088,9 @@ public static class SdvAssemblyRefRewriter
 
                     // Handle generic parameters (T, TField, TSelf, TKey, etc.)
                     // box T on a generic parameter triggers transform.c:1146 when T is
-                    // instantiated as a value type at runtime. Replace with box Object.
+                    // instantiated as a value type at runtime. Use box Object (no-op for
+                    // ref types, boxes as Object for value types — may not fully work but
+                    // doesn't break Run() like pop+ldnull does).
                     if (tr is GenericParameter)
                     {
                         instrs[i].Operand = asmDef.MainModule.TypeSystem.Object;
