@@ -604,14 +604,11 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
         // TEMP: nop to bisect which _update callee crashes
-        // AfterLoadContent re-enabled but its callees nopped to find the culprit.
-        // PatchMethodToNop(asmDef, "StardewValley.Game1", "UpdateOther");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "OnDayStarted");
-        // AfterLoadContent re-enabled
         PatchMethodToNop(asmDef, "StardewValley.Game1", "UpdateChatBox");
-        // Nop AfterLoadContent's callees to bisect
-        // resetPlayer re-enabled (testing which callee crashes)
         PatchMethodToNop(asmDef, "StardewValley.Game1", "populateDebrisWeatherArray");
+        // Nop AfterLoadContent to see if Tick() crashes without it (crash might be elsewhere)
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "AfterLoadContent");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
