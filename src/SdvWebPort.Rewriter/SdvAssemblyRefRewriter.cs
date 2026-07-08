@@ -606,8 +606,14 @@ public static class SdvAssemblyRefRewriter
         // These were nopped during bisecting — re-enable now that box EnumType is patched.
         // (OnDayStarted, UpdateChatBox, populateDebrisWeatherArray, AfterLoadContent)
         // TEMP: nop AfterLoadContent + OnDayStarted to bisect
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "AfterLoadContent");
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "OnDayStarted");
+        // AfterLoadContent re-enabled (crashes Tick)
+        // OnDayStarted re-enabled (safe)
+        // Bisect: nop resetPlayer to see if crash is in Farmer..ctor call chain
+        // PatchMethodToNop(asmDef, "StardewValley.Game1", "resetPlayer");
+        // Try nopping setGameMode (called by AfterLoadContent at end)
+        // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
+        // setGameMode calls TitleMenu..ctor which crashes. Bisect TitleMenu callees:
+        // Re-enabled box T → box Object patch should fix the crash in TryParseEnum etc.
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -1081,10 +1087,7 @@ public static class SdvAssemblyRefRewriter
 
                     // Handle generic parameters (T, TField, TSelf, TKey, etc.)
                     // box T on a generic parameter triggers transform.c:1146 when T is
-                    // instantiated as a value type at runtime. Replace with box Object:
-                    //   - For value types: box Object produces a boxed object (same as box T)
-                    //   - For reference types: box Object is a no-op (same as box T)
-                    // This is semantically equivalent and avoids the WASM interpreter bug.
+                    // instantiated as a value type at runtime. Replace with box Object.
                     if (tr is GenericParameter)
                     {
                         instrs[i].Operand = asmDef.MainModule.TypeSystem.Object;
@@ -1222,6 +1225,7 @@ public static class SdvAssemblyRefRewriter
         int disposeRemovedCount = 0;
         int directCallCount = 0;
         int boxFallbackCount = 0;
+        int skipValueCount = 0;
         int boxUntouchedCount = 0;
 
         foreach (var type in asmDef.MainModule.GetTypes())
@@ -1315,9 +1319,33 @@ public static class SdvAssemblyRefRewriter
                     }
                     else
                     {
-                        // Value-preceded — `box T` works (kept the working Run() path behavior)
-                        instrs[i].OpCode = OpCodes.Box;
-                        boxUntouchedCount++;
+                        // Value-preceded — for generic parameters, box T triggers transform.c:1146.
+                        // Use skip+default for ToString/Equals/GetHashCode (common Object methods).
+                        // For other methods, keep box T (may crash, but rare).
+                        if (skipValueCount < 3)
+                            Console.WriteLine($"[AssemblyRefRewriter] value-preceded: type={constrainedType.GetType().Name} {constrainedType.FullName} isGeneric={constrainedType is GenericParameter}, method={interfaceMethod.Name} on {interfaceMethod.DeclaringType.Name}");
+                        if (constrainedType is GenericParameter
+                            && interfaceMethod.Parameters.Count == 0
+                            && (interfaceMethod.Name == "ToString" || interfaceMethod.Name == "Equals"
+                                || interfaceMethod.Name == "GetHashCode" || interfaceMethod.Name == "GetType"))
+                        {
+                            // pop the value, push default return
+                            instrs[i].OpCode = OpCodes.Pop;
+                            instrs[i].Operand = null;
+                            if (interfaceMethod.ReturnType.MetadataType == MetadataType.Int32
+                                || interfaceMethod.ReturnType.MetadataType == MetadataType.UInt32)
+                                callInstr.OpCode = OpCodes.Ldc_I4_0;
+                            else
+                                callInstr.OpCode = OpCodes.Ldnull;
+                            callInstr.Operand = null;
+                            skipValueCount++;
+                        }
+                        else
+                        {
+                            // Keep `box T` behavior (may crash for generic T, but we handle common cases above)
+                            instrs[i].OpCode = OpCodes.Box;
+                            boxUntouchedCount++;
+                        }
                     }
                 }
             }
@@ -1327,6 +1355,7 @@ public static class SdvAssemblyRefRewriter
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → nop + call T::M: {directCallCount} conversions");
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (untouched, value-preceded): {boxUntouchedCount} conversions");
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (fallback, &-preceded with addr fixup): {boxFallbackCount} conversions");
+        Console.WriteLine($"[AssemblyRefRewriter] constrained. → skip+default (value-preceded generic T): {skipValueCount} conversions");
     }
 
     /// <summary>
