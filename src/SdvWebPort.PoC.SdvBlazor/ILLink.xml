@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<linker>
+  <!-- Preserve types that real SDV needs but Blazor's trimmer would strip. -->
+
+  <!-- Action<T1,T2,T3,T4,T5,T6,T7> — used by StardewValley.Audio.SoundsHelper:LogSound -->
+  <assembly fullname="System.Private.CoreLib">
+    <type fullname="System.Action`7" preserve="all" />
+  </assembly>
+
+  <!-- System.Xml.* — used by SDV for save file serialization -->
+  <assembly fullname="System.Xml.ReaderWriter" preserve="all" />
+  <assembly fullname="System.Xml.XmlSerializer" preserve="all" />
+  <assembly fullname="System.Private.Xml" preserve="all" />
+
+  <!-- System.Text.RegularExpressions — used by SDV for text parsing -->
+  <assembly fullname="System.Text.RegularExpressions" preserve="all" />
+
+  <!-- System.Collections — used by SDV (Stack<T>, etc.) -->
+  <assembly fullname="System.Collections" preserve="all" />
+
+  <!-- System.Threading — used by SDV -->
+  <assembly fullname="System.Threading" preserve="all" />
+  <assembly fullname="System.Threading.Thread" preserve="all" />
+  <assembly fullname="System.Threading.Tasks" preserve="all" />
+
+  <!-- Other System.* SDV references -->
+  <assembly fullname="System.Linq" preserve="all" />
+  <assembly fullname="System.Linq.Expressions" preserve="all" />
+  <assembly fullname="System.Net.Primitives" preserve="all" />
+  <assembly fullname="System.Net.NameResolution" preserve="all" />
+  <assembly fullname="System.Console" preserve="all" />
+  <assembly fullname="System.Diagnostics.Process" preserve="all" />
+  <assembly fullname="System.ComponentModel" preserve="all" />
+  <assembly fullname="System.ObjectModel" preserve="all" />
+
+  <!-- SDV hashing dependencies -->
+  <assembly fullname="System.Data.HashFunction.xxHash" preserve="all" />
+  <assembly fullname="System.Data.HashFunction.Interfaces" preserve="all" />
+  <assembly fullname="System.Data.HashFunction.Core" preserve="all" />
+</linker>

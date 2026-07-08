@@ -613,9 +613,12 @@ public static class SdvAssemblyRefRewriter
         // Pass 5g: patch SetInstanceDefaults to nop (calls DeepCloner).
         PatchMethodToNop(asmDef, "StardewValley.GameRunner", "SetInstanceDefaults");
 
-        // Pass 5h: bisect _update — TEMPORARILY SET TO 100 to find where Tick() crashes.
-        // If Tick() succeeds with 100, increase. If it crashes, decrease.
-        BisectUpdateCount = 100;
+        // Pass 5h: bisect _update — DISABLED.
+        // The new PatchUpdateRemoveConstrained handles foreach Dispose() patterns
+        // (the only &-preceded constrained.+callvirt pattern that _update actually
+        // executes in normal Tick()). Other patterns keep the old `box T` behavior
+        // that worked in Run() path. With bisect disabled, _update runs in full.
+        BisectUpdateCount = -1;
         PatchUpdateBisect(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
@@ -921,34 +924,16 @@ public static class SdvAssemblyRefRewriter
 
         // Keep first 'keep' instructions, remove the rest, add ret
         // But we need to fix up branches that target removed instructions
-        var retInstr = Instruction.Create(OpCodes.Ret);
         while (instrs.Count > keep)
             instrs.RemoveAt(keep);
 
         // Remove exception handlers that reference removed instructions
         method.Body.ExceptionHandlers.Clear();
 
-        // Fix up branch targets that point to removed instructions → point to ret
-        foreach (var ins in instrs)
-        {
-            if (ins.Operand is Instruction target && target.Offset >= instrs[keep - 1].Offset + 1)
-            {
-                ins.Operand = retInstr;
-            }
-            else if (ins.Operand is Instruction[] targets)
-            {
-                for (int j = 0; j < targets.Length; j++)
-                {
-                    if (targets[j].Offset >= instrs[keep - 1].Offset + 1)
-                        targets[j] = retInstr;
-                }
-            }
-        }
-
         // Add ret at the end
-        instrs.Add(retInstr);
+        instrs.Add(Instruction.Create(OpCodes.Ret));
 
-        Console.WriteLine($"[AssemblyRefRewriter] _update → bisect: kept first {keep}/{total} instructions + ret (branch targets fixed)");
+        Console.WriteLine($"[AssemblyRefRewriter] _update → bisect: kept first {keep}/{total} instructions + ret");
     }
 
     /// <summary>
@@ -1009,9 +994,7 @@ public static class SdvAssemblyRefRewriter
         //   to solve.
         int disposeRemovedCount = 0;
         int directCallCount = 0;
-        int getTypeLdtokenCount = 0;
         int boxFallbackCount = 0;
-        int skipCallCount = 0;
         int boxUntouchedCount = 0;
 
         foreach (var type in asmDef.MainModule.GetTypes())
@@ -1039,38 +1022,13 @@ public static class SdvAssemblyRefRewriter
                         // &-preceded + IDisposable::Dispose() — semantically a no-op for struct enumerators.
                         // Remove the call entirely: constrained. → nop, callvirt → pop (consumes &T).
                         if (interfaceMethod.Name == "Dispose"
-                            && interfaceMethod.DeclaringType.Name == "IDisposable")
+                            && interfaceMethod.DeclaringType.FullName == "System.IDisposable")
                         {
                             instrs[i].OpCode = OpCodes.Nop;
                             instrs[i].Operand = null;
                             callInstr.OpCode = OpCodes.Pop;
                             callInstr.Operand = null;
                             disposeRemovedCount++;
-                        }
-                        // &-preceded + Object::GetType() — replace with ldtoken T + Type.GetTypeFromHandle.
-                        // For value types, the runtime type IS T (no polymorphism), so this is semantically
-                        // correct. For generic T, returns the compile-time T (slight semantic difference
-                        // but acceptable — most callers use GetType for debugging/logging).
-                        // This avoids `box T` which triggers transform.c:1146 for certain types.
-                        else if (interfaceMethod.Name == "GetType"
-                                 && interfaceMethod.DeclaringType.Name == "Object"
-                                 && interfaceMethod.Parameters.Count == 0)
-                        {
-                            var typeHandleRef = asmDef.MainModule.ImportReference(typeof(System.RuntimeTypeHandle));
-                            var typeFromHandleMethod = asmDef.MainModule.ImportReference(typeof(System.Type).GetMethod("GetTypeFromHandle"));
-                            // Preceding &-producer → ldtoken T (load RuntimeTypeHandle for T)
-                            var prev = instrs[i - 1];
-                            prev.OpCode = OpCodes.Ldtoken;
-                            prev.Operand = constrainedType;
-                            // constrained. → nop
-                            instrs[i].OpCode = OpCodes.Nop;
-                            instrs[i].Operand = null;
-                            // callvirt Object::GetType() → call Type::GetTypeFromHandle(RuntimeTypeHandle)
-                            callInstr.OpCode = OpCodes.Call;
-                            callInstr.Operand = typeFromHandleMethod;
-                            getTypeLdtokenCount++;
-                            if (getTypeLdtokenCount <= 5)
-                                Console.WriteLine($"[AssemblyRefRewriter] GetType → ldtoken: [{type.FullName}::{method.Name}] constrained. {constrainedType.Name}");
                         }
                         else
                         {
@@ -1083,9 +1041,16 @@ public static class SdvAssemblyRefRewriter
                             //
                             // CONSERVATIVE: convert MoveNext and get_Current (foreach loop patterns).
                             //   - MoveNext: returns bool (no generic params)
+                            //   - get_Current: returns T (may have generic substitution, but
+                            //     TryFindDirectMethod uses ImportReference with the GenericInstanceType
+                            //     as context, which should handle substitution correctly)
+                            // Skip ToString/GetHashCode/GetType (require boxing for Object virtual dispatch)
+                            // and other methods for now.
+                            // CONSERVATIVE: only convert MoveNext and get_Current (foreach loop patterns).
+                            //   - MoveNext: returns bool (no generic params)
                             //   - get_Current: returns T (TryFindDirectMethod uses ImportReference
                             //     with the GenericInstanceType as context for proper substitution)
-                            // Skip ToString/GetHashCode (these inherit from Object and require
+                            // Skip ToString/GetHashCode/GetType (these inherit from Object and require
                             // boxing for virtual dispatch — direct call would skip overrides) and
                             // other methods (may have unexpected signatures).
                             bool canDirectCall = (interfaceMethod.Name == "MoveNext" && interfaceMethod.Parameters.Count == 0)
@@ -1103,118 +1068,29 @@ public static class SdvAssemblyRefRewriter
                                 }
                                 else
                                 {
-                                    // Direct method not found — fall back to skip+default
-                                    ApplySkipWithDefault(instrs, i, callInstr, interfaceMethod);
-                                    skipCallCount++;
+                                    // Direct method not found — fall back to box with addr fixup
+                                    instrs[i].OpCode = OpCodes.Box;
+                                    FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                    boxFallbackCount++;
                                 }
                             }
                             else
                             {
-                                // Other methods (ToString, GetHashCode, etc.) — these need
-                                // boxing for Object virtual dispatch. We tried `box T` with addr fixup
-                                // but it still triggers transform.c:1146 in WASM Mono interpreter
-                                // for certain types (enums, generic params).
-                                //
-                                // SAFER FIX: skip the call entirely and push a default return value.
-                                //   - ToString returns string → push ldnull
-                                //   - GetHashCode returns int → push ldc.i4.0
-                                //   - Other methods → push ldnull (best effort)
-                                // The &T on the stack is consumed by pop.
-                                // This is semantically wrong but produces VALID IL that doesn't
-                                // trigger the WASM interpreter assertion. Callers may get null/0
-                                // which could cause downstream NREs, but those are easier to
-                                // diagnose than transform.c:1146.
-                                ApplySkipWithDefault(instrs, i, callInstr, interfaceMethod);
-                                skipCallCount++;
+                                // Other methods (ToString, GetHashCode, GetType, etc.) — these need
+                                // boxing for Object virtual dispatch. Use box with addr fixup:
+                                // change the preceding &-producer to load the value (ldloc/ldarg/ldsfld/ldfld)
+                                // so `box T` gets a value on the stack (not a &T).
+                                instrs[i].OpCode = OpCodes.Box;
+                                FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                boxFallbackCount++;
                             }
                         }
                     }
                     else
                     {
-                        // Value-preceded — these patterns produce a value (not &T) before constrained.
-                        // The previous fix used `box T` which worked in Run() path but still triggers
-                        // transform.c:1146 in Tick() path for certain types (generic T, anonymous type TPar).
-                        //
-                        // Strategy:
-                        //   - For Object::GetType() → ldtoken T + Type.GetTypeFromHandle (semantic: returns compile-time T)
-                        //   - For Object::ToString()/Equals() on generic T → skip + push default
-                        //     (these are mostly in anonymous type ToString methods, only used for debugging)
-                        //   - For other methods (IConvertible, IDictionary.Add, etc.) → keep `box T`
-                        //     (these may actually work; if they crash, we'll handle them next)
-                        if (interfaceMethod.Name == "GetType"
-                            && interfaceMethod.DeclaringType.Name == "Object"
-                            && interfaceMethod.Parameters.Count == 0)
-                        {
-                            var typeFromHandleMethod = asmDef.MainModule.ImportReference(typeof(System.Type).GetMethod("GetTypeFromHandle"));
-                            // Preceding value-producer → ldtoken T (discard the value, load RuntimeTypeHandle)
-                            // We need to pop the value first, then ldtoken
-                            // But we can only modify 2 instructions (constrained. + callvirt).
-                            // Solution: change preceding to pop, constrained. to ldtoken T, callvirt to call GetTypeFromHandle
-                            var prev = instrs[i - 1];
-                            prev.OpCode = OpCodes.Pop;  // pop the value
-                            instrs[i].OpCode = OpCodes.Ldtoken;  // load RuntimeTypeHandle for T
-                            instrs[i].Operand = constrainedType;
-                            callInstr.OpCode = OpCodes.Call;
-                            callInstr.Operand = typeFromHandleMethod;
-                            getTypeLdtokenCount++;
-                        }
-                        else if ((interfaceMethod.Name == "ToString" || interfaceMethod.Name == "Equals")
-                                 && interfaceMethod.DeclaringType.Name == "Object")
-                        {
-                            // ToString/Equals on Object — skip and push default.
-                            // These are mostly in anonymous type ToString methods (debugging only)
-                            // and enum Equals/ToString (rarely critical). Skipping is semantically
-                            // wrong but avoids transform.c:1146.
-                            // Pop the value, push default return
-                            instrs[i].OpCode = OpCodes.Pop;  // consume the value (was constrained.)
-                            instrs[i].Operand = null;
-                            if (interfaceMethod.ReturnType.MetadataType == MetadataType.Int32
-                                || interfaceMethod.ReturnType.MetadataType == MetadataType.UInt32)
-                            {
-                                callInstr.OpCode = OpCodes.Ldc_I4_0;  // Equals returns bool (int)
-                            }
-                            else
-                            {
-                                callInstr.OpCode = OpCodes.Ldnull;  // ToString returns string
-                            }
-                            callInstr.Operand = null;
-                            skipCallCount++;
-                        }
-                        else
-                        {
-                            // Other value-preceded patterns (IConvertible, IDictionary.Add, etc.)
-                            // For 0-parameter methods: skip and push default (safe).
-                            // For methods with parameters: keep `box T` (can't easily pop args).
-                            //   These may still trigger transform.c:1146, but we'll handle them if needed.
-                            if (interfaceMethod.Parameters.Count == 0)
-                            {
-                                instrs[i].OpCode = OpCodes.Pop;
-                                instrs[i].Operand = null;
-                                var retType = interfaceMethod.ReturnType;
-                                if (retType.MetadataType == MetadataType.Int32 || retType.MetadataType == MetadataType.UInt32
-                                    || retType.MetadataType == MetadataType.Int64 || retType.MetadataType == MetadataType.UInt64
-                                    || retType.MetadataType == MetadataType.Single || retType.MetadataType == MetadataType.Double)
-                                {
-                                    callInstr.OpCode = OpCodes.Ldc_I4_0;
-                                }
-                                else if (retType.MetadataType == MetadataType.Void)
-                                {
-                                    callInstr.OpCode = OpCodes.Nop;
-                                }
-                                else
-                                {
-                                    callInstr.OpCode = OpCodes.Ldnull;
-                                }
-                                callInstr.Operand = null;
-                                skipCallCount++;
-                            }
-                            else
-                            {
-                                // Methods with parameters — keep `box T` (may crash, but can't safely skip)
-                                instrs[i].OpCode = OpCodes.Box;
-                                boxUntouchedCount++;
-                            }
-                        }
+                        // Value-preceded — `box T` works (kept the working Run() path behavior)
+                        instrs[i].OpCode = OpCodes.Box;
+                        boxUntouchedCount++;
                     }
                 }
             }
@@ -1222,34 +1098,8 @@ public static class SdvAssemblyRefRewriter
 
         Console.WriteLine($"[AssemblyRefRewriter] foreach Dispose removed (nop+pop): {disposeRemovedCount}");
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → nop + call T::M: {directCallCount} conversions");
-        Console.WriteLine($"[AssemblyRefRewriter] constrained. → ldtoken + Type.GetTypeFromHandle (GetType): {getTypeLdtokenCount} conversions");
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (untouched, value-preceded): {boxUntouchedCount} conversions");
         Console.WriteLine($"[AssemblyRefRewriter] constrained. → box (fallback, &-preceded with addr fixup): {boxFallbackCount} conversions");
-        Console.WriteLine($"[AssemblyRefRewriter] constrained. → skip + push default (ToString/GetHashCode): {skipCallCount} conversions");
-    }
-
-    /// <summary>
-    /// Replace `constrained. T + callvirt I::M` with `pop + push default(return type)`.
-    /// Used for ToString/GetHashCode patterns where box T triggers transform.c:1146.
-    /// Semantically wrong but produces VALID IL.
-    /// </summary>
-    private static void ApplySkipWithDefault(Mono.Collections.Generic.Collection<Mono.Cecil.Cil.Instruction> instrs, int i, Mono.Cecil.Cil.Instruction callInstr, MethodReference interfaceMethod)
-    {
-        // constrained. → pop (consume the &T)
-        instrs[i].OpCode = OpCodes.Pop;
-        instrs[i].Operand = null;
-        // callvirt → push default value based on return type
-        var retType = interfaceMethod.ReturnType;
-        if (retType.MetadataType == MetadataType.Int32 || retType.MetadataType == MetadataType.UInt32)
-        {
-            callInstr.OpCode = OpCodes.Ldc_I4_0;
-        }
-        else
-        {
-            // string, object, etc. — push null
-            callInstr.OpCode = OpCodes.Ldnull;
-        }
-        callInstr.Operand = null;
     }
 
     /// <summary>
