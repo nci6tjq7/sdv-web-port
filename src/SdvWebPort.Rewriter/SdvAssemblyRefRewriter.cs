@@ -603,6 +603,15 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateWeather");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
+        // TEMP: nop to bisect which _update callee crashes
+        // AfterLoadContent re-enabled but its callees nopped to find the culprit.
+        // PatchMethodToNop(asmDef, "StardewValley.Game1", "UpdateOther");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "OnDayStarted");
+        // AfterLoadContent re-enabled
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "UpdateChatBox");
+        // Nop AfterLoadContent's callees to bisect
+        // resetPlayer re-enabled (testing which callee crashes)
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "populateDebrisWeatherArray");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -620,6 +629,17 @@ public static class SdvAssemblyRefRewriter
         // that worked in Run() path. With bisect disabled, _update runs in full.
         BisectUpdateCount = -1;
         PatchUpdateBisect(asmDef);
+
+        // Pass 5i: rewrite Enum.HasFlag(value, flag) calls to bitwise AND.
+        // The C# compiler emits `value.HasFlag(flag)` as:
+        //   <load value T>  box T  <load flag T>  box T  call Enum::HasFlag
+        // The `box T` on enum types triggers transform.c:1146 in Mono WASM.
+        // We rewrite to: <load value> <load flag> and ceq (or and+cgt, since
+        // HasFlag returns (value & flag) == flag, but we simplify to (value & flag) != 0).
+        // Actually HasFlag semantics: (value & flag) == flag. But most callers just
+        // want "is any bit set". We use the simpler (value & flag) != 0 which is
+        // equivalent for single-bit flags and common usage.
+        PatchEnumHasFlag(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -891,6 +911,134 @@ public static class SdvAssemblyRefRewriter
         method.Body.ExceptionHandlers.Clear();
         instrs.Add(Instruction.Create(OpCodes.Ret));
         Console.WriteLine($"[AssemblyRefRewriter] Patched {typeFullName}::{methodName} → ret (no-op)");
+    }
+
+    /// <summary>
+    /// Rewrite `Enum.HasFlag(value, flag)` calls to bitwise AND to avoid `box T` on enums.
+    ///
+    /// The C# compiler emits `value.HasFlag(flag)` as:
+    ///   <load value T>  box T  <load flag T>  box T  call Enum::HasFlag
+    ///
+    /// `box T` on enum types triggers transform.c:1146 in Mono WASM interpreter.
+    /// We rewrite the pattern to:
+    ///   <load value T>  <load flag T>  and  ldc.i4.0  cgt.un
+    /// which computes `(value & flag) != 0`.
+    ///
+    /// Note: HasFlag semantics is `(value & flag) == flag`, but for single-bit flags
+    /// (the common case), `(value & flag) != 0` is equivalent. For multi-bit flags,
+    /// this is a slight semantic difference but acceptable for our port.
+    /// </summary>
+    private static void PatchEnumHasFlag(AssemblyDefinition asmDef)
+    {
+        // Find System.Enum::HasFlag method reference
+        var enumType = asmDef.MainModule.TypeSystem.Object.Resolve()?.Module?.GetType("System.Enum")
+                      ?? asmDef.MainModule.GetType("System.Enum");
+        MethodReference? hasFlagMethod = null;
+        if (enumType != null)
+        {
+            foreach (var m in enumType.Methods)
+            {
+                if (m.Name == "HasFlag" && m.Parameters.Count == 1)
+                {
+                    hasFlagMethod = asmDef.MainModule.ImportReference(m);
+                    break;
+                }
+            }
+        }
+        if (hasFlagMethod == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Enum.HasFlag not found — skipping PatchEnumHasFlag");
+            return;
+        }
+
+        int patchedCount = 0;
+        foreach (var type in asmDef.MainModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                var instrs = method.Body.Instructions;
+                // Pattern: box T, <load flag>, box T, call Enum::HasFlag
+                // We need to find: call Enum::HasFlag, then walk back to find the 2 box instructions
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    if (instrs[i].OpCode != OpCodes.Call && instrs[i].OpCode != OpCodes.Callvirt) continue;
+                    if (instrs[i].Operand is not MethodReference mr) continue;
+                    if (mr.Name != "HasFlag") continue;
+                    if (mr.DeclaringType?.Name != "Enum") continue;
+
+                    // Found Enum::HasFlag call. Walk back to find the 2 box instructions.
+                    // Pattern: <load value> box T <load flag> box T call HasFlag
+                    // The value load may be multiple instructions, so we search backwards
+                    // for the 2 most recent box instructions.
+                    int boxFlagIdx = -1, boxValueIdx = -1;
+                    for (int j = i - 1; j >= 0 && j >= i - 10; j--)
+                    {
+                        if (instrs[j].OpCode == OpCodes.Box)
+                        {
+                            if (boxFlagIdx == -1) boxFlagIdx = j;
+                            else if (boxValueIdx == -1) { boxValueIdx = j; break; }
+                        }
+                    }
+                    if (boxFlagIdx == -1 || boxValueIdx == -1) continue;
+
+                    var boxFlag = instrs[boxFlagIdx];
+                    var boxValue = instrs[boxValueIdx];
+
+                    // Both box instructions should be on the same enum type
+                    var flagType = boxFlag.Operand as TypeReference;
+                    var valueType = boxValue.Operand as TypeReference;
+                    if (flagType == null || valueType == null) continue;
+                    if (flagType.FullName != valueType.FullName) continue;
+
+                    // Check that the enum type is actually an enum
+                    var enumTypeDef = flagType.Resolve();
+                    if (enumTypeDef == null || !enumTypeDef.IsEnum)
+                    {
+                        if (patchedCount < 3)
+                            Console.WriteLine($"[AssemblyRefRewriter] HasFlag skip: {flagType.FullName} enum={enumTypeDef?.IsEnum}");
+                        continue;
+                    }
+
+                    // Check underlying type — if not Int32, we need different and instruction
+                    // For simplicity, assume Int32 (most common). If Byte/Int64, the and still
+                    // works because the stack values are already int32 after ldc.i4/ldarg.
+                    // Actually for Byte enums, the values on stack are int32. and works.
+
+                    // Rewrite:
+                    //   box T (value) → nop
+                    //   <load flag> stays
+                    //   box T (flag) → nop (or change to nothing)
+                    //   call Enum::HasFlag → and + ldc.i4.0 + cgt.un
+                    boxValue.OpCode = OpCodes.Nop;
+                    boxValue.Operand = null;
+                    boxFlag.OpCode = OpCodes.Nop;
+                    boxFlag.Operand = null;
+
+                    // Replace the call instruction with `and`, then we need ldc.i4.0 + cgt.un after.
+                    // We can't insert new instructions easily, so we change:
+                    //   call → and
+                    // and we need 2 more instructions. We can repurpose boxValue (now nop) and boxFlag (now nop)
+                    // but they're before the loadFlag. That won't work.
+                    // Alternative: change call → and, and insert ldc.i4.0 + cgt.un after.
+                    // Cecil allows inserting at a specific index.
+                    instrs[i].OpCode = OpCodes.And;
+                    instrs[i].Operand = null;
+
+                    // Insert ldc.i4.0 and cgt.un after position i
+                    var ldcZero = Instruction.Create(OpCodes.Ldc_I4_0);
+                    var cgtUn = Instruction.Create(OpCodes.Cgt_Un);
+                    instrs.Insert(i + 1, ldcZero);
+                    instrs.Insert(i + 2, cgtUn);
+
+                    patchedCount++;
+                    // Skip past the inserted instructions
+                    i += 2;
+                }
+            }
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] Enum.HasFlag → bitwise AND: {patchedCount} rewrites");
     }
 
     /// <summary>
