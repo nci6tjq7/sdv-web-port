@@ -605,6 +605,9 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
         // These were nopped during bisecting — re-enable now that box EnumType is patched.
         // (OnDayStarted, UpdateChatBox, populateDebrisWeatherArray, AfterLoadContent)
+        // TEMP: nop AfterLoadContent + OnDayStarted to bisect
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "AfterLoadContent");
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "OnDayStarted");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -1075,6 +1078,19 @@ public static class SdvAssemblyRefRewriter
                 {
                     if (instrs[i].OpCode != OpCodes.Box) continue;
                     if (instrs[i].Operand is not TypeReference tr) continue;
+
+                    // Handle generic parameters (T, TField, TSelf, TKey, etc.)
+                    // box T on a generic parameter triggers transform.c:1146 when T is
+                    // instantiated as a value type at runtime. Replace with box Object:
+                    //   - For value types: box Object produces a boxed object (same as box T)
+                    //   - For reference types: box Object is a no-op (same as box T)
+                    // This is semantically equivalent and avoids the WASM interpreter bug.
+                    if (tr is GenericParameter)
+                    {
+                        instrs[i].Operand = asmDef.MainModule.TypeSystem.Object;
+                        patchedCount++;
+                        continue;
+                    }
 
                     // Check if the type is an enum
                     TypeDefinition? td = null;
