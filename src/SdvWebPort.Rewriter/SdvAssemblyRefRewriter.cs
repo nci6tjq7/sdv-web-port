@@ -612,8 +612,9 @@ public static class SdvAssemblyRefRewriter
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "resetPlayer");
         // Try nopping setGameMode (called by AfterLoadContent at end)
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
-        // setGameMode calls TitleMenu..ctor which crashes. Bisect TitleMenu callees:
-        // Re-enabled box T → box Object patch should fix the crash in TryParseEnum etc.
+        // setGameMode calls TitleMenu..ctor which crashes. Workaround: nop setGameMode.
+        // Game stays in loading mode but Tick() works and canvas renders.
+        PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
