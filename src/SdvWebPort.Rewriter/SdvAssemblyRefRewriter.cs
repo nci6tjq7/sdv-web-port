@@ -603,12 +603,8 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateWeather");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateCursor");
         PatchMethodToNop(asmDef, "StardewValley.Game1", "updateDebugInput");
-        // TEMP: nop to bisect which _update callee crashes
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "OnDayStarted");
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "UpdateChatBox");
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "populateDebrisWeatherArray");
-        // Nop AfterLoadContent to see if Tick() crashes without it (crash might be elsewhere)
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "AfterLoadContent");
+        // These were nopped during bisecting — re-enable now that box EnumType is patched.
+        // (OnDayStarted, UpdateChatBox, populateDebrisWeatherArray, AfterLoadContent)
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -637,6 +633,14 @@ public static class SdvAssemblyRefRewriter
         // want "is any bit set". We use the simpler (value & flag) != 0 which is
         // equivalent for single-bit flags and common usage.
         PatchEnumHasFlag(asmDef);
+
+        // Pass 5j: rewrite standalone `box EnumType` to `box Int32`.
+        // box on enum types triggers transform.c:1146 in Mono WASM interpreter.
+        // Enum values are already int32 on the stack, so `box Int32` produces the
+        // same boxed object (an Int32 box, which is a valid System.Object).
+        // This is semantically correct for params object[] and Enum.IsDefined/CompareTo.
+        // Note: Enum.HasFlag boxes are already handled by PatchEnumHasFlag (which removes them).
+        PatchBoxEnumToInt32(asmDef);
 
         // Pass 6: rewrite high-arity Action/Func typerefs to use our replacement
         // delegate types. The BlazorWebAssembly trimmer strips Action`7..`16 and
@@ -1036,6 +1040,68 @@ public static class SdvAssemblyRefRewriter
         }
 
         Console.WriteLine($"[AssemblyRefRewriter] Enum.HasFlag → bitwise AND: {patchedCount} rewrites");
+    }
+
+    /// <summary>
+    /// Rewrite standalone `box EnumType` instructions to `box Int32`.
+    ///
+    /// `box T` on enum types triggers transform.c:1146 in Mono WASM interpreter.
+    /// Enum values are already int32 on the evaluation stack, so `box Int32`
+    /// produces a valid boxed Int32 object. This is semantically correct for:
+    ///   - params object[] array construction (stelem.ref)
+    ///   - Enum.IsDefined(Type, object)
+    ///   - Enum.CompareTo(object)
+    ///   - string.Format / Console.WriteLine
+    ///
+    /// Note: Enum.HasFlag boxes are already handled by PatchEnumHasFlag (removed).
+    /// For byte/long underlying enums, we still use box Int32 — the value on the
+    /// stack is already int32 (C# promotes enum values to int32).
+    /// </summary>
+    private static void PatchBoxEnumToInt32(AssemblyDefinition asmDef)
+    {
+        var int32Type = asmDef.MainModule.TypeSystem.Int32;
+        var int64Type = asmDef.MainModule.TypeSystem.Int64;
+        var byteType = asmDef.MainModule.TypeSystem.Byte;
+        int patchedCount = 0;
+        int skippedNotEnum = 0;
+
+        foreach (var type in asmDef.MainModule.GetTypes())
+        {
+            foreach (var method in type.Methods)
+            {
+                if (method.Body == null) continue;
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    if (instrs[i].OpCode != OpCodes.Box) continue;
+                    if (instrs[i].Operand is not TypeReference tr) continue;
+
+                    // Check if the type is an enum
+                    TypeDefinition? td = null;
+                    try { td = tr.Resolve(); } catch { continue; }
+                    if (td == null || !td.IsEnum) { skippedNotEnum++; continue; }
+
+                    // Determine underlying type and pick the right box target
+                    var underlying = td.Fields.FirstOrDefault(f => f.IsSpecialName && f.Name == "value__");
+                    TypeReference boxTarget = int32Type;  // default
+                    if (underlying != null)
+                    {
+                        var ut = underlying.FieldType.MetadataType;
+                        if (ut == MetadataType.Int64 || ut == MetadataType.UInt64)
+                            boxTarget = int64Type;
+                        else if (ut == MetadataType.Byte || ut == MetadataType.SByte)
+                            boxTarget = byteType;
+                        // else: Int32, UInt32, Int16, UInt16 — all promote to Int32
+                    }
+
+                    // Rewrite box EnumType → box <underlying>
+                    instrs[i].Operand = boxTarget;
+                    patchedCount++;
+                }
+            }
+        }
+
+        Console.WriteLine($"[AssemblyRefRewriter] box EnumType → box underlying: {patchedCount} rewrites (skipped {skippedNotEnum} non-enum)");
     }
 
     /// <summary>
