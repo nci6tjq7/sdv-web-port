@@ -808,3 +808,21 @@ Next Steps:
 - Extend custom draw to render more title screen elements (title logo, buttons)
 - Or fix the box T crash to enable the original TitleMenu.draw (full title screen)
 - Or initialize more TitleMenu fields for a more complete rendering
+
+---
+Task ID: phase2.8-clouds-scaled-fullscreen
+Agent: main
+Task: Scale clouds texture to fill the entire canvas
+
+Work Log:
+- Updated custom TitleMenu.draw to use SpriteBatch.Draw(Texture2D, Rectangle, Color)
+  instead of Draw(Texture2D, Vector2, Color)
+- Added Game1.uiViewport.Width/Height lookup for dynamic screen dimensions
+- Added local variables for width/height in the IL
+- Result: clouds texture now fills the entire canvas, scaled from original size
+
+Stage Summary:
+- 368,343 non-black pixels (76% of canvas has texture content)
+- 0 errors, 0 crashes, stable game loop
+- Full SpriteBatch rendering pipeline proven with scaled textures
+- Committed + pushed (7915ab4)
