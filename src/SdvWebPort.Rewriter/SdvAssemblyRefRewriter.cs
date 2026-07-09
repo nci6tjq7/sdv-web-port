@@ -1549,34 +1549,19 @@ public static class SdvAssemblyRefRewriter
                     if (instrs[i].Operand is not TypeReference tr) continue;
 
                     // Handle generic parameters (T, TField, TSelf, TKey, etc.)
-                    // box T on a generic parameter triggers transform.c:1146 when T is
-                    // instantiated as a value type at runtime.
-                    // Replace `box T` with `call BoxHelper.Box<T>(T) → object`.
-                    // BoxHelper.Box<T> is a normal generic method call that internally
-                    // does the boxing. The JIT compiles BoxHelper.Box<T> separately,
-                    // avoiding the box-on-generic JIT bug in the calling method.
                     if (tr is GenericParameter)
                     {
-                        var boxHelperType = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "SdvWebPort.Vfs.BoxHelper")
-                                            ?? ImportBoxHelperType(asmDef.MainModule);
-                        if (boxHelperType != null)
-                        {
-                            var boxMethod = boxHelperType.Methods.FirstOrDefault(m => m.Name == "Box");
-                            if (boxMethod != null)
-                            {
-                                // Create a GenericInstanceMethod: BoxHelper.Box<T>
-                                var gim = new GenericInstanceMethod(asmDef.MainModule.ImportReference(boxMethod));
-                                gim.GenericArguments.Add(tr);
-                                instrs[i].OpCode = OpCodes.Call;
-                                instrs[i].Operand = gim;
-                                patchedCount++;
-                                continue;
-                            }
-                        }
-                        // Fallback: replace box T with unbox.any T + box <concrete>
-                        // Actually, just skip box entirely for generic params —
-                        // replace with nop (value stays as-is on stack as native int/obj).
-                        // This may cause type mismatches but avoids the crash.
+                        // nop the box — value stays as native int on stack
+                        instrs[i].OpCode = OpCodes.Nop;
+                        instrs[i].Operand = null;
+                        patchedCount++;
+                        continue;
+                    }
+
+                    // Handle GenericInstanceType (List`1/Enumerator<T>, Nullable`1<T>, etc.)
+                    // box on GenericInstanceType also triggers transform.c:1146.
+                    if (tr is GenericInstanceType)
+                    {
                         instrs[i].OpCode = OpCodes.Nop;
                         instrs[i].Operand = null;
                         patchedCount++;
