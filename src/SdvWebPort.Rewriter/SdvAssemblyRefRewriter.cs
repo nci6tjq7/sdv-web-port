@@ -612,9 +612,12 @@ public static class SdvAssemblyRefRewriter
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "resetPlayer");
         // Try nopping setGameMode (called by AfterLoadContent at end)
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
-        // setGameMode calls TitleMenu..ctor which crashes (box T on generic param).
-        // Workaround: nop setGameMode. Game stays in loading mode but Tick() works.
-        PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
+        // setGameMode calls new TitleMenu() which crashes (box T on generic param
+        // in TitleMenu..ctor call chain triggers transform.c:1146).
+        // Targeted fix: replace newobj TitleMenu..ctor() with ldnull in setGameMode.
+        // This way setGameMode still runs (sets _gameMode, unloads content) but
+        // doesn't create TitleMenu, avoiding the JIT crash.
+        PatchNewobjTitleMenuToNull(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -922,6 +925,38 @@ public static class SdvAssemblyRefRewriter
         method.Body.ExceptionHandlers.Clear();
         instrs.Add(Instruction.Create(OpCodes.Ret));
         Console.WriteLine($"[AssemblyRefRewriter] Patched {typeFullName}::{methodName} → ret (no-op)");
+    }
+
+    /// <summary>
+    /// Replace `newobj TitleMenu..ctor()` with `ldnull` in Game1.setGameMode.
+    /// TitleMenu..ctor's call chain contains `box T` (generic parameter) which
+    /// triggers transform.c:1146 in Mono WASM JIT. By replacing the newobj with
+    /// ldnull, TitleMenu..ctor is never called (and thus never JIT-compiled),
+    /// avoiding the crash. setGameMode still runs normally (sets _gameMode,
+    /// unloads content, etc.) — only the title menu creation is skipped.
+    /// </summary>
+    private static void PatchNewobjTitleMenuToNull(AssemblyDefinition asmDef)
+    {
+        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1 == null) return;
+        var setGameMode = game1.Methods.FirstOrDefault(m => m.Name == "setGameMode");
+        if (setGameMode == null) return;
+
+        var instrs = setGameMode.Body.Instructions;
+        int patched = 0;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Newobj && instrs[i].Operand is MethodReference mr
+                && mr.DeclaringType?.FullName == "StardewValley.Menus.TitleMenu")
+            {
+                // Replace newobj TitleMenu..ctor() with ldnull
+                instrs[i].OpCode = OpCodes.Ldnull;
+                instrs[i].Operand = null;
+                patched++;
+            }
+        }
+        if (patched > 0)
+            Console.WriteLine($"[AssemblyRefRewriter] Patched setGameMode: {patched} newobj TitleMenu → ldnull");
     }
 
     /// <summary>
