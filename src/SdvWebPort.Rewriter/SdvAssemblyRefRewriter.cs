@@ -616,6 +616,8 @@ public static class SdvAssemblyRefRewriter
         // in TitleMenu..ctor call chain triggers transform.c:1146).
         // Targeted fix: replace newobj TitleMenu..ctor() with ldnull in setGameMode.
         PatchNewobjTitleMenuToNull(asmDef);
+        // Nop playSound overloads (TypeLoadException from ICue&)
+        PatchPlaySoundToNop(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -955,6 +957,30 @@ public static class SdvAssemblyRefRewriter
         }
         if (patched > 0)
             Console.WriteLine($"[AssemblyRefRewriter] Patched setGameMode: {patched} newobj TitleMenu → ldnull");
+    }
+
+    /// <summary>
+    /// Patch all playSound overloads to nop. playSound accesses ICue& (byref)
+    /// which causes TypeLoadException in WASM (audio types not available).
+    /// </summary>
+    private static void PatchPlaySoundToNop(AssemblyDefinition asmDef)
+    {
+        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (game1 == null) return;
+        int patched = 0;
+        foreach (var m in game1.Methods.Where(x => x.Name == "playSound"))
+        {
+            var instrs = m.Body.Instructions;
+            instrs.Clear();
+            m.Body.ExceptionHandlers.Clear();
+            // playSound returns bool for the (string, ICue&) overload — return false
+            if (m.ReturnType.MetadataType == MetadataType.Boolean)
+                instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+            patched++;
+        }
+        if (patched > 0)
+            Console.WriteLine($"[AssemblyRefRewriter] Patched {patched} playSound overloads → nop");
     }
 
     /// <summary>
