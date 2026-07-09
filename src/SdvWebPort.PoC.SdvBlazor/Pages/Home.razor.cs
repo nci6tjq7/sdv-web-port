@@ -444,6 +444,26 @@ public partial class Home : ComponentBase
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.currentGameTime: " + ex.Message); }
         }
+
+        // Set Game1.bgColor to CornflowerBlue (visible) instead of the default dark (5,3,4).
+        // The game clears the canvas with bgColor each frame. Without TitleMenu, the canvas
+        // shows only bgColor. Setting it to a visible color proves the rendering pipeline works.
+        var bgField = game1Type.GetField("bgColor", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (bgField != null)
+        {
+            try
+            {
+                var colorType = typeof(Microsoft.Xna.Framework.Color);
+                var cornflowerCtor = colorType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
+                if (cornflowerCtor != null)
+                {
+                    var cornflower = cornflowerCtor.Invoke(new object[] { 100, 149, 237 });
+                    bgField.SetValue(null, cornflower);
+                    Console.WriteLine("[+] Game1.bgColor set to CornflowerBlue (100,149,237)");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.bgColor: " + ex.Message); }
+        }
     }
 
     /// <summary>
