@@ -425,6 +425,33 @@ public partial class Home : ComponentBase
         // Game1.musicCategory, ambientCategory — these are IAudioCategory interfaces
         // Game1.soundBank — ISoundBank interface
         // For now, just set them to null-safe stubs or skip
+
+        // Load Game1.mouseCursors texture via content.Load<Texture2D>("LooseSprites\\Cursors")
+        // This is the main UI sprite sheet used by TitleMenu.draw and many other methods.
+        // It's normally loaded by Game1.TranslateFields which runs after language changes.
+        var mouseCursorsField = game1Type.GetField("mouseCursors", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (mouseCursorsField != null && mouseCursorsField.GetValue(null) == null)
+        {
+            try
+            {
+                var content = contentField?.GetValue(null);
+                if (content != null)
+                {
+                    var lcmType = content.GetType();
+                    var loadMethod = lcmType.GetMethod("Load", new[] { typeof(string) });
+                    if (loadMethod != null)
+                    {
+                        // Load<Texture2D> is generic — use MakeGenericMethod
+                        var texture2DType = typeof(Microsoft.Xna.Framework.Graphics.Texture2D);
+                        var genericLoad = loadMethod.MakeGenericMethod(texture2DType);
+                        var mouseCursors = genericLoad.Invoke(content, new object[] { "LooseSprites\\Cursors" });
+                        mouseCursorsField.SetValue(null, mouseCursors);
+                        Console.WriteLine("[+] Game1.mouseCursors loaded (LooseSprites\\Cursors)");
+                    }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.mouseCursors: " + ex.Message); }
+        }
         var musicCatField = game1Type.GetField("musicCategory", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (musicCatField != null && musicCatField.GetValue(null) == null)
         {
