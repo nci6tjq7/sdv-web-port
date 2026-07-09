@@ -9,9 +9,7 @@
          the bundle. The trimmer strips them because our app doesn't directly
          reference them, but SDV's GetTypes() needs them at runtime. -->
     <PublishTrimmed>false</PublishTrimmed>
-    <!-- Phase 2.8: Disable AOT. AOT-compiled System.Runtime.wasm doesn't have
-         type-forwards (they're a compile-time construct). Without AOT, the
-         interpreter mode uses the original PE DLLs which DO have type-forwards. -->
+    <!-- AOT disabled — build takes too long in sandbox. Can be enabled for production. -->
     <RunAOTCompilation>false</RunAOTCompilation>
   </PropertyGroup>
 

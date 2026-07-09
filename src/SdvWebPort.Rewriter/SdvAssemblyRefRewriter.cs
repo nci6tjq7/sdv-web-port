@@ -622,7 +622,7 @@ public static class SdvAssemblyRefRewriter
         // Nop TitleMenu methods that NRE or crash due to partial init
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");  // crashes (box T in call chain)
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
         // TitleMenu.draw — custom body rendering clouds + title buttons + logo
         PatchTitleMenuDrawCustom(asmDef);
