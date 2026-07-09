@@ -826,3 +826,28 @@ Stage Summary:
 - 0 errors, 0 crashes, stable game loop
 - Full SpriteBatch rendering pipeline proven with scaled textures
 - Committed + pushed (7915ab4)
+
+---
+Task ID: phase2.8-cleanup-and-buttons-init
+Agent: main
+Task: Clean up redundant code + initialize TitleMenu buttons
+
+Work Log:
+- Removed redundant LoadMouseCursorsAfterRun method (game loads mouseCursors in LoadContent)
+- Removed pre-Run mouseCursors loading attempt (failed, game handles it)
+- Added buttons initialization to truncated TitleMenu..ctor:
+  - this.buttons = new List<ClickableTextureComponent>()
+  - this.setUpIcons() — safe (0 box-on-generic, 1 constrained on List Enumerator)
+- setUpIcons creates the title screen buttons (New Game, Load, Co-op, Exit, etc.)
+- Original TitleMenu.draw (2111 instrs) still replaced with custom draw
+
+Stage Summary:
+- Code cleaner (removed 115 lines of redundant mouseCursors loading)
+- TitleMenu buttons list initialized → original draw won't NRE on buttons
+- 0 errors, 0 crashes, 227 colors, 7/7 tests pass
+- Committed + pushed (510d4d9)
+
+Next Steps:
+- Try enabling original TitleMenu.draw (with buttons now initialized)
+- Or extend custom draw to render more UI elements from mouseCursors
+- Or initialize more TitleMenu fields to enable fuller rendering
