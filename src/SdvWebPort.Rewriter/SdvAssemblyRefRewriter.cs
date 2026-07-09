@@ -615,8 +615,6 @@ public static class SdvAssemblyRefRewriter
         // setGameMode calls new TitleMenu() which crashes (box T on generic param
         // in TitleMenu..ctor call chain triggers transform.c:1146).
         // Targeted fix: replace newobj TitleMenu..ctor() with ldnull in setGameMode.
-        // This way setGameMode still runs (sets _gameMode, unloads content) but
-        // doesn't create TitleMenu, avoiding the JIT crash.
         PatchNewobjTitleMenuToNull(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
