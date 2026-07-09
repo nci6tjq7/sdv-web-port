@@ -624,6 +624,7 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
+        // TitleMenu.draw nopped — textures loaded but buttons etc. still null → NRE
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
@@ -1000,8 +1001,49 @@ public static class SdvAssemblyRefRewriter
             return;
         }
 
-        // Keep instructions 0..baseCtorIdx (inclusive), remove the rest
-        var keepCount = baseCtorIdx + 1;
+        // Keep instructions 0..baseCtorIdx (inclusive) + texture loading (up to titleButtonsTexture stfld)
+        // Find the stfld titleButtonsTexture instruction and keep up to there
+        int textureEndIdx = -1;
+        for (int i = baseCtorIdx + 1; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Stfld && instrs[i].Operand is FieldReference fr
+                && fr.Name == "titleButtonsTexture")
+            {
+                textureEndIdx = i;
+                break;
+            }
+        }
+        var keepCount = textureEndIdx > 0 ? textureEndIdx + 1 : baseCtorIdx + 1;
+
+        // Nop the add_OnLanguageChange call (instruction ~50) — may trigger unsafe JIT
+        for (int i = baseCtorIdx + 1; i < keepCount; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Call && instrs[i].Operand is MethodReference mr
+                && mr.Name == "add_OnLanguageChange")
+            {
+                instrs[i].OpCode = OpCodes.Nop;
+                instrs[i].Operand = null;
+                // Also nop the preceding newobj (delegate creation) and ldftn
+                if (i - 1 >= 0 && instrs[i - 1].OpCode == OpCodes.Newobj)
+                {
+                    instrs[i - 1].OpCode = OpCodes.Nop;
+                    instrs[i - 1].Operand = null;
+                }
+                if (i - 2 >= 0 && instrs[i - 2].OpCode == OpCodes.Ldftn)
+                {
+                    instrs[i - 2].OpCode = OpCodes.Nop;
+                    instrs[i - 2].Operand = null;
+                }
+                // Also nop the ldarg.0 that was for the delegate target (stack is empty here)
+                if (i - 3 >= 0 && instrs[i - 3].OpCode == OpCodes.Ldarg_0)
+                {
+                    instrs[i - 3].OpCode = OpCodes.Nop;
+                }
+                Console.WriteLine("[AssemblyRefRewriter] Nopped add_OnLanguageChange in TitleMenu..ctor");
+                break;
+            }
+        }
+
         while (instrs.Count > keepCount)
             instrs.RemoveAt(keepCount);
 
