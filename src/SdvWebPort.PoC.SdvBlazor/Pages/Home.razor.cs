@@ -483,6 +483,7 @@ public partial class Home : ComponentBase
         // set this) is patched to nop, so hooks is null. Without it, _draw
         // throws NRE at hooks.OnRendering() and rendering is skipped.
         var hooksField = game1Type.GetField("hooks", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        Console.WriteLine($"[DEBUG] hooksField={hooksField != null}, value={hooksField?.GetValue(null)?.GetType().Name ?? "null"}");
         if (hooksField != null && hooksField.GetValue(null) == null)
         {
             try
