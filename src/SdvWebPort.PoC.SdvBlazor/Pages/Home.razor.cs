@@ -478,6 +478,39 @@ public partial class Home : ComponentBase
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1._gameMode: " + ex.Message); }
         }
+
+        // Set Game1.hooks to a new ModHooks instance. The .cctor (which would
+        // set this) is patched to nop, so hooks is null. Without it, _draw
+        // throws NRE at hooks.OnRendering() and rendering is skipped.
+        var hooksField = game1Type.GetField("hooks", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (hooksField != null && hooksField.GetValue(null) == null)
+        {
+            try
+            {
+                var hooksType = sdvAsm.GetType("StardewValley.Mods.ModHooks");
+                if (hooksType != null)
+                {
+                    var hooks = Activator.CreateInstance(hooksType);
+                    hooksField.SetValue(null, hooks);
+                    Console.WriteLine("[+] Game1.hooks set to new ModHooks()");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.hooks: " + ex.Message); }
+        }
+
+        // Set Game1.spriteBatch — needed by DrawLoadScreen for DrawString
+        var sbField = game1Type.GetField("spriteBatch", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (sbField != null && sbField.GetValue(null) == null)
+        {
+            try
+            {
+                // spriteBatch is set by GameRunner.LoadContent, which runs during Run().
+                // If it's still null here, the game's LoadContent didn't set it.
+                // We skip setting it — the game should have set it during Run().
+                Console.WriteLine("[+] Game1.spriteBatch is already set (by Run→LoadContent)");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1.spriteBatch: " + ex.Message); }
+        }
     }
 
     /// <summary>
