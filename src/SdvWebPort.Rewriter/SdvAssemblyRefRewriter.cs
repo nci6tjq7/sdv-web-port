@@ -1101,11 +1101,11 @@ public static class SdvAssemblyRefRewriter
         var drawMethod = sbType.Methods.FirstOrDefault(m =>
             m.Name == "Draw" && m.Parameters.Count == 3
             && m.Parameters[0].ParameterType.Name == "Texture2D"
-            && m.Parameters[1].ParameterType.Name == "Vector2"
+            && m.Parameters[1].ParameterType.Name == "Rectangle"
             && m.Parameters[2].ParameterType.Name == "Color");
         if (drawMethod == null)
         {
-            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch.Draw(Texture2D,Vector2,Color) not found — skipping");
+            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch.Draw(Texture2D,Rectangle,Color) not found — skipping");
             PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
             return;
         }
@@ -1119,11 +1119,9 @@ public static class SdvAssemblyRefRewriter
             return;
         }
 
-        // Find Color and Vector2 constructors by scanning all methods in SDV.
-        // Cecil 0.11.6 doesn't have ModuleDefinition.MemberReferences, so we
-        // scan all type methods for the constructor references we need.
+        // Find Color and Rectangle constructors by scanning all methods in SDV.
         MethodReference? colorCtorRef = null;
-        MethodReference? vec2CtorRef = null;
+        MethodReference? rectCtorRef = null;
         foreach (var t in module.GetTypes())
         {
             foreach (var m in t.Methods)
@@ -1136,67 +1134,103 @@ public static class SdvAssemblyRefRewriter
                     if (colorCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Color"
                         && mr.Name == ".ctor" && mr.Parameters.Count == 3)
                         colorCtorRef = mr;
-                    if (vec2CtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Vector2"
-                        && mr.Name == ".ctor" && mr.Parameters.Count == 2)
-                        vec2CtorRef = mr;
-                    if (colorCtorRef != null && vec2CtorRef != null) break;
+                    if (rectCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Rectangle"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 4)
+                        rectCtorRef = mr;
+                    if (colorCtorRef != null && rectCtorRef != null) break;
                 }
-                if (colorCtorRef != null && vec2CtorRef != null) break;
+                if (colorCtorRef != null && rectCtorRef != null) break;
             }
-            if (colorCtorRef != null && vec2CtorRef != null) break;
+            if (colorCtorRef != null && rectCtorRef != null) break;
         }
 
-        if (colorCtorRef == null || vec2CtorRef == null)
+        if (colorCtorRef == null || rectCtorRef == null)
         {
-            Console.WriteLine($"[AssemblyRefRewriter] Color/Vector2 ctor not found (color={colorCtorRef != null}, vec2={vec2CtorRef != null}) — skipping");
+            Console.WriteLine($"[AssemblyRefRewriter] Color/Rectangle ctor not found (color={colorCtorRef != null}, rect={rectCtorRef != null}) — skipping");
             PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
             return;
         }
 
+        // Find Game1.uiViewport field and xTile.Dimensions.Rectangle.get_Width/get_Height
+        var g1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        var uiViewportField = g1?.Fields.FirstOrDefault(f => f.Name == "uiViewport");
+        MethodReference? getWidthRef = null;
+        MethodReference? getHeightRef = null;
+        if (uiViewportField != null)
+        {
+            var xTileRectType = uiViewportField.FieldType.Resolve();
+            if (xTileRectType != null)
+            {
+                getWidthRef = xTileRectType.Methods.FirstOrDefault(m => m.Name == "get_Width");
+                getHeightRef = xTileRectType.Methods.FirstOrDefault(m => m.Name == "get_Height");
+            }
+        }
+
         // Build the custom draw body:
         //   if (this.cloudsTexture != null) {
-        //       b.Draw(this.cloudsTexture, Vector2.Zero, Color.White);
+        //       int w = Game1.uiViewport.Width;
+        //       int h = Game1.uiViewport.Height;
+        //       b.Draw(this.cloudsTexture, new Rectangle(0, 0, w, h), new Color(255,255,255));
         //   }
         var instrs = draw.Body.Instructions;
         instrs.Clear();
         draw.Body.ExceptionHandlers.Clear();
         draw.Body.Variables.Clear();
 
+        // Add a local variable for width and height
+        var intType = module.TypeSystem.Int32;
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_0 = width
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_1 = height
+
         var importedDraw = module.ImportReference(drawMethod);
         var importedClouds = module.ImportReference(cloudsField);
         var importedColorCtor = module.ImportReference(colorCtorRef);
-        var importedVec2Ctor = module.ImportReference(vec2CtorRef);
+        var importedRectCtor = module.ImportReference(rectCtorRef);
+        var importedUiViewport = uiViewportField != null ? module.ImportReference(uiViewportField) : null;
+        var importedGetWidth = getWidthRef != null ? module.ImportReference(getWidthRef) : null;
+        var importedGetHeight = getHeightRef != null ? module.ImportReference(getHeightRef) : null;
 
-        // Build IL:
-        //   if (this.cloudsTexture != null) {
-        //       b.Draw(this.cloudsTexture, new Vector2(0,0), new Color(255,255,255));
-        //   }
-        //   ret
-
-        var ldThis = Instruction.Create(OpCodes.Ldarg_0);
-        var ldClouds = Instruction.Create(OpCodes.Ldfld, importedClouds);
-        var retInstr = Instruction.Create(OpCodes.Ret);
-        var brFalse = Instruction.Create(OpCodes.Brfalse, retInstr);
-
-        instrs.Add(ldThis);
-        instrs.Add(ldClouds);
-        instrs.Add(brFalse);
-
-        // b (SpriteBatch param)
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));
-        // this.cloudsTexture
+        // if (this.cloudsTexture != null)
         instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
         instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));
-        // new Vector2(0, 0)
-        instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));
-        instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));
-        instrs.Add(Instruction.Create(OpCodes.Newobj, importedVec2Ctor));
+        var retInstr = Instruction.Create(OpCodes.Ret);
+        instrs.Add(Instruction.Create(OpCodes.Brfalse, retInstr));
+
+        // Get screen dimensions: w = Game1.uiViewport.Width
+        if (importedUiViewport != null && importedGetWidth != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, importedUiViewport));  // &uiViewport
+            instrs.Add(Instruction.Create(OpCodes.Call, importedGetWidth));       // get_Width()
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));                       // V_0 = width
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, importedUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, importedGetHeight));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));                       // V_1 = height
+        }
+        else
+        {
+            // Fallback: use fixed 1280x720
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 1280));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 720));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
+        }
+
+        // b.Draw(this.cloudsTexture, new Rectangle(0, 0, w, h), new Color(255,255,255))
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));        // b
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));        // this
+        instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));  // cloudsTexture
+        // new Rectangle(0, 0, w, h)
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // x=0
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // y=0
+        instrs.Add(Instruction.Create(OpCodes.Ldloc_0));        // w
+        instrs.Add(Instruction.Create(OpCodes.Ldloc_1));        // h
+        instrs.Add(Instruction.Create(OpCodes.Newobj, importedRectCtor));
         // new Color(255, 255, 255)
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Newobj, importedColorCtor));
-        // b.Draw(texture, position, color)
+        // callvirt b.Draw(texture, rect, color)
         instrs.Add(Instruction.Create(OpCodes.Callvirt, importedDraw));
         instrs.Add(retInstr);
 
