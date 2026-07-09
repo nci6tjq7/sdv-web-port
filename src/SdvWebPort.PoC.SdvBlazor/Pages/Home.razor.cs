@@ -593,6 +593,30 @@ public partial class Home : ComponentBase
     }
 
     /// <summary>
+    /// Reset SpriteBatch state — call End() if it's in "begun" state.
+    /// This prevents "Begin cannot be called again until End" errors when
+    /// the previous draw crashed after Begin but before End.
+    /// </summary>
+    private void ResetSpriteBatchState()
+    {
+        var sdvAsm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Stardew Valley");
+        if (sdvAsm == null) return;
+        var game1Type = sdvAsm.GetType("StardewValley.Game1");
+        if (game1Type == null) return;
+        var sbField = game1Type.GetField("spriteBatch", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var sb = sbField?.GetValue(null);
+        if (sb == null) return;
+        // Try calling End() — if not begun, it throws, which we catch
+        try
+        {
+            var endMethod = sb.GetType().GetMethod("End", Type.EmptyTypes);
+            endMethod?.Invoke(sb, null);
+        }
+        catch { /* not in begun state — ignore */ }
+    }
+
+    /// <summary>
     /// Minimal IServiceProvider that returns null for all service requests.
     /// Used to construct LocalizedContentManager.
     /// </summary>
