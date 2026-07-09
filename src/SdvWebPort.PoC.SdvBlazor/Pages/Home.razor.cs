@@ -55,7 +55,15 @@ public partial class Home : ComponentBase
                     Console.WriteLine("[Home.TickDotNet] Calling game.Run() (Initialize + LoadContent)");
                     _game.Run();
                     Console.WriteLine("[Home.TickDotNet] Run() returned — game initialized");
-                    // Game1.mouseCursors is loaded by the game's own LoadContent() during Run()
+                    // Initialize textures that are normally loaded by the incremental loading system
+                    // (which is disabled because ShouldLoadIncrementally returns false)
+                    try
+                    {
+                        var sdvAsm = AppDomain.CurrentDomain.GetAssemblies()
+                            .FirstOrDefault(a => a.GetName().Name == "Stardew Valley");
+                        if (sdvAsm != null) InitMissingTextures(sdvAsm);
+                    }
+                    catch (Exception ex) { Console.WriteLine("[WARN] InitMissingTextures: " + ex.Message); }
                 }
             }
             catch (Exception ex)
@@ -502,6 +510,85 @@ public partial class Home : ComponentBase
                 Console.WriteLine("[+] Game1.spriteBatch is already set (by Run→LoadContent)");
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.spriteBatch: " + ex.Message); }
+        }
+    }
+
+    /// <summary>
+    /// Initialize textures that are normally loaded by the incremental loading system
+    /// (LoadContentEnumerator). Since ShouldLoadIncrementally returns false, these
+    /// textures are never loaded, causing NREs in draw methods.
+    /// Key missing textures: staminaRect (1x1 white pixel for solid fills).
+    /// </summary>
+    private void InitMissingTextures(Assembly sdvAsm)
+    {
+        var game1Type = sdvAsm.GetType("StardewValley.Game1");
+        if (game1Type == null) return;
+
+        // Get the game's ContentManager (set by LoadContent during Run)
+        var contentField = game1Type.GetField("content", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var content = contentField?.GetValue(null);
+        if (content == null)
+        {
+            Console.WriteLine("[WARN] InitMissingTextures: Game1.content is null");
+            return;
+        }
+
+        // Load missing textures using the game's ContentManager
+        var texture2DType = typeof(Microsoft.Xna.Framework.Graphics.Texture2D);
+        var loadMethod = content.GetType().GetMethod("Load", new[] { typeof(string) });
+        if (loadMethod == null)
+        {
+            Console.WriteLine("[WARN] InitMissingTextures: Load method not found");
+            return;
+        }
+        var genericLoad = loadMethod.MakeGenericMethod(texture2DType);
+
+        // staminaRect — 1x1 white pixel used for solid rectangle fills
+        var staminaRectField = game1Type.GetField("staminaRect", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (staminaRectField != null && staminaRectField.GetValue(null) == null)
+        {
+            try
+            {
+                var tex = genericLoad.Invoke(content, new object[] { "LooseSprites\\Map" });
+                if (tex != null)
+                {
+                    staminaRectField.SetValue(null, tex);
+                    Console.WriteLine("[+] Game1.staminaRect loaded (LooseSprites\\Map)");
+                }
+            }
+            catch (Exception ex)
+            {
+                var inner = ex.InnerException ?? ex;
+                Console.WriteLine("[WARN] staminaRect: " + inner.GetType().Name + ": " + inner.Message);
+            }
+        }
+
+        // Also check if staminaRect is STILL null — create a 1x1 white texture manually
+        if (staminaRectField != null && staminaRectField.GetValue(null) == null)
+        {
+            try
+            {
+                // Get GraphicsDevice from the game
+                var gdProperty = _game?.GetType().BaseType?.GetProperty("GraphicsDevice",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var gd = gdProperty?.GetValue(_game);
+                if (gd != null)
+                {
+                    // Create a 1x1 white texture
+                    var tex = Activator.CreateInstance(texture2DType, gd, 1, 1);
+                    var setDataMethod = texture2DType.GetMethod("SetData", new[] { typeof(byte[]) });
+                    if (setDataMethod != null)
+                    {
+                        setDataMethod.Invoke(tex, new object[] { new byte[] { 255, 255, 255, 255 } });
+                    }
+                    staminaRectField.SetValue(null, tex);
+                    Console.WriteLine("[+] Game1.staminaRect created as 1x1 white texture");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[WARN] staminaRect manual: " + ex.Message);
+            }
         }
     }
 

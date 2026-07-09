@@ -619,12 +619,12 @@ public static class SdvAssemblyRefRewriter
         PatchTitleMenuCtorTruncate(asmDef);
         // Nop playSound overloads (TypeLoadException from ICue&)
         PatchPlaySoundToNop(asmDef);
-        // Nop TitleMenu methods that NRE due to partial init (buttons etc. are null)
+        // Nop TitleMenu methods that NRE or crash due to partial init
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");  // crashes (box T in call chain)
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
-        // TitleMenu.draw — custom body that draws cloudsTexture (avoids NRE from null buttons)
+        // TitleMenu.draw — custom body rendering clouds + title buttons + logo
         PatchTitleMenuDrawCustom(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
