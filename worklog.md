@@ -749,3 +749,34 @@ Next Steps:
   and handle them (skip+default or direct call)
 - Or: patch Mono WASM runtime to fix transform.c:1146
 - Or: use AOT compilation (may not have the interpreter bug)
+
+---
+Task ID: phase2.8-titlemenu-rendering-investigation
+Agent: main
+Task: Get TitleMenu or loading screen to render visible content beyond CornflowerBlue
+
+Work Log:
+- Found TitleMenu..ctor has 2 UNSAFE calls at depth 3 (loadPreferences, setRichPresence)
+  but 25+ UNSAFE at depth 6 (LoadString, String::Equals, Int32::ToString all have
+  box T on generic in their subtrees). Too many to nop individually.
+- Global fix: PatchNewobjTitleMenuToNull now patches ALL newobj TitleMenu..ctor()
+  sites (found 2: setGameMode + UpdateTitleScreen). This prevents TitleMenu..ctor
+  from ever being JIT-compiled.
+- Result: Run() succeeds, Tick() succeeds indefinitely, NO transform.c:1146 crash.
+- Set Game1._gameMode=11 (loading mode) to trigger DrawLoadScreen
+- Set Game1.hooks (was already set by Run), Game1.bgColor=CornflowerBlue
+- DrawLoadScreen uses SpriteText.drawString (SDV custom text renderer) which
+  needs font textures. Canvas still shows pure CornflowerBlue — SpriteText
+  likely fails silently (font texture null or other init issue).
+
+Stage Summary:
+- Stable game loop: Run+Tick+Draw all succeed, no crash ✅
+- Canvas: 480,000 CornflowerBlue pixels (99.8%) ✅
+- TitleMenu..ctor blocked (box T crash in call chain) ❌
+- DrawLoadScreen runs but SpriteText doesn't render (font texture issue) ❌
+- Committed + pushed (3540fc9)
+
+Next Steps:
+- Initialize SpriteText font texture manually
+- Or patch DrawLoadScreen to use SpriteBatch.DrawString directly
+- Or find why SpriteText.drawString silently fails
