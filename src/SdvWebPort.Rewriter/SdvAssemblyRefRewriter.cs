@@ -624,8 +624,8 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
-        // TitleMenu.draw nopped — textures loaded but buttons etc. still null → NRE
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
+        // TitleMenu.draw — custom body that draws cloudsTexture (avoids NRE from null buttons)
+        PatchTitleMenuDrawCustom(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -1054,6 +1054,153 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] TitleMenu..ctor truncated: kept {keepCount} instructions + ret (was {instrs.Count - 1})");
+    }
+
+    /// <summary>
+    /// Replace TitleMenu.draw with a custom body that draws cloudsTexture.
+    /// The original draw (2111 instructions) NREs because buttons etc. are null
+    /// (ctor was truncated). This custom body just draws the clouds texture
+    /// as a simple background, proving the full render pipeline works with
+    /// real SDV textures.
+    /// </summary>
+    private static void PatchTitleMenuDrawCustom(AssemblyDefinition asmDef)
+    {
+        var tm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Menus.TitleMenu");
+        if (tm == null) return;
+        var draw = tm.Methods.FirstOrDefault(m => m.Name == "draw");
+        if (draw == null) return;
+
+        var module = asmDef.MainModule;
+
+        // Find SpriteBatch type — look in SDV's own type references (it references SpriteBatch)
+        TypeDefinition? sbType = null;
+        var sbTypeRef = module.GetTypeReferences()
+            .FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.SpriteBatch");
+        if (sbTypeRef != null)
+        {
+            try { sbType = sbTypeRef.Resolve(); } catch { }
+        }
+        // Also try AppDomain
+        if (sbType == null)
+        {
+            var graphicsAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Xna.Framework.Graphics");
+            if (graphicsAsm != null)
+            {
+                var sbTR = module.ImportReference(graphicsAsm.GetType("Microsoft.Xna.Framework.Graphics.SpriteBatch"));
+                try { sbType = sbTR.Resolve(); } catch { }
+            }
+        }
+        if (sbType == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch type not found — skipping custom draw");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
+            return;
+        }
+
+        var drawMethod = sbType.Methods.FirstOrDefault(m =>
+            m.Name == "Draw" && m.Parameters.Count == 3
+            && m.Parameters[0].ParameterType.Name == "Texture2D"
+            && m.Parameters[1].ParameterType.Name == "Vector2"
+            && m.Parameters[2].ParameterType.Name == "Color");
+        if (drawMethod == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch.Draw(Texture2D,Vector2,Color) not found — skipping");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
+            return;
+        }
+
+        // Find cloudsTexture field
+        var cloudsField = tm.Fields.FirstOrDefault(f => f.Name == "cloudsTexture");
+        if (cloudsField == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] cloudsTexture field not found — skipping");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
+            return;
+        }
+
+        // Find Color and Vector2 constructors by scanning all methods in SDV.
+        // Cecil 0.11.6 doesn't have ModuleDefinition.MemberReferences, so we
+        // scan all type methods for the constructor references we need.
+        MethodReference? colorCtorRef = null;
+        MethodReference? vec2CtorRef = null;
+        foreach (var t in module.GetTypes())
+        {
+            foreach (var m in t.Methods)
+            {
+                if (m.Body == null) continue;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.OpCode != OpCodes.Newobj) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+                    if (colorCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Color"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 3)
+                        colorCtorRef = mr;
+                    if (vec2CtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Vector2"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 2)
+                        vec2CtorRef = mr;
+                    if (colorCtorRef != null && vec2CtorRef != null) break;
+                }
+                if (colorCtorRef != null && vec2CtorRef != null) break;
+            }
+            if (colorCtorRef != null && vec2CtorRef != null) break;
+        }
+
+        if (colorCtorRef == null || vec2CtorRef == null)
+        {
+            Console.WriteLine($"[AssemblyRefRewriter] Color/Vector2 ctor not found (color={colorCtorRef != null}, vec2={vec2CtorRef != null}) — skipping");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
+            return;
+        }
+
+        // Build the custom draw body:
+        //   if (this.cloudsTexture != null) {
+        //       b.Draw(this.cloudsTexture, Vector2.Zero, Color.White);
+        //   }
+        var instrs = draw.Body.Instructions;
+        instrs.Clear();
+        draw.Body.ExceptionHandlers.Clear();
+        draw.Body.Variables.Clear();
+
+        var importedDraw = module.ImportReference(drawMethod);
+        var importedClouds = module.ImportReference(cloudsField);
+        var importedColorCtor = module.ImportReference(colorCtorRef);
+        var importedVec2Ctor = module.ImportReference(vec2CtorRef);
+
+        // Build IL:
+        //   if (this.cloudsTexture != null) {
+        //       b.Draw(this.cloudsTexture, new Vector2(0,0), new Color(255,255,255));
+        //   }
+        //   ret
+
+        var ldThis = Instruction.Create(OpCodes.Ldarg_0);
+        var ldClouds = Instruction.Create(OpCodes.Ldfld, importedClouds);
+        var retInstr = Instruction.Create(OpCodes.Ret);
+        var brFalse = Instruction.Create(OpCodes.Brfalse, retInstr);
+
+        instrs.Add(ldThis);
+        instrs.Add(ldClouds);
+        instrs.Add(brFalse);
+
+        // b (SpriteBatch param)
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));
+        // this.cloudsTexture
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+        instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));
+        // new Vector2(0, 0)
+        instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));
+        instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));
+        instrs.Add(Instruction.Create(OpCodes.Newobj, importedVec2Ctor));
+        // new Color(255, 255, 255)
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+        instrs.Add(Instruction.Create(OpCodes.Newobj, importedColorCtor));
+        // b.Draw(texture, position, color)
+        instrs.Add(Instruction.Create(OpCodes.Callvirt, importedDraw));
+        instrs.Add(retInstr);
+
+        Console.WriteLine("[AssemblyRefRewriter] TitleMenu.draw → custom (draw cloudsTexture)");
     }
 
     /// <summary>
