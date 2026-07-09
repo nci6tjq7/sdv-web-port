@@ -928,35 +928,37 @@ public static class SdvAssemblyRefRewriter
     }
 
     /// <summary>
-    /// Replace `newobj TitleMenu..ctor()` with `ldnull` in Game1.setGameMode.
+    /// Replace `newobj TitleMenu..ctor()` with `ldnull` in ALL methods.
     /// TitleMenu..ctor's call chain contains `box T` (generic parameter) which
-    /// triggers transform.c:1146 in Mono WASM JIT. By replacing the newobj with
-    /// ldnull, TitleMenu..ctor is never called (and thus never JIT-compiled),
-    /// avoiding the crash. setGameMode still runs normally (sets _gameMode,
-    /// unloads content, etc.) — only the title menu creation is skipped.
+    /// triggers transform.c:1146 in Mono WASM JIT. By replacing all newobj
+    /// TitleMenu..ctor() calls with ldnull, TitleMenu..ctor is never called
+    /// (and thus never JIT-compiled), avoiding the crash.
     /// </summary>
     private static void PatchNewobjTitleMenuToNull(AssemblyDefinition asmDef)
     {
-        var game1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
-        if (game1 == null) return;
-        var setGameMode = game1.Methods.FirstOrDefault(m => m.Name == "setGameMode");
-        if (setGameMode == null) return;
-
-        var instrs = setGameMode.Body.Instructions;
         int patched = 0;
-        for (int i = 0; i < instrs.Count; i++)
+        foreach (var type in asmDef.MainModule.GetTypes())
         {
-            if (instrs[i].OpCode == OpCodes.Newobj && instrs[i].Operand is MethodReference mr
-                && mr.DeclaringType?.FullName == "StardewValley.Menus.TitleMenu")
+            foreach (var method in type.Methods)
             {
-                // Replace newobj TitleMenu..ctor() with ldnull
-                instrs[i].OpCode = OpCodes.Ldnull;
-                instrs[i].Operand = null;
-                patched++;
+                if (method.Body == null) continue;
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
+                {
+                    if (instrs[i].OpCode == OpCodes.Newobj && instrs[i].Operand is MethodReference mr
+                        && mr.DeclaringType?.FullName == "StardewValley.Menus.TitleMenu")
+                    {
+                        // Replace newobj TitleMenu..ctor() with ldnull
+                        instrs[i].OpCode = OpCodes.Ldnull;
+                        instrs[i].Operand = null;
+                        patched++;
+                        Console.WriteLine($"[AssemblyRefRewriter] Patched newobj TitleMenu → ldnull in {type.FullName}::{method.Name}");
+                    }
+                }
             }
         }
         if (patched > 0)
-            Console.WriteLine($"[AssemblyRefRewriter] Patched setGameMode: {patched} newobj TitleMenu → ldnull");
+            Console.WriteLine($"[AssemblyRefRewriter] Total: {patched} newobj TitleMenu → ldnull");
     }
 
     /// <summary>
