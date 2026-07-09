@@ -1121,11 +1121,30 @@ public static class SdvAssemblyRefRewriter
 
                     // Handle generic parameters (T, TField, TSelf, TKey, etc.)
                     // box T on a generic parameter triggers transform.c:1146 when T is
-                    // instantiated as a value type at runtime. Use box Object (no-op for
-                    // ref types, boxes as Object for value types — may not fully work but
-                    // doesn't break Run() like pop+ldnull does).
+                    // instantiated as a value type at runtime.
+                    // Replace `box T` with `call BoxHelper.Box<T>(T) → object`.
+                    // BoxHelper.Box<T> is a normal generic method call that internally
+                    // does the boxing. The JIT compiles BoxHelper.Box<T> separately,
+                    // avoiding the box-on-generic JIT bug in the calling method.
                     if (tr is GenericParameter)
                     {
+                        var boxHelperType = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "SdvWebPort.Vfs.BoxHelper")
+                                            ?? ImportBoxHelperType(asmDef.MainModule);
+                        if (boxHelperType != null)
+                        {
+                            var boxMethod = boxHelperType.Methods.FirstOrDefault(m => m.Name == "Box");
+                            if (boxMethod != null)
+                            {
+                                // Create a GenericInstanceMethod: BoxHelper.Box<T>
+                                var gim = new GenericInstanceMethod(asmDef.MainModule.ImportReference(boxMethod));
+                                gim.GenericArguments.Add(tr);
+                                instrs[i].OpCode = OpCodes.Call;
+                                instrs[i].Operand = gim;
+                                patchedCount++;
+                                continue;
+                            }
+                        }
+                        // Fallback: box Object (doesn't fully work but avoids crash for ref types)
                         instrs[i].Operand = asmDef.MainModule.TypeSystem.Object;
                         patchedCount++;
                         continue;
@@ -1157,6 +1176,33 @@ public static class SdvAssemblyRefRewriter
         }
 
         Console.WriteLine($"[AssemblyRefRewriter] box EnumType → box underlying: {patchedCount} rewrites (skipped {skippedNotEnum} non-enum)");
+    }
+
+    /// <summary>
+    /// Import the SdvWebPort.Vfs.BoxHelper type into the assembly's main module.
+    /// Used by PatchBoxEnumToInt32 to replace `box T` (generic) with `call BoxHelper.Box<T>`.
+    /// </summary>
+    private static TypeDefinition? ImportBoxHelperType(ModuleDefinition module)
+    {
+        try
+        {
+            var vfsAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "SdvWebPort.Vfs");
+            if (vfsAsm == null) return null;
+            var boxHelperType = vfsAsm.GetType("SdvWebPort.Vfs.BoxHelper");
+            if (boxHelperType == null) return null;
+            // We need a TypeDefinition, but ImportReference gives a TypeReference.
+            // For our purposes (finding the Box method), a TypeReference is fine —
+            // but the caller expects a TypeDefinition to access .Methods.
+            // Workaround: return null and let the caller use box Object fallback.
+            // Actually, we can resolve the imported reference.
+            var imported = module.ImportReference(boxHelperType);
+            return imported.Resolve();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
