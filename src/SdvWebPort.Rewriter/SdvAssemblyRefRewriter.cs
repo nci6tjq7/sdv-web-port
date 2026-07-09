@@ -1050,10 +1050,64 @@ public static class SdvAssemblyRefRewriter
         // Clear exception handlers (they may reference removed instructions)
         ctor.Body.ExceptionHandlers.Clear();
 
+        // Before ret, add:
+        // 1. Initialize this.buttons = new List<ClickableTextureComponent>() (if null)
+        // 2. Call this.setUpIcons() — creates the title screen buttons (safe, no box T)
+        // This allows the original TitleMenu.draw to work without NRE.
+
+        var module = asmDef.MainModule;
+        var buttonsField = tm.Fields.FirstOrDefault(f => f.Name == "buttons");
+        var setUpIconsMethod = tm.Methods.FirstOrDefault(m => m.Name == "setUpIcons");
+
+        if (buttonsField != null && setUpIconsMethod != null)
+        {
+            // Find List<ClickableTextureComponent>..ctor() from existing IL
+            MethodReference? listCtorRef = null;
+            foreach (var ins in ctor.Body.Instructions)
+            {
+                if (ins.OpCode == OpCodes.Newobj && ins.Operand is MethodReference mr
+                    && mr.DeclaringType.FullName.StartsWith("System.Collections.Generic.List`1")
+                    && mr.Parameters.Count == 0)
+                {
+                    listCtorRef = mr;
+                    break;
+                }
+            }
+
+            if (listCtorRef != null)
+            {
+                // Find the GenericInstanceType for List<ClickableTextureComponent>
+                // from the buttonsField's FieldType
+                var importedButtonsField = module.ImportReference(buttonsField);
+                var importedSetUpIcons = module.ImportReference(setUpIconsMethod);
+
+                // Create a new List<ClickableTextureComponent>() constructor reference
+                // The buttonsField.FieldType is already List<ClickableTextureComponent>
+                var listType = buttonsField.FieldType;
+                var listCtor = new MethodReference(".ctor", module.TypeSystem.Void, listType)
+                {
+                    HasThis = true,
+                };
+                var importedListCtor = module.ImportReference(listCtor);
+
+                // ldarg.0 (this)
+                instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+                // new List<ClickableTextureComponent>()
+                instrs.Add(Instruction.Create(OpCodes.Newobj, importedListCtor));
+                // stfld buttons
+                instrs.Add(Instruction.Create(OpCodes.Stfld, importedButtonsField));
+                // ldarg.0 (this)
+                instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+                // callvirt setUpIcons()
+                instrs.Add(Instruction.Create(OpCodes.Call, importedSetUpIcons));
+                Console.WriteLine("[AssemblyRefRewriter] Added buttons init + setUpIcons() call to TitleMenu..ctor");
+            }
+        }
+
         // Add ret
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
-        Console.WriteLine($"[AssemblyRefRewriter] TitleMenu..ctor truncated: kept {keepCount} instructions + ret (was {instrs.Count - 1})");
+        Console.WriteLine($"[AssemblyRefRewriter] TitleMenu..ctor truncated: kept {keepCount} instructions + buttons init + ret");
     }
 
     /// <summary>
