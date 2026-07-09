@@ -780,3 +780,31 @@ Next Steps:
 - Initialize SpriteText font texture manually
 - Or patch DrawLoadScreen to use SpriteBatch.DrawString directly
 - Or find why SpriteText.drawString silently fails
+
+---
+Task ID: phase2.8-clouds-texture-rendered
+Agent: main
+Task: Get real SDV texture content rendering on canvas
+
+Work Log:
+- Extended TitleMenu..ctor truncation to include texture loading (instructions 47-62):
+  Load<Texture2D>("Minigames\Clouds") → cloudsTexture
+  Load<Texture2D>("Minigames\TitleButtons") → titleButtonsTexture
+- Nopped add_OnLanguageChange (delegate creation, may trigger unsafe JIT)
+- Fixed ldarg.0 → nop (was pop, invalid on empty stack)
+- Implemented custom TitleMenu.draw via IL rewriting:
+  - Scans SDV's IL for Color(int,int,int) and Vector2(float,float) constructor refs
+  - Builds custom body: if (cloudsTexture != null) b.Draw(cloudsTexture, new Vector2(0,0), new Color(255,255,255))
+  - Uses SDV's own type references (KNI Graphics assembly not in AppDomain at rewrite time)
+- Result: CLOUDS TEXTURE RENDERED on canvas!
+
+Stage Summary:
+- Full pipeline proven: SDV.dll → Cecil → ALC → GameRunner → Run → LoadContent → Tick → Draw → SpriteBatch.Draw(cloudsTexture) → WebGL2 → canvas
+- Canvas shows 431K non-black pixels with multiple colors (real texture data)
+- 0 errors, 0 crashes, stable game loop
+- Committed + pushed (668fd42)
+
+Next Steps:
+- Extend custom draw to render more title screen elements (title logo, buttons)
+- Or fix the box T crash to enable the original TitleMenu.draw (full title screen)
+- Or initialize more TitleMenu fields for a more complete rendering
