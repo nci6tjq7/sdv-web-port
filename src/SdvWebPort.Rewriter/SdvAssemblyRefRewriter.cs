@@ -1328,7 +1328,21 @@ public static class SdvAssemblyRefRewriter
                     if (constrainedType == null) continue;
 
                     // Check if preceding is &-producing
-                    bool ampPreceding = i > 0 && IsAddressProducing(instrs[i - 1].OpCode.Code);
+                    // Note: ldarg.N can produce &T if the parameter is a byref (T&).
+                    // We check the parameter type, not just the opcode.
+                    bool ampPreceding = false;
+                    if (i > 0)
+                    {
+                        var prev = instrs[i - 1];
+                        if (IsAddressProducing(prev.OpCode.Code))
+                            ampPreceding = true;
+                        // ldarg/ldarg_S/ldarg_N where the parameter is a byref also produces &T
+                        if ((prev.OpCode.Code == Code.Ldarg || prev.OpCode.Code == Code.Ldarg_S
+                             || prev.OpCode.Code == Code.Ldarg_0 || prev.OpCode.Code == Code.Ldarg_1
+                             || prev.OpCode.Code == Code.Ldarg_2 || prev.OpCode.Code == Code.Ldarg_3)
+                            && prev.Operand is ParameterDefinition pd && pd.ParameterType is ByReferenceType)
+                            ampPreceding = true;
+                    }
 
                     if (ampPreceding)
                     {
@@ -1404,8 +1418,6 @@ public static class SdvAssemblyRefRewriter
                         // Value-preceded — for generic parameters, box T triggers transform.c:1146.
                         // Use skip+default for ToString/Equals/GetHashCode (common Object methods).
                         // For other methods, keep box T (may crash, but rare).
-                        if (skipValueCount < 3)
-                            Console.WriteLine($"[AssemblyRefRewriter] value-preceded: type={constrainedType.GetType().Name} {constrainedType.FullName} isGeneric={constrainedType is GenericParameter}, method={interfaceMethod.Name} on {interfaceMethod.DeclaringType.Name}");
                         if (constrainedType is GenericParameter
                             && interfaceMethod.Parameters.Count == 0
                             && (interfaceMethod.Name == "ToString" || interfaceMethod.Name == "Equals"
