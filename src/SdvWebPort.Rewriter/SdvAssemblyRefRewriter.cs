@@ -619,6 +619,9 @@ public static class SdvAssemblyRefRewriter
         PatchTitleMenuCtorTruncate(asmDef);
         // Nop playSound overloads (TypeLoadException from ICue&)
         PatchPlaySoundToNop(asmDef);
+        // Nop NetFields.GetNameForInstance — it uses constrained. T + GetType which
+        // we skip+default to null, causing NRE. Replace with a simple return "instance".
+        PatchGetNameForInstance(asmDef);
         // Nop TitleMenu methods that NRE or crash due to partial init
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
@@ -1339,6 +1342,27 @@ public static class SdvAssemblyRefRewriter
     }
 
     /// <summary>
+    /// Patch NetFields.GetNameForInstance to return a hardcoded string.
+    /// The original method uses constrained. TBaseType + callvirt Object::GetType()
+    /// which we skip+default to null, causing NRE when accessing Type.Name.
+    /// Replace the body with: return "instance";
+    /// </summary>
+    private static void PatchGetNameForInstance(AssemblyDefinition asmDef)
+    {
+        var nf = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "Netcode.NetFields");
+        if (nf == null) return;
+        var m = nf.Methods.FirstOrDefault(x => x.Name == "GetNameForInstance");
+        if (m == null) return;
+        var instrs = m.Body.Instructions;
+        instrs.Clear();
+        m.Body.ExceptionHandlers.Clear();
+        m.Body.Variables.Clear();
+        instrs.Add(Instruction.Create(OpCodes.Ldstr, "instance"));
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+        Console.WriteLine("[AssemblyRefRewriter] Patched NetFields.GetNameForInstance → return \"instance\"");
+    }
+
+    /// <summary>
     /// Patch all playSound overloads to nop. playSound accesses ICue& (byref)
     /// which causes TypeLoadException in WASM (audio types not available).
     /// </summary>
@@ -1549,8 +1573,12 @@ public static class SdvAssemblyRefRewriter
                                 continue;
                             }
                         }
-                        // Fallback: box Object (doesn't fully work but avoids crash for ref types)
-                        instrs[i].Operand = asmDef.MainModule.TypeSystem.Object;
+                        // Fallback: replace box T with unbox.any T + box <concrete>
+                        // Actually, just skip box entirely for generic params —
+                        // replace with nop (value stays as-is on stack as native int/obj).
+                        // This may cause type mismatches but avoids the crash.
+                        instrs[i].OpCode = OpCodes.Nop;
+                        instrs[i].Operand = null;
                         patchedCount++;
                         continue;
                     }
@@ -1800,20 +1828,29 @@ public static class SdvAssemblyRefRewriter
                                 }
                                 else
                                 {
-                                    // Direct method not found — fall back to box with addr fixup
-                                    instrs[i].OpCode = OpCodes.Box;
-                                    FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                    // Direct method not found — pop the &T and push default
+                                    instrs[i].OpCode = OpCodes.Pop;
+                                    instrs[i].Operand = null;
+                                    if (interfaceMethod.ReturnType.MetadataType == MetadataType.Int32
+                                        || interfaceMethod.ReturnType.MetadataType == MetadataType.UInt32)
+                                        callInstr.OpCode = OpCodes.Ldc_I4_0;
+                                    else
+                                        callInstr.OpCode = OpCodes.Ldnull;
+                                    callInstr.Operand = null;
                                     boxFallbackCount++;
                                 }
                             }
                             else
                             {
-                                // Other methods (ToString, GetHashCode, GetType, etc.) — these need
-                                // boxing for Object virtual dispatch. Use box with addr fixup:
-                                // change the preceding &-producer to load the value (ldloc/ldarg/ldsfld/ldfld)
-                                // so `box T` gets a value on the stack (not a &T).
-                                instrs[i].OpCode = OpCodes.Box;
-                                FixupPrecedingAddrInstruction(instrs[i - 1]);
+                                // Other methods — pop &T, push default return
+                                instrs[i].OpCode = OpCodes.Pop;
+                                instrs[i].Operand = null;
+                                if (interfaceMethod.ReturnType.MetadataType == MetadataType.Int32
+                                    || interfaceMethod.ReturnType.MetadataType == MetadataType.UInt32)
+                                    callInstr.OpCode = OpCodes.Ldc_I4_0;
+                                else
+                                    callInstr.OpCode = OpCodes.Ldnull;
+                                callInstr.Operand = null;
                                 boxFallbackCount++;
                             }
                         }
@@ -1841,7 +1878,8 @@ public static class SdvAssemblyRefRewriter
                         }
                         else
                         {
-                            // Keep `box T` behavior (may crash for generic T, but we handle common cases above)
+                            // For value-preceded non-generic types, keep box (should be safe).
+                            // For generic types not handled above, also keep box (may crash).
                             instrs[i].OpCode = OpCodes.Box;
                             boxUntouchedCount++;
                         }
