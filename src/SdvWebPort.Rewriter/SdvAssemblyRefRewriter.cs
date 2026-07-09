@@ -1110,8 +1110,9 @@ public static class SdvAssemblyRefRewriter
             return;
         }
 
-        // Find cloudsTexture field
+        // Find cloudsTexture and titleButtonsTexture fields
         var cloudsField = tm.Fields.FirstOrDefault(f => f.Name == "cloudsTexture");
+        var titleButtonsField = tm.Fields.FirstOrDefault(f => f.Name == "titleButtonsTexture");
         if (cloudsField == null)
         {
             Console.WriteLine("[AssemblyRefRewriter] cloudsTexture field not found — skipping");
@@ -1184,31 +1185,45 @@ public static class SdvAssemblyRefRewriter
 
         var importedDraw = module.ImportReference(drawMethod);
         var importedClouds = module.ImportReference(cloudsField);
+        var importedTitleButtons = titleButtonsField != null ? module.ImportReference(titleButtonsField) : null;
         var importedColorCtor = module.ImportReference(colorCtorRef);
         var importedRectCtor = module.ImportReference(rectCtorRef);
         var importedUiViewport = uiViewportField != null ? module.ImportReference(uiViewportField) : null;
         var importedGetWidth = getWidthRef != null ? module.ImportReference(getWidthRef) : null;
         var importedGetHeight = getHeightRef != null ? module.ImportReference(getHeightRef) : null;
 
+        // Build IL:
+        //   if (this.cloudsTexture != null) {
+        //       int w = Game1.uiViewport.Width;
+        //       int h = Game1.uiViewport.Height;
+        //       // Draw clouds as background (scaled to full screen)
+        //       b.Draw(this.cloudsTexture, new Rectangle(0, 0, w, h), new Color(255,255,255));
+        //   }
+        //   // Draw title buttons texture at center-top (title logo area)
+        //   if (this.titleButtonsTexture != null) {
+        //       b.Draw(this.titleButtonsTexture, new Rectangle(w/2-200, 50, 400, 200), new Color(255,255,255));
+        //   }
+        //   ret
+
         // if (this.cloudsTexture != null)
         instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
         instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));
+        var skipClouds = Instruction.Create(OpCodes.Nop); // placeholder
         var retInstr = Instruction.Create(OpCodes.Ret);
-        instrs.Add(Instruction.Create(OpCodes.Brfalse, retInstr));
+        instrs.Add(Instruction.Create(OpCodes.Brfalse, skipClouds));
 
-        // Get screen dimensions: w = Game1.uiViewport.Width
+        // Get screen dimensions: w = Game1.uiViewport.Width, h = Game1.uiViewport.Height
         if (importedUiViewport != null && importedGetWidth != null)
         {
-            instrs.Add(Instruction.Create(OpCodes.Ldsflda, importedUiViewport));  // &uiViewport
-            instrs.Add(Instruction.Create(OpCodes.Call, importedGetWidth));       // get_Width()
-            instrs.Add(Instruction.Create(OpCodes.Stloc_0));                       // V_0 = width
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, importedUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, importedGetWidth));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
             instrs.Add(Instruction.Create(OpCodes.Ldsflda, importedUiViewport));
             instrs.Add(Instruction.Create(OpCodes.Call, importedGetHeight));
-            instrs.Add(Instruction.Create(OpCodes.Stloc_1));                       // V_1 = height
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
         }
         else
         {
-            // Fallback: use fixed 1280x720
             instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 1280));
             instrs.Add(Instruction.Create(OpCodes.Stloc_0));
             instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 720));
@@ -1216,22 +1231,54 @@ public static class SdvAssemblyRefRewriter
         }
 
         // b.Draw(this.cloudsTexture, new Rectangle(0, 0, w, h), new Color(255,255,255))
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));        // b
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));        // this
-        instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));  // cloudsTexture
-        // new Rectangle(0, 0, w, h)
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_1));
+        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+        instrs.Add(Instruction.Create(OpCodes.Ldfld, importedClouds));
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // x=0
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // y=0
         instrs.Add(Instruction.Create(OpCodes.Ldloc_0));        // w
         instrs.Add(Instruction.Create(OpCodes.Ldloc_1));        // h
         instrs.Add(Instruction.Create(OpCodes.Newobj, importedRectCtor));
-        // new Color(255, 255, 255)
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
         instrs.Add(Instruction.Create(OpCodes.Newobj, importedColorCtor));
-        // callvirt b.Draw(texture, rect, color)
         instrs.Add(Instruction.Create(OpCodes.Callvirt, importedDraw));
+
+        // skipClouds label (also used as entry point for title buttons)
+        instrs.Add(skipClouds);
+
+        // Draw titleButtonsTexture if not null
+        if (importedTitleButtons != null)
+        {
+            // if (this.titleButtonsTexture != null)
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, importedTitleButtons));
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, retInstr));
+            // b.Draw(this.titleButtonsTexture, new Rectangle(w/2-200, 50, 400, 200), new Color(255,255,255))
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_1));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, importedTitleButtons));
+            // x = w/2 - 200
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
+            instrs.Add(Instruction.Create(OpCodes.Div));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 200));
+            instrs.Add(Instruction.Create(OpCodes.Sub));
+            // y = 50
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 50));  // y=50
+            // width = 400
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 400));
+            // height = 200
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 200));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, importedRectCtor));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, importedColorCtor));
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, importedDraw));
+        }
+
         instrs.Add(retInstr);
 
         Console.WriteLine("[AssemblyRefRewriter] TitleMenu.draw → custom (draw cloudsTexture)");
