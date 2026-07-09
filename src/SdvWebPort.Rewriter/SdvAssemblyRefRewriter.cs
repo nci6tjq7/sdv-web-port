@@ -1878,9 +1878,19 @@ public static class SdvAssemblyRefRewriter
                         }
                         else
                         {
-                            // For value-preceded non-generic types, keep box (should be safe).
-                            // For generic types not handled above, also keep box (may crash).
-                            instrs[i].OpCode = OpCodes.Box;
+                            // For ALL value-preceded constrained.+callvirt (not just generic T),
+                            // use skip+default to avoid box entirely. box on ANY type in
+                            // constrained. context triggers transform.c:1146.
+                            instrs[i].OpCode = OpCodes.Pop;
+                            instrs[i].Operand = null;
+                            if (interfaceMethod.ReturnType.MetadataType == MetadataType.Int32
+                                || interfaceMethod.ReturnType.MetadataType == MetadataType.UInt32)
+                                callInstr.OpCode = OpCodes.Ldc_I4_0;
+                            else if (interfaceMethod.ReturnType.MetadataType == MetadataType.Void)
+                                callInstr.OpCode = OpCodes.Nop;
+                            else
+                                callInstr.OpCode = OpCodes.Ldnull;
+                            callInstr.Operand = null;
                             boxUntouchedCount++;
                         }
                     }
