@@ -464,6 +464,20 @@ public partial class Home : ComponentBase
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.bgColor: " + ex.Message); }
         }
+
+        // Set Game1._gameMode to 11 (loading mode) so DrawLoadScreen runs and
+        // renders the "Loading..." text. This proves the full render pipeline
+        // (SpriteBatch.Begin + DrawString + End) works with real SDV code.
+        var gmField = game1Type.GetField("_gameMode", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (gmField != null)
+        {
+            try
+            {
+                gmField.SetValue(null, (byte)11);
+                Console.WriteLine("[+] Game1._gameMode set to 11 (loading mode)");
+            }
+            catch (Exception ex) { Console.WriteLine("[WARN] Game1._gameMode: " + ex.Message); }
+        }
     }
 
     /// <summary>

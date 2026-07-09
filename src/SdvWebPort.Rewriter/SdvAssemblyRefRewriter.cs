@@ -612,9 +612,9 @@ public static class SdvAssemblyRefRewriter
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "resetPlayer");
         // Try nopping setGameMode (called by AfterLoadContent at end)
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
-        // setGameMode calls new TitleMenu() which crashes (box T on generic param
-        // in TitleMenu..ctor call chain triggers transform.c:1146).
-        // Targeted fix: replace newobj TitleMenu..ctor() with ldnull in setGameMode.
+        // TitleMenu..ctor has 25+ UNSAFE calls at depth 6 (box T on generic in
+        // LoadString, String::Equals, Int32::ToString, etc). Too many to nop.
+        // Global fix: replace ALL newobj TitleMenu..ctor() with ldnull.
         PatchNewobjTitleMenuToNull(asmDef);
         // Nop playSound overloads (TypeLoadException from ICue&)
         PatchPlaySoundToNop(asmDef);
