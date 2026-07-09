@@ -55,10 +55,7 @@ public partial class Home : ComponentBase
                     Console.WriteLine("[Home.TickDotNet] Calling game.Run() (Initialize + LoadContent)");
                     _game.Run();
                     Console.WriteLine("[Home.TickDotNet] Run() returned — game initialized");
-
-                    // After Run(), GraphicsDevice is available. Load mouseCursors texture.
-                    try { LoadMouseCursorsAfterRun(); }
-                    catch (Exception ex) { Console.WriteLine("[WARN] LoadMouseCursorsAfterRun: " + ex.Message); }
+                    // Game1.mouseCursors is loaded by the game's own LoadContent() during Run()
                 }
             }
             catch (Exception ex)
@@ -429,42 +426,10 @@ public partial class Home : ComponentBase
         // Game1.musicCategory, ambientCategory — these are IAudioCategory interfaces
         // Game1.soundBank — ISoundBank interface
         // For now, just set them to null-safe stubs or skip
-
-        // Load Game1.mouseCursors texture via content.Load<Texture2D>("LooseSprites\\Cursors")
-        // This is the main UI sprite sheet used by TitleMenu.draw and many other methods.
-        // It's normally loaded by Game1.TranslateFields which runs after language changes.
-        var mouseCursorsField = game1Type.GetField("mouseCursors", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        if (mouseCursorsField != null && mouseCursorsField.GetValue(null) == null)
-        {
-            try
-            {
-                var content = contentField?.GetValue(null);
-                if (content != null)
-                {
-                    var lcmType = content.GetType();
-                    var loadMethod = lcmType.GetMethod("Load", new[] { typeof(string) });
-                    if (loadMethod != null)
-                    {
-                        // Load<Texture2D> is generic — use MakeGenericMethod
-                        var texture2DType = typeof(Microsoft.Xna.Framework.Graphics.Texture2D);
-                        var genericLoad = loadMethod.MakeGenericMethod(texture2DType);
-                        var mouseCursors = genericLoad.Invoke(content, new object[] { "LooseSprites\\Cursors" });
-                        mouseCursorsField.SetValue(null, mouseCursors);
-                        Console.WriteLine("[+] Game1.mouseCursors loaded (LooseSprites\\Cursors)");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                var inner = ex.InnerException ?? ex;
-                Console.WriteLine("[WARN] Game1.mouseCursors: " + inner.GetType().Name + ": " + inner.Message);
-                if (inner.StackTrace != null)
-                {
-                    var firstLine = inner.StackTrace.Split('\n')[0].Trim();
-                    Console.WriteLine("  at: " + firstLine);
-                }
-            }
-        }
+        // NOTE: Game1.mouseCursors and Game1.content are loaded by the game's own
+        // LoadContent() during Run(), so we don't need to load them here.
+        // The pre-Run load attempt below fails (no GraphicsDevice service) but
+        // doesn't break anything — the game's LoadContent handles it correctly.
         var musicCatField = game1Type.GetField("musicCategory", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (musicCatField != null && musicCatField.GetValue(null) == null)
         {
@@ -537,81 +502,6 @@ public partial class Home : ComponentBase
                 Console.WriteLine("[+] Game1.spriteBatch is already set (by Run→LoadContent)");
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.spriteBatch: " + ex.Message); }
-        }
-    }
-
-    /// <summary>
-    /// Load Game1.mouseCursors after Run() completes (GraphicsDevice is available).
-    /// </summary>
-    private void LoadMouseCursorsAfterRun()
-    {
-        // Find the SDV assembly from the loaded assemblies
-        var sdvAsm = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Stardew Valley");
-        if (sdvAsm == null)
-        {
-            Console.WriteLine("[WARN] LoadMouseCursors: SDV assembly not found");
-            return;
-        }
-        var game1Type = sdvAsm.GetType("StardewValley.Game1");
-        if (game1Type == null) return;
-
-        var mouseCursorsField = game1Type.GetField("mouseCursors", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        if (mouseCursorsField == null) { Console.WriteLine("[WARN] LoadMouseCursors: field not found"); return; }
-        if (mouseCursorsField.GetValue(null) != null)
-        {
-            Console.WriteLine("[+] LoadMouseCursors: already loaded");
-            return;
-        }
-        Console.WriteLine("[+] LoadMouseCursors: starting post-Run load");
-
-        var contentField = game1Type.GetField("content", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        var content = contentField?.GetValue(null);
-        if (content == null)
-        {
-            Console.WriteLine("[WARN] LoadMouseCursors: Game1.content is null");
-            return;
-        }
-
-        // Get GraphicsDevice from the game instance
-        var gdProperty = _game?.GetType().BaseType?.GetProperty("GraphicsDevice",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var graphicsDevice = gdProperty?.GetValue(_game);
-        if (graphicsDevice == null)
-        {
-            Console.WriteLine("[WARN] LoadMouseCursors: GraphicsDevice is null");
-            return;
-        }
-
-        // Try using Game1.content.CreateTemporary() which creates a new LCM
-        // with the proper service provider (inherited from the game's ContentManager)
-        try
-        {
-            var createTempMethod = content.GetType().GetMethod("CreateTemporary", Type.EmptyTypes);
-            if (createTempMethod != null)
-            {
-                var tempContent = createTempMethod.Invoke(content, null);
-                if (tempContent != null)
-                {
-                    Console.WriteLine("[+] Created temporary content manager");
-                    var lcmType = tempContent.GetType();
-                    var loadMethod = lcmType.GetMethod("Load", new[] { typeof(string) });
-                    if (loadMethod != null)
-                    {
-                        var texture2DType = typeof(Microsoft.Xna.Framework.Graphics.Texture2D);
-                        var genericLoad = loadMethod.MakeGenericMethod(texture2DType);
-                        var mouseCursors = genericLoad.Invoke(tempContent, new object[] { "LooseSprites\\Cursors" });
-                        mouseCursorsField.SetValue(null, mouseCursors);
-                        Console.WriteLine("[+] Game1.mouseCursors loaded via CreateTemporary (LooseSprites\\Cursors)");
-                        return;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            var inner = ex.InnerException ?? ex;
-            Console.WriteLine("[WARN] CreateTemporary: " + inner.GetType().Name + ": " + inner.Message);
         }
     }
 
