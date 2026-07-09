@@ -715,3 +715,37 @@ Next Steps:
 - Options: (a) find exact crashing method via deeper bisect, (b) implement
   runtime boxing helper, (c) patch Mono WASM runtime, (d) use AOT instead
   of interpreter mode
+
+---
+Task ID: phase2.8-box-helper-investigation
+Agent: main
+Task: Try to fix box T (generic parameter) crash in TitleMenu..ctor call chain
+
+Work Log:
+- Created BoxHelper.Box<T>(T value) using RuntimeHelpers.GetObjectValue
+  (avoids emitting box T in IL). 264 box-on-generic sites converted.
+- Tried BoxHelper with TitleMenu re-enabled → still crashes (GetObjectValue
+  internally does boxing via box T for value types)
+- Improved ampPreceded detection: now handles ldarg of byref parameters
+  (T&). When method has 'out TEnum&' parameter, ldarg.1 produces &T.
+  Previously only ldarga/ldloca were detected.
+- Added skip+default for value-preceded constrained.+ToString/Equals/
+  GetHashCode/GetType on generic T (10 conversions)
+- BFS depth 10 from TitleMenu..ctor: 781 methods visited, 15 with
+  box/constrained on generic params. Shallowest: TryParseEnum at depth 3.
+- Nopping TryParseEnum alone doesn't fix crash — deeper methods also crash
+- TitleMenu..ctor crash requires fixing ALL box-on-generic AND
+  constrained.-on-generic patterns in the call chain simultaneously
+
+Stage Summary:
+- Stable state maintained: newobj TitleMenu → ldnull, Run+Tick+Draw succeed
+- Canvas shows 480,000 CornflowerBlue pixels (99.8% coverage)
+- BoxHelper + improved ampPreceded + skip+default committed (341d825)
+- Remaining: TitleMenu..ctor call chain has multiple box/constrained-on-generic
+  patterns that all need to be fixed simultaneously to avoid the crash
+
+Next Steps:
+- Find ALL constrained.-on-generic patterns in TitleMenu..ctor call chain
+  and handle them (skip+default or direct call)
+- Or: patch Mono WASM runtime to fix transform.c:1146
+- Or: use AOT compilation (may not have the interpreter bug)
