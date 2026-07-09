@@ -614,10 +614,17 @@ public static class SdvAssemblyRefRewriter
         // PatchMethodToNop(asmDef, "StardewValley.Game1", "setGameMode");
         // TitleMenu..ctor has 25+ UNSAFE calls at depth 6 (box T on generic in
         // LoadString, String::Equals, Int32::ToString, etc). Too many to nop.
-        // Global fix: replace ALL newobj TitleMenu..ctor() with ldnull.
-        PatchNewobjTitleMenuToNull(asmDef);
+        // Try: truncate TitleMenu..ctor after the base ctor call (instruction 46).
+        // This keeps field initialization + base ctor but skips all unsafe calls.
+        PatchTitleMenuCtorTruncate(asmDef);
         // Nop playSound overloads (TypeLoadException from ICue&)
         PatchPlaySoundToNop(asmDef);
+        // Nop TitleMenu methods that NRE due to partial init (buttons etc. are null)
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "draw");
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -959,6 +966,52 @@ public static class SdvAssemblyRefRewriter
         }
         if (patched > 0)
             Console.WriteLine($"[AssemblyRefRewriter] Total: {patched} newobj TitleMenu → ldnull");
+    }
+
+    /// <summary>
+    /// Truncate TitleMenu..ctor after the base ctor call.
+    /// Keeps the first 47 instructions (field initialization + base IClickableMenu..ctor call)
+    /// and adds ret. This skips all unsafe calls (loadPreferences, LoadString, setRichPresence,
+    /// etc.) that contain box T (generic parameter) patterns triggering transform.c:1146.
+    /// The partially initialized TitleMenu has enough state for basic rendering.
+    /// </summary>
+    private static void PatchTitleMenuCtorTruncate(AssemblyDefinition asmDef)
+    {
+        var tm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Menus.TitleMenu");
+        if (tm == null) return;
+        var ctor = tm.Methods.FirstOrDefault(m => m.Name == ".ctor" && m.Parameters.Count == 0);
+        if (ctor == null) return;
+
+        var instrs = ctor.Body.Instructions;
+        // Find the base IClickableMenu..ctor call
+        int baseCtorIdx = -1;
+        for (int i = 0; i < instrs.Count; i++)
+        {
+            if (instrs[i].OpCode == OpCodes.Call && instrs[i].Operand is MethodReference mr
+                && mr.Name == ".ctor" && mr.DeclaringType?.Name == "IClickableMenu")
+            {
+                baseCtorIdx = i;
+                break;
+            }
+        }
+        if (baseCtorIdx < 0)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] TitleMenu..ctor: base ctor not found — skipping truncate");
+            return;
+        }
+
+        // Keep instructions 0..baseCtorIdx (inclusive), remove the rest
+        var keepCount = baseCtorIdx + 1;
+        while (instrs.Count > keepCount)
+            instrs.RemoveAt(keepCount);
+
+        // Clear exception handlers (they may reference removed instructions)
+        ctor.Body.ExceptionHandlers.Clear();
+
+        // Add ret
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+
+        Console.WriteLine($"[AssemblyRefRewriter] TitleMenu..ctor truncated: kept {keepCount} instructions + ret (was {instrs.Count - 1})");
     }
 
     /// <summary>

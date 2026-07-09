@@ -445,9 +445,10 @@ public partial class Home : ComponentBase
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.currentGameTime: " + ex.Message); }
         }
 
-        // Set Game1.bgColor to CornflowerBlue (visible) instead of the default dark (5,3,4).
-        // The game clears the canvas with bgColor each frame. Without TitleMenu, the canvas
-        // shows only bgColor. Setting it to a visible color proves the rendering pipeline works.
+        // Set Game1.bgColor to CornflowerBlue (visible) — the game's default is
+        // (5,3,4) which is too dark. With the truncated TitleMenu..ctor, the
+        // title screen may not fully render, so a visible bgColor ensures we
+        // can see the canvas is working.
         var bgField = game1Type.GetField("bgColor", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (bgField != null)
         {
@@ -463,20 +464,6 @@ public partial class Home : ComponentBase
                 }
             }
             catch (Exception ex) { Console.WriteLine("[WARN] Game1.bgColor: " + ex.Message); }
-        }
-
-        // Set Game1._gameMode to 11 (loading mode) so DrawLoadScreen runs and
-        // renders the "Loading..." text. This proves the full render pipeline
-        // (SpriteBatch.Begin + DrawString + End) works with real SDV code.
-        var gmField = game1Type.GetField("_gameMode", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        if (gmField != null)
-        {
-            try
-            {
-                gmField.SetValue(null, (byte)11);
-                Console.WriteLine("[+] Game1._gameMode set to 11 (loading mode)");
-            }
-            catch (Exception ex) { Console.WriteLine("[WARN] Game1._gameMode: " + ex.Message); }
         }
 
         // Set Game1.hooks to a new ModHooks instance. The .cctor (which would
