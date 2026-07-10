@@ -1,5 +1,8 @@
 # Real SDV.dll System.IO Coverage Analysis
 
+> ⚠️ **注意** — 此分析将 13 个 I/O 模式列为 Phase 2.8 阻塞点，但实际 Phase 2.8 的主要阻塞是 Mono WASM JIT transform.c:1146（box T 崩溃），而非 I/O 覆盖。这些 I/O 模式可能在 Phase 3+ 存档加载时仍需处理。
+
+
 **Date:** 2026-07-05
 **Source:** Real GOG `Stardew Valley.dll` v1.6.15.24356 (6.2MB)
 **Tool:** `/tmp/sdv-analyzer/` (Cecil-based static IL scanner)

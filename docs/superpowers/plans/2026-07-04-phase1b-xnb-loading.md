@@ -1,5 +1,8 @@
 # Phase 1b: XNB Loading + Font Rendering Implementation Plan
 
+> ⚠️ **HISTORICAL** — 此计划使用 .NET 10，实际项目已转向 .NET 8 BlazorWebAssembly。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the subagent-driven-development skill (recommended) or the executing-plans skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Parse XNB content files from VFS, extract Texture2D pixel data, decode images via browser Canvas API, create KNI Texture2D objects, and render text using bitmap fonts — all in the Blazor WebAssembly host.

@@ -1,5 +1,8 @@
 # Phase 2: Load Real Stardew Valley DLL in Browser (Facade Assembly Strategy)
 
+> ⚠️ **HISTORICAL** — 此计划使用 .NET 10 + Microsoft.NET.Sdk.WebAssembly，实际项目已转向 .NET 8 + BlazorWebAssembly。详见 v2 设计规格。
+
+
 > **For agentic workers:** This plan describes how to load the real, unmodified `Stardew Valley.dll` (from the user's GOG copy) into the browser-side Blazor WASM runtime and resolve all of its external type references (MonoGame.Framework, etc.) via a `TypeForwardedTo` facade assembly that targets KNI.
 
 **Goal:** Demonstrate that the real `Stardew Valley.dll` (v1.6.15.x, the GOG release) can be loaded into the Blazor WASM runtime, all 1800+ types resolve correctly, and the entry-point types (`StardewValley.Program`, `StardewValley.Game1`) are enumerable via reflection — without modifying the SDV DLL.

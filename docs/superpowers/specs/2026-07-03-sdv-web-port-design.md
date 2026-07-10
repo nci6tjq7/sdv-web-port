@@ -1,6 +1,10 @@
 # Stardew Valley Web Port — Design Document
 
-**Status**: Pivoted to Blazor WebAssembly host (v3.1, 2026-07-04)
+> ⚠️ **DEPRECATED — 此文档为 v1 历史版本，已被 v2 取代。**
+> 请阅读 `docs/superpowers/specs/2026-07-05-sdv-web-port-design-v2.md` 获取当前设计。
+> 本文档保留作为历史参考，其中 .NET 10 / Uno.Wasm.Bootstrap / Jiterpreter 等内容已过时。
+
+**Status**: DEPRECATED (superseded by v2 spec, 2026-07-05)
 **Date**: 2026-07-03
 **Author**: Brainstorming session output
 **Project root**: `/home/z/my-project/`

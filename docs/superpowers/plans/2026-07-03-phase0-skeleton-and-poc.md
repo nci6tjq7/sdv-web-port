@@ -1,5 +1,8 @@
 # Phase 0: Project Skeleton & PoC Implementation Plan
 
+> ⚠️ **HISTORICAL** — Phase 0 使用 .NET 10 + Uno.Wasm.Bootstrap，后于 Phase 2.5b 转向 .NET 8 + BlazorWebAssembly。详见 v2 设计规格 §5.1。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the subagent-driven-development skill (recommended) or the executing-plans skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up a working Uno.Wasm.Bootstrap + .NET 10 project that renders a colored frame in the browser, then run two PoCs (rendering + SMAPI load) to validate the foundational technical assumptions before committing to Phase 1+.

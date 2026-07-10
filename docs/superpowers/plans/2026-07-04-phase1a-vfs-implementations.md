@@ -1,5 +1,8 @@
 # Phase 1a: GOG File Upload + VFS Implementations Implementation Plan
 
+> ⚠️ **HISTORICAL** — 此计划使用 .NET 10，实际项目已转向 .NET 8。FSA/OPFS 设计仍然有效，但 Phase 2.8 使用 HttpVfs 作为开发替代。详见 MEMORY.md #19。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the subagent-driven-development skill (recommended) or the executing-plans skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enable users to provide their GOG copy of Stardew Valley via File System Access API (A2 path) or OPFS upload (A1 fallback), with both VFS implementations passing a shared test suite against the `IVirtualFileSystem` interface from Phase 0 Task 3.

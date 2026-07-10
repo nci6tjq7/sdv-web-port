@@ -1,5 +1,8 @@
 # Phase 0 PoC Report (v2 — Post-Pivot)
 
+> ⚠️ **HISTORICAL** — Phase 0 使用 .NET 10，后于 Phase 2.5b 转向 .NET 8。AOT 在 .NET 8 下已验证可用。详见 v2 设计规格。
+
+
 **Date:** 2026-07-04 (Asia/Shanghai)
 **Branch:** `feat/phase0-skeleton-poc`
 **Plan:** `docs/superpowers/plans/2026-07-03-phase0-skeleton-and-poc.md`
