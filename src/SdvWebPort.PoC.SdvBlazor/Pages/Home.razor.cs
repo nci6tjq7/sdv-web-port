@@ -19,6 +19,10 @@ public partial class Home : ComponentBase
     private bool _loadAttempted;
     private int _tickErrorCount;
     private int _tickSuccessCount;
+    private bool _gameStarted;
+    private string? _uploadProgress;
+
+    public string StatusMessage => _gameStarted ? "Game running" : "Ready to load";
 
     [Inject]
     public IWebAssemblyHostEnvironment HostEnv { get; set; } = null!;
@@ -28,6 +32,82 @@ public partial class Home : ComponentBase
     {
         get => _http!;
         set => _http = value;
+    }
+
+    /// <summary>
+    /// Option 1: Pick SDV directory via File System Access API (Chrome/Edge only)
+    /// </summary>
+    public async Task PickDirectory()
+    {
+        _uploadProgress = "Opening directory picker...";
+        StateHasChanged();
+        try
+        {
+            var result = await JsRuntime.InvokeAsync<string?>("eval", "window.pickSdvDirectory ? 'ok' : 'unsupported'");
+            if (result == "ok")
+            {
+                var success = await JsRuntime.InvokeAsync<bool>("pickSdvDirectory");
+                if (success)
+                {
+                    _uploadProgress = "Directory selected! Starting game...";
+                    StateHasChanged();
+                    await StartGame();
+                }
+                else
+                {
+                    _uploadProgress = "Directory picker cancelled or failed.";
+                }
+            }
+            else
+            {
+                _uploadProgress = "File System Access API not supported. Use Option 2 (file upload) instead.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _uploadProgress = $"Error: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Option 2: Upload SDV files via file input (all browsers)
+    /// </summary>
+    public async Task UploadFiles()
+    {
+        _uploadProgress = "Reading uploaded files...";
+        StateHasChanged();
+        try
+        {
+            var fileCount = await JsRuntime.InvokeAsync<string>("uploadSdvFiles", "sdvFileInput");
+            if (fileCount != null)
+            {
+                _uploadProgress = $"Files uploaded: {fileCount}";
+                StateHasChanged();
+                await StartGame();
+            }
+            else
+            {
+                _uploadProgress = "No files selected. Please choose your SDV folder first.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _uploadProgress = $"Error: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Option 3 / called after upload: Start the game with pre-loaded or uploaded files
+    /// </summary>
+    public async Task StartGame()
+    {
+        _gameStarted = true;
+        _uploadProgress = null;
+        StateHasChanged();
+        // The game loop will start on the next TickDotNet call
+        await Task.CompletedTask;
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -43,6 +123,10 @@ public partial class Home : ComponentBase
     [JSInvokable]
     public async Task TickDotNet()
     {
+        // Only start loading when user has clicked "Start Game"
+        if (!_gameStarted)
+            return;
+
         if (!_loadAttempted)
         {
             _loadAttempted = true;

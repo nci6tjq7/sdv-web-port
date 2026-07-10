@@ -67,6 +67,58 @@
             throw new Error('HTTP ' + xhr.status + ': ' + url);
         };
 
+        // File System Access API — directory picker for GOG install folder
+        window.pickSdvDirectory = async function() {
+            if (!window.showDirectoryPicker) {
+                console.log('[pickSdvDirectory] File System Access API not supported');
+                return null;
+            }
+            try {
+                var handle = await window.showDirectoryPicker({ mode: 'read' });
+                return true; // success
+            } catch (e) {
+                console.log('[pickSdvDirectory] Error: ' + e.message);
+                return null;
+            }
+        };
+
+        // File upload — read files from <input type="file" webkitdirectory>
+        window.uploadSdvFiles = async function(fileInputId) {
+            var input = document.getElementById(fileInputId);
+            if (!input || !input.files || input.files.length === 0) {
+                console.log('[uploadSdvFiles] No files selected');
+                return null;
+            }
+            var results = [];
+            for (var i = 0; i < input.files.length; i++) {
+                var file = input.files[i];
+                var path = file.webkitRelativePath || file.name;
+                results.push({ name: path, size: file.size });
+            }
+            return JSON.stringify(results);
+        };
+
+        // Read a specific file from the uploaded set
+        window.readUploadedFile = async function(fileInputId, fileName) {
+            var input = document.getElementById(fileInputId);
+            if (!input || !input.files) return null;
+            for (var i = 0; i < input.files.length; i++) {
+                var file = input.files[i];
+                var path = file.webkitRelativePath || file.name;
+                if (path === fileName || path.endsWith('/' + fileName) || path.endsWith('\\' + fileName)) {
+                    var buffer = await file.arrayBuffer();
+                    var bytes = new Uint8Array(buffer);
+                    // Convert to base64 for JSInterop (can't pass Uint8Array directly in some cases)
+                    var binary = '';
+                    for (var j = 0; j < bytes.length; j++) {
+                        binary += String.fromCharCode(bytes[j]);
+                    }
+                    return btoa(binary);
+                }
+            }
+            return null;
+        };
+
         function tickJS() {
             var canvas = document.getElementById('theCanvas');
             if (canvas) {

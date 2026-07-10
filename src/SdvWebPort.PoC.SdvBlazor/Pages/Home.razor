@@ -1,13 +1,49 @@
 @page "/"
 @inject IJSRuntime JsRuntime
 
-<PageTitle>SDV Web Port — Phase 2.6 SdvBlazor</PageTitle>
+<PageTitle>SDV Web Port</PageTitle>
 
-<div style="font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px;">
-    <h1 style="color: #569cd6;">Phase 2.6 — Real SDV Game1 Load + Render</h1>
-    <p>Status: <span id="status" style="color: #4ec9b0;">Loading...</span></p>
+<div style="font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; min-height: 100vh;">
+    <h1 style="color: #569cd6;">SDV Web Port — Phase 2.8</h1>
+    <p>Status: <span id="status" style="color: #4ec9b0;">@(StatusMessage)</span></p>
 
-    <div id="canvasHolder" style="background: #000; width: 800px; height: 600px; position: relative;">
+    @if (!_gameStarted)
+    {
+        <div style="margin: 20px 0; padding: 15px; background: #2d2d2d; border-radius: 8px;">
+            <h2 style="color: #4ec9b0;">Upload Game Files</h2>
+            <p style="color: #ccc;">Select your Stardew Valley installation folder (GOG version):</p>
+
+            <div style="margin: 10px 0;">
+                <label style="display: block; margin-bottom: 5px; color: #569cd6;">Option 1: Select Folder (Chrome/Edge)</label>
+                <button @onclick="PickDirectory" style="padding: 8px 16px; background: #007acc; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Choose SDV Folder
+                </button>
+            </div>
+
+            <div style="margin: 10px 0;">
+                <label style="display: block; margin-bottom: 5px; color: #569cd6;">Option 2: Upload Files (All Browsers)</label>
+                <input type="file" id="sdvFileInput" webkitdirectory multiple style="color: #ccc; margin-bottom: 5px;" />
+                <br />
+                <button @onclick="UploadFiles" style="padding: 8px 16px; background: #007acc; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Load Uploaded Files
+                </button>
+            </div>
+
+            <div style="margin: 10px 0;">
+                <label style="display: block; margin-bottom: 5px; color: #569cd6;">Option 3: Use Pre-loaded Files (Dev)</label>
+                <button @onclick="StartGame" style="padding: 8px 16px; background: #2d5d2d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Start Game (Pre-loaded)
+                </button>
+            </div>
+
+            @if (_uploadProgress != null)
+            {
+                <p style="color: #dcdcaa;">@_uploadProgress</p>
+            }
+        </div>
+    }
+
+    <div id="canvasHolder" style="background: #000; width: 800px; height: 600px; position: relative; display: @(_gameStarted ? "block" : "none");">
         <canvas id="theCanvas" width="800" height="600" style="touch-action: none; display: block;"></canvas>
     </div>
 </div>
