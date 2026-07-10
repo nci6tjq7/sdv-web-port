@@ -68,6 +68,20 @@ public static class KniGraphicsPatcher
             pInstrs.Add(Instruction.Create(OpCodes.Ret));
         }
 
+        // Also patch SpriteBatch.Begin to auto-call End if already in begun state.
+        // This prevents "Begin cannot be called again until End" errors when
+        // _draw crashes after Begin but before End.
+        // DISABLED: caused page crash (segfault) — calling End() from within Begin()
+        // when the SpriteBatch is in an inconsistent state crashes WASM.
+        // Alternative: patch _draw to wrap Begin/End in try/finally instead.
+        /*
+        var sbType = asmDef.MainModule.Types.FirstOrDefault(t => t.Name == "SpriteBatch");
+        if (sbType != null)
+        {
+            // ... auto-End code ...
+        }
+        */
+
         using var outputMs = new MemoryStream();
         asmDef.Write(outputMs);
         var result = outputMs.ToArray();
