@@ -1,0 +1,19 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Patch KNI's Xna.Framework.Graphics.dll BEFORE AOT compilation.
+    This patches IsProfileSupported and Platform_IsProfileSupported to return true,
+    avoiding the OffscreenCanvas error in Blazor.GL headless environments.
+
+    The patching is done by a pre-build console app that runs Mono.Cecil on the
+    NuGet package's DLL. The patched DLL replaces the original in the obj/ cache.
+  -->
+  <Target Name="PatchKniGraphicsBeforeAOT" BeforeTargets="Build">
+    <PropertyGroup>
+      <KniGraphicsDll>$(NuGetPackageRoot)/nkast.Xna.Framework.Graphics/4.2.9001/lib/net8.0/Xna.Framework.Graphics.dll</KniGraphicsDll>
+    </PropertyGroup>
+    <Message Importance="high" Text="PatchKniGraphicsBeforeAOT: Checking $(KniGraphicsDll)" />
+    <Exec Command="dotnet run --project $(MSBuildThisFileDirectory)../SdvWebPort.Rewriter --no-build -- patch-kni-graphics &quot;$(KniGraphicsDll)&quot;"
+          Condition="Exists('$(KniGraphicsDll)')"
+          IgnoreExitCode="true" />
+  </Target>
+</Project>

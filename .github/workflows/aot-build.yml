@@ -23,6 +23,9 @@ jobs:
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools
 
+      - name: Patch KNI Graphics DLL (fix IsProfileSupported for AOT)
+        run: bash scripts/patch-kni-graphics.sh
+
       - name: Verify .NET version
         run: dotnet --version
 

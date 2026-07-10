@@ -28,6 +28,23 @@ const URL = `http://localhost:${PORT}/?bisect=${BISECT}`;
         console.log(`[+] Navigating to ${URL} (capturing for ${SECONDS}s)`);
         await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
 
+        // Auto-start the game by clicking "Start Game (Pre-loaded)" button
+        console.log('[+] Auto-starting game (clicking Start Game button)...');
+        try {
+            await page.waitForSelector('button', { timeout: 5000 });
+            const buttons = await page.$$('button');
+            for (const btn of buttons) {
+                const text = await btn.textContent();
+                if (text.includes('Start Game') || text.includes('Pre-loaded')) {
+                    await btn.click();
+                    console.log('[+] Clicked: ' + text.trim());
+                    break;
+                }
+            }
+        } catch (e) {
+            console.log('[!] Could not click Start Game: ' + e.message);
+        }
+
         console.log(`[+] Waiting ${SECONDS}s for SDV load attempt...`);
         await page.waitForTimeout(SECONDS * 1000);
 
