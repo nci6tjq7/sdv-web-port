@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.412'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Build solution
+        run: dotnet build SdvWebPort.sln -c Release
+
+      - name: Run all tests
+        run: |
+          for proj in tests/SdvWebPort.Rewriter.Tests/SdvWebPort.Rewriter.Tests.csproj tests/SdvWebPort.Vfs.Tests/SdvWebPort.Vfs.Tests.csproj tests/SdvWebPort.Content.Tests/SdvWebPort.Content.Tests.csproj; do
+            echo "=== Testing $proj ==="
+            dotnet test "$proj" --nologo --configuration Release
+          done
+
+      - name: Publish (non-AOT, for dev)
+        run: dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj -c Release
+
+      - name: Upload dev artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdv-web-port-dev
+          path: src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/
+          retention-days: 7

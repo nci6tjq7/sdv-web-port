@@ -1,0 +1,53 @@
+name: AOT Build
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # 16GB RAM — enough for AOT LLVM precompilation
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.412'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Verify .NET version
+        run: dotnet --version
+
+      - name: Run unit tests
+        run: |
+          for proj in tests/SdvWebPort.Rewriter.Tests/SdvWebPort.Rewriter.Tests.csproj tests/SdvWebPort.Vfs.Tests/SdvWebPort.Vfs.Tests.csproj tests/SdvWebPort.Content.Tests/SdvWebPort.Content.Tests.csproj; do
+            echo "=== Testing $proj ==="
+            dotnet test "$proj" --nologo
+          done
+
+      - name: Publish with AOT
+        run: dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj -c Release -p:RunAOTCompilation=true
+
+      - name: Upload publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdv-web-port-aot
+          path: src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            src/SdvWebPort.PoC.SdvBlazor/obj/Release/net8.0/wasm/
+          retention-days: 7
