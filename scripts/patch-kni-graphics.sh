@@ -2,10 +2,17 @@
 # Patch KNI's Xna.Framework.Graphics.dll to fix IsProfileSupported before AOT compilation.
 # This runs as a pre-build step to modify the NuGet package DLL in-place.
 set -euo pipefail
-export PATH="/home/z/.dotnet:$PATH"
-export DOTNET_ROOT="/home/z/.dotnet"
 
-GRAPHICS_DLL=$(find /home/z/.nuget/packages/nkast.xna.framework.graphics -name "Xna.Framework.Graphics.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+# Use whichever dotnet is on PATH (GitHub Actions sets it up via setup-dotnet)
+# Don't hardcode /home/z/.dotnet
+
+GRAPHICS_DLL=$(find ~/.nuget/packages/nkast.xna.framework.graphics -name "Xna.Framework.Graphics.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+if [ -z "$GRAPHICS_DLL" ]; then
+  # Try restoring packages first
+  echo "[patch-kni-graphics] Restoring NuGet packages..."
+  dotnet restore /home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj 2>/dev/null || true
+  GRAPHICS_DLL=$(find ~/.nuget/packages/nkast.xna.framework.graphics -name "Xna.Framework.Graphics.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+fi
 if [ -z "$GRAPHICS_DLL" ]; then
   echo "[patch-kni-graphics] Xna.Framework.Graphics.dll not found — skipping"
   exit 0
@@ -17,6 +24,7 @@ echo "[patch-kni-graphics] Patching: $GRAPHICS_DLL"
 cat > /tmp/patch-kni.cs << 'CSHARP'
 using System;
 using System.IO;
+using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
