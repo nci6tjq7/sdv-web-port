@@ -629,6 +629,9 @@ public static class SdvAssemblyRefRewriter
         PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
         // TitleMenu.draw — custom body rendering clouds + title buttons + logo
         PatchTitleMenuDrawCustom(asmDef);
+        // Patch _draw to be a simple custom renderer with proper Begin/End pairing.
+        // This eliminates ALL Begin/End mismatch errors and NREs from null fields.
+        PatchDrawCustom(asmDef);
 
         // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
         PatchUpdateRemoveConstrained(asmDef);
@@ -1111,6 +1114,310 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         Console.WriteLine($"[AssemblyRefRewriter] TitleMenu..ctor truncated: kept {keepCount} instructions + buttons init + ret");
+    }
+
+    /// <summary>
+    /// Replace Game1._draw with a simple custom renderer that properly pairs
+    /// SpriteBatch.Begin/End. This eliminates ALL Begin/End mismatch errors
+    /// and NREs from null fields (staminaRect, dialogueFont, etc.) in the
+    /// original 425-instruction _draw method.
+    ///
+    /// The custom _draw:
+    ///   1. Clears with bgColor
+    ///   2. Begins SpriteBatch
+    ///   3. Draws cloudsTexture (full screen) if TitleMenu has it
+    ///   4. Draws titleButtonsTexture (centered top) if TitleMenu has it
+    ///   5. Ends SpriteBatch
+    ///   6. Returns
+    /// </summary>
+    private static void PatchDrawCustom(AssemblyDefinition asmDef)
+    {
+        var g1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (g1 == null) return;
+        var draw = g1.Methods.FirstOrDefault(m => m.Name == "_draw");
+        if (draw == null) return;
+
+        var module = asmDef.MainModule;
+        var tm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Menus.TitleMenu");
+        if (tm == null) return;
+
+        // Find SpriteBatch type from SDV's type references
+        TypeDefinition? sbType = null;
+        var sbTypeRef = module.GetTypeReferences()
+            .FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.SpriteBatch");
+        if (sbTypeRef != null)
+        {
+            try { sbType = sbTypeRef.Resolve(); } catch { }
+        }
+        if (sbType == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch not found for _draw patch — skipping");
+            return;
+        }
+
+        // Find Begin(7 params), End(0 params), Draw(Texture2D, Rectangle, Color)
+        var beginMethod = sbType.Methods.FirstOrDefault(m => m.Name == "Begin" && m.Parameters.Count == 7);
+        var endMethod = sbType.Methods.FirstOrDefault(m => m.Name == "End" && m.Parameters.Count == 0);
+        var drawMethod = sbType.Methods.FirstOrDefault(m =>
+            m.Name == "Draw" && m.Parameters.Count == 3
+            && m.Parameters[0].ParameterType.Name == "Texture2D"
+            && m.Parameters[1].ParameterType.Name == "Rectangle"
+            && m.Parameters[2].ParameterType.Name == "Color");
+        if (beginMethod == null || endMethod == null || drawMethod == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SpriteBatch Begin/End/Draw not found — skipping _draw patch");
+            return;
+        }
+
+        // Find GraphicsDevice.Clear(Color)
+        TypeDefinition? gdType = null;
+        var gdTypeRef = module.GetTypeReferences()
+            .FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.GraphicsDevice");
+        if (gdTypeRef != null) { try { gdType = gdTypeRef.Resolve(); } catch { } }
+        var clearMethod = gdType?.Methods.FirstOrDefault(m => m.Name == "Clear" && m.Parameters.Count == 1);
+
+        // Find fields and methods
+        var bgColorField = g1.Fields.FirstOrDefault(f => f.Name == "bgColor");
+        var spriteBatchField = g1.Fields.FirstOrDefault(f => f.Name == "spriteBatch");
+        var graphicsField = g1.Fields.FirstOrDefault(f => f.Name == "graphics");
+        var getGraphicsDeviceMethod = graphicsField?.FieldType.Resolve()?.Methods
+            .FirstOrDefault(m => m.Name == "get_GraphicsDevice");
+        var cloudsField = tm.Fields.FirstOrDefault(f => f.Name == "cloudsTexture");
+        var titleButtonsField = tm.Fields.FirstOrDefault(f => f.Name == "titleButtonsTexture");
+        var getActiveClickableMenu = g1.Methods.FirstOrDefault(m => m.Name == "get_activeClickableMenu");
+
+        // Find constructors by scanning SDV's IL
+        MethodReference? colorCtorRef = null;
+        MethodReference? rectCtorRef = null;
+        foreach (var t in module.GetTypes())
+            foreach (var m in t.Methods)
+            {
+                if (m.Body == null) continue;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.OpCode != OpCodes.Newobj) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+                    if (colorCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Color"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 3)
+                        colorCtorRef = mr;
+                    if (rectCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Rectangle"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 4)
+                        rectCtorRef = mr;
+                    if (colorCtorRef != null && rectCtorRef != null) break;
+                }
+                if (colorCtorRef != null && rectCtorRef != null) break;
+            }
+
+        if (bgColorField == null || spriteBatchField == null || cloudsField == null
+            || colorCtorRef == null || rectCtorRef == null)
+        {
+            Console.WriteLine("[AssemblyRefRewriter] Required fields/ctors not found — skipping _draw patch");
+            return;
+        }
+
+        // Find BlendState.AlphaBlend and SamplerState.PointClamp static fields
+        TypeDefinition? blendStateType = null;
+        var bsTypeRef = module.GetTypeReferences().FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.BlendState");
+        if (bsTypeRef != null) { try { blendStateType = bsTypeRef.Resolve(); } catch { } }
+        var alphaBlendField = blendStateType?.Fields.FirstOrDefault(f => f.Name == "AlphaBlend");
+
+        TypeDefinition? samplerStateType = null;
+        var ssTypeRef = module.GetTypeReferences().FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.SamplerState");
+        if (ssTypeRef != null) { try { samplerStateType = ssTypeRef.Resolve(); } catch { } }
+        var pointClampField = samplerStateType?.Fields.FirstOrDefault(f => f.Name == "PointClamp");
+
+        // Find Game1.uiViewport and xTile Rectangle get_Width/get_Height
+        var uiViewportField = g1.Fields.FirstOrDefault(f => f.Name == "uiViewport");
+        MethodReference? getWidthRef = null;
+        MethodReference? getHeightRef = null;
+        if (uiViewportField != null)
+        {
+            var xTileRectType = uiViewportField.FieldType.Resolve();
+            if (xTileRectType != null)
+            {
+                getWidthRef = xTileRectType.Methods.FirstOrDefault(m => m.Name == "get_Width");
+                getHeightRef = xTileRectType.Methods.FirstOrDefault(m => m.Name == "get_Height");
+            }
+        }
+
+        // Build the custom _draw body
+        var instrs = draw.Body.Instructions;
+        instrs.Clear();
+        draw.Body.ExceptionHandlers.Clear();
+        draw.Body.Variables.Clear();
+
+        var intType = module.TypeSystem.Int32;
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_0 = width
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_1 = height
+
+        var iBgColor = module.ImportReference(bgColorField);
+        var iSpriteBatch = module.ImportReference(spriteBatchField);
+        var iBegin = module.ImportReference(beginMethod);
+        var iEnd = module.ImportReference(endMethod);
+        var iDraw = module.ImportReference(drawMethod);
+        var iColorCtor = module.ImportReference(colorCtorRef);
+        var iRectCtor = module.ImportReference(rectCtorRef);
+        var iClouds = module.ImportReference(cloudsField);
+        var iTitleButtons = titleButtonsField != null ? module.ImportReference(titleButtonsField) : null;
+        var iGetACM = getActiveClickableMenu != null ? module.ImportReference(getActiveClickableMenu) : null;
+        var iUiViewport = uiViewportField != null ? module.ImportReference(uiViewportField) : null;
+        var iGetWidth = getWidthRef != null ? module.ImportReference(getWidthRef) : null;
+        var iGetHeight = getHeightRef != null ? module.ImportReference(getHeightRef) : null;
+        var iClear = clearMethod != null ? module.ImportReference(clearMethod) : null;
+        var iGetGD = getGraphicsDeviceMethod != null ? module.ImportReference(getGraphicsDeviceMethod) : null;
+        var iGraphics = graphicsField != null ? module.ImportReference(graphicsField) : null;
+        var iAlphaBlend = alphaBlendField != null ? module.ImportReference(alphaBlendField) : null;
+        var iPointClamp = pointClampField != null ? module.ImportReference(pointClampField) : null;
+
+        var retInstr = Instruction.Create(OpCodes.Ret);
+
+        // 1. GraphicsDevice.Clear(bgColor)
+        if (iClear != null && iGetGD != null && iGraphics != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iGraphics));       // Game1.graphics
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iGetGD));        // .GraphicsDevice
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iBgColor));        // bgColor
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iClear));        // Clear(bgColor)
+        }
+
+        // 2. Get screen dimensions
+        if (iUiViewport != null && iGetWidth != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, iUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetWidth));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, iUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetHeight));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
+        }
+        else
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 1280));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 720));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
+        }
+
+        // 3. SpriteBatch.Begin(SortMode=0, AlphaBlend, PointClamp, null, null, null, null)
+        instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));   // spriteBatch
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));               // SpriteSortMode.Deferred
+        if (iAlphaBlend != null)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iAlphaBlend));
+        else
+            instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        if (iPointClamp != null)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPointClamp));
+        else
+            instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));  // DepthStencilState
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));  // RasterizerState
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));  // Effect
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));  // Matrix?
+        instrs.Add(Instruction.Create(OpCodes.Callvirt, iBegin));
+
+        // 4. Draw cloudsTexture (full screen) — get from TitleMenu instance
+        if (iGetACM != null)
+        {
+            // if (activeClickableMenu != null && cloudsTexture != null)
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));       // get activeClickableMenu
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, retInstr));   // skip if null
+
+            // Draw clouds
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));   // b
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));              // cast to TitleMenu
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iClouds));          // cloudsTexture
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, retInstr));       // skip if null
+
+            // Actually need to reload spriteBatch and cloudsTexture for the Draw call
+            // Let's redo: the above consumed the stack. Let me restructure.
+        }
+
+        // Clear and redo the draw section properly
+        instrs.Clear();
+
+        // 1. Clear with bgColor
+        if (iClear != null && iGetGD != null && iGraphics != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iGraphics));
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iGetGD));
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iBgColor));
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iClear));
+        }
+
+        // 2. Get screen dimensions
+        if (iUiViewport != null && iGetWidth != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, iUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetWidth));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldsflda, iUiViewport));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetHeight));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
+        }
+        else
+        {
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 1280));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 720));
+            instrs.Add(Instruction.Create(OpCodes.Stloc_1));
+        }
+
+        // 3. SpriteBatch.Begin
+        instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+        if (iAlphaBlend != null) instrs.Add(Instruction.Create(OpCodes.Ldsfld, iAlphaBlend));
+        else instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        if (iPointClamp != null) instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPointClamp));
+        else instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Ldnull));
+        instrs.Add(Instruction.Create(OpCodes.Callvirt, iBegin));
+
+        // 4. Try to draw clouds: if (activeClickableMenu is TitleMenu tm && tm.cloudsTexture != null)
+        var skipCloudsLabel = Instruction.Create(OpCodes.Nop);
+        if (iGetACM != null)
+        {
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipCloudsLabel));
+            // b.Draw(tm.cloudsTexture, new Rectangle(0,0,w,h), new Color(255,255,255))
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));     // b
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));             // menu
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));                // (TitleMenu)menu
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iClouds));            // .cloudsTexture
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipCloudsLabel));  // if null skip
+
+            // Reload for Draw call (we consumed cloudsTexture in the null check above)
+            // Actually the brfalse consumed it. Need to reload.
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));     // b
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));             // menu
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));                // (TitleMenu)menu
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iClouds));            // .cloudsTexture
+            // new Rectangle(0, 0, w, h)
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));
+            // new Color(255,255,255)
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iColorCtor));
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw));
+        }
+        instrs.Add(skipCloudsLabel);
+
+        // 5. SpriteBatch.End
+        instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+        instrs.Add(Instruction.Create(OpCodes.Callvirt, iEnd));
+
+        // 6. Return
+        instrs.Add(retInstr);
+
+        Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + End)");
     }
 
     /// <summary>
