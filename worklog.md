@@ -882,3 +882,31 @@ Next Steps:
 - Patch _draw to add try/finally around Begin/End pairs
 - Or patch SpriteBatch.Begin to auto-call End if already begun
 - Or initialize missing fields (staminaRect, dialogueFont) to prevent NREs
+
+---
+Task ID: phase2.8-spritebatch-autofix-attempt
+Agent: main
+Task: Fix SpriteBatch Begin/End mismatch
+
+Work Log:
+- Attempted KNI SpriteBatch.Begin auto-End patch:
+  - Found _beginCalled state field in SpriteBatch
+  - Inserted IL: if (this._beginCalled) this.End();
+  - Result: page crash (WASM segfault) — calling End() from within Begin()
+    when SpriteBatch is in inconsistent state crashes WASM
+  - Disabled patch
+- Attempted pre-Tick SpriteBatch.End() reset:
+  - Called End() via reflection before each _game.Tick()
+  - Result: page crash (same segfault)
+  - Reverted
+
+Stage Summary:
+- Stable state maintained: 0 JIT crashes, 0 page crashes, 29 suppressed errors
+- Canvas: 227 colors, clouds + title buttons visible
+- 7/7 tests pass
+- Committed + pushed (6fad5bb)
+
+Next approaches:
+1. Patch _draw IL to add try/finally around Begin/End pairs (complex but safe)
+2. Directly set _beginCalled=false via reflection before each tick (simple, avoids End())
+3. Initialize missing fields (staminaRect, dialogueFont) to prevent NREs in _draw
