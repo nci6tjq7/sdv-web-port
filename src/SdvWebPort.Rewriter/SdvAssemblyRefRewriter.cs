@@ -615,25 +615,26 @@ public static class SdvAssemblyRefRewriter
         // TitleMenu..ctor has 25+ UNSAFE calls at depth 6 (box T on generic in
         // LoadString, String::Equals, Int32::ToString, etc). Too many to nop.
         // Try: truncate TitleMenu..ctor after the base ctor call (instruction 46).
-        // This keeps field initialization + base ctor but skips all unsafe calls.
+        // With AOT compilation, the Mono WASM interpreter JIT bug (transform.c:1146)
+        // is bypassed entirely. We can use the ORIGINAL SDV methods without patches.
+        // Keep TitleMenu..ctor truncated (still needed — full ctor has non-box issues)
         PatchTitleMenuCtorTruncate(asmDef);
-        // Nop playSound overloads (TypeLoadException from ICue&)
+        // Keep playSound nopped (audio types unavailable in WASM regardless of AOT)
         PatchPlaySoundToNop(asmDef);
-        // Nop NetFields.GetNameForInstance — it uses constrained. T + GetType which
-        // we skip+default to null, causing NRE. Replace with a simple return "instance".
+        // Keep GetNameForInstance patched (constrained. still has issues even with AOT)
         PatchGetNameForInstance(asmDef);
-        // Nop TitleMenu methods that NRE or crash due to partial init
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
-        // TitleMenu.draw — custom body rendering clouds + title buttons + logo
-        PatchTitleMenuDrawCustom(asmDef);
-        // Patch _draw to be a simple custom renderer with proper Begin/End pairing.
-        // This eliminates ALL Begin/End mismatch errors and NREs from null fields.
-        PatchDrawCustom(asmDef);
+        // With AOT, re-enable original TitleMenu methods
+        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
+        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
+        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
+        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
+        // TitleMenu.draw — try original with AOT
+        // PatchTitleMenuDrawCustom(asmDef);
+        // _draw — try original with AOT
+        // PatchDrawCustom(asmDef);
 
-        // Pass 5e: remove constrained. prefixes (→ box) to fix transform.c:1146 in Run() path.
+        // Pass 5e: constrained. prefix handling — still needed even with AOT
+        // (constrained. on value types may have issues in Mono runtime regardless of JIT)
         PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 5f: patch DeepClonerExtensions..cctor to nop.
