@@ -910,3 +910,30 @@ Next approaches:
 1. Patch _draw IL to add try/finally around Begin/End pairs (complex but safe)
 2. Directly set _beginCalled=false via reflection before each tick (simple, avoids End())
 3. Initialize missing fields (staminaRect, dialogueFont) to prevent NREs in _draw
+
+---
+Task ID: phase2.8-begincalled-reset-attempt
+Agent: main
+Task: Fix SpriteBatch Begin/End mismatch via _beginCalled field reset
+
+Work Log:
+- Attempted to set SpriteBatch._beginCalled = false via reflection before each tick
+  (instead of calling End() which caused segfault)
+- Result: ALSO caused page crash! Setting _beginCalled=false while SpriteBatch
+  internal state is inconsistent crashes WASM.
+- Both approaches crash WASM:
+  1. Calling End() → segfault
+  2. Setting _beginCalled=false → segfault
+- Reverted to stable state
+
+Key insight: The ONLY safe way to fix the Begin/End mismatch is to prevent
+the NRE from happening in _draw. This means initializing the missing fields
+(staminaRect, dialogueFont, etc.) that _draw accesses between Begin and End.
+
+Stage Summary:
+- Stable state: 0 JIT crashes, 0 page crashes, 29 suppressed errors
+- 7/7 tests pass
+- Committed + pushed (6fad5bb)
+
+Next: Initialize missing Game1 fields (staminaRect, dialogueFont) to prevent
+_draw from throwing after Begin, which would fix the Begin/End mismatch.
