@@ -616,25 +616,22 @@ public static class SdvAssemblyRefRewriter
         // LoadString, String::Equals, Int32::ToString, etc). Too many to nop.
         // Try: truncate TitleMenu..ctor after the base ctor call (instruction 46).
         // With AOT compilation, the Mono WASM interpreter JIT bug (transform.c:1146)
-        // is bypassed entirely. We can use the ORIGINAL SDV methods without patches.
-        // Keep TitleMenu..ctor truncated (still needed — full ctor has non-box issues)
+        // is bypassed entirely. But full AOT (with all original methods) runs out of
+        // memory during LLVM compilation. Keep the nop patches to reduce code size
+        // for AOT, while still getting the benefit of AOT-compiled runtime assemblies.
         PatchTitleMenuCtorTruncate(asmDef);
-        // Keep playSound nopped (audio types unavailable in WASM regardless of AOT)
         PatchPlaySoundToNop(asmDef);
-        // Keep GetNameForInstance patched (constrained. still has issues even with AOT)
         PatchGetNameForInstance(asmDef);
-        // With AOT, re-enable original TitleMenu methods
-        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
-        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
-        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
-        // PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
-        // TitleMenu.draw — try original with AOT
-        // PatchTitleMenuDrawCustom(asmDef);
-        // _draw — try original with AOT
-        // PatchDrawCustom(asmDef);
+        // Keep TitleMenu methods nopped (reduces AOT code size + avoids NREs from null fields)
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
+        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
+        // Custom draw (proper Begin/End pairing)
+        PatchTitleMenuDrawCustom(asmDef);
+        PatchDrawCustom(asmDef);
 
-        // Pass 5e: constrained. prefix handling — still needed even with AOT
-        // (constrained. on value types may have issues in Mono runtime regardless of JIT)
+        // Pass 5e: constrained. prefix handling
         PatchUpdateRemoveConstrained(asmDef);
 
         // Pass 5f: patch DeepClonerExtensions..cctor to nop.
