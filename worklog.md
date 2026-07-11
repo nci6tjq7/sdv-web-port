@@ -1048,3 +1048,41 @@ Next Steps:
   2. Pre-crop textures at load time into individual sprite textures
   3. Use a different rendering API that doesn't need Nullable<Rectangle>
   4. Patch the WASM JIT to handle Nullable<T> correctly (very hard)
+
+---
+Task ID: phase2.8-drawhelper-approach-failed
+Agent: main
+Task: Try DrawHelper C# class approach to work around Nullable<Rectangle> issue
+
+Work Log:
+- Created DrawHelper.cs with C# helper methods that wrap SpriteBatch.Draw calls
+  requiring Nullable<Rectangle> source rect. The C# compiler generates correct
+  IL for Nullable<T> creation (newobj), which should work in WASM JIT.
+- Attempted to call DrawHelper.DrawWithSource from IL-generated _draw code:
+  - Created TypeReference for DrawHelper in SdvWebPort.PoC.SdvBlazor assembly
+  - Created MethodReference for DrawWithSource(SpriteBatch, Texture2D, Rectangle, Rectangle, Color)
+  - Added AssemblyNameReference to SDV module's AssemblyReferences
+- Result: TypeLoadException — "Could not resolve type with token 01000168
+  from typeref (expected class 'SdvWebPort.PoC.SdvBlazor.DrawHelper' in assembly '')"
+  The assembly name was empty in the typeref, even after adding AssemblyNameReference.
+- Tried adding AssemblyNameReference to module.AssemblyReferences collection:
+  - Result: page crash during GameRunner instantiation
+  - The extra assembly reference destabilizes the WASM runtime
+- Conclusion: calling external assembly methods from IL-generated SDV code
+  is not feasible without destabilizing the WASM runtime.
+- Removed DrawHelper.cs and reverted to stable clouds-only rendering.
+
+Stage Summary:
+- Stable state maintained: 0 crashes, 5 successful ticks, 225 colors, 76.6% non-black
+- Nullable<Rectangle> creation remains the key blocker for source-rect-based rendering
+- The issue is specifically with IL-generated Nullable<T> creation in WASM JIT,
+  NOT with C#-compiled Nullable<T> (which works fine elsewhere in the app)
+- Need a fundamentally different approach: either patch KNI's SpriteBatch.Draw
+  to accept plain Rectangle, or pre-crop textures at load time
+
+Next Steps:
+- Patch KNI SpriteBatch to add a Draw overload taking plain Rectangle source
+- Or create a texture cropping utility that extracts sprite regions into
+  individual Texture2D objects at load time
+- Or investigate the WASM JIT Nullable<T> bug more deeply (may be fixable
+  with a specific IL pattern not yet tried)
