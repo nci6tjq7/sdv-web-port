@@ -1280,3 +1280,48 @@ Next Steps:
 - Fix remaining API mismatches (audio, SoundEffect.FromStream, etc.)
 - Compile decompiled SDV as a library for BlazorWebAssembly
 - This approach bypasses ALL WASM JIT IL limitations (Nullable, method count, etc.)
+
+---
+Task ID: phase3-source-compile-success
+Agent: main
+Task: Verify source-compiled SDV runs in browser
+
+Work Log:
+- Created one-click build script: scripts/build-sdv-source.sh
+  1. Patches KNI Game DLL (4 methods: protected internal → protected)
+  2. Builds MonoGame.Framework facade (401 type forwarders)
+  3. Creates KniCompatShim.cs (88 lines of stubs)
+  4. Creates SDV csproj with all references
+  5. Applies source-level fixes (OnActivated, CueWrapper, etc.)
+  6. Builds SDV → 0 errors
+- Compiled SDV: 5,948,416 bytes (vs original 6,268,416)
+- Published to /tmp/sdv-publish/wwwroot/
+- Ran browser test with source-compiled SDV:
+  - SDV loads successfully ✓
+  - AssemblyRef rewriter runs (0 rewrites needed - source already has correct refs!)
+  - GameRunner instantiated ✓
+  - MonoGame.Framework facade loaded ✓
+  - Canvas renders: 354 colors, 779 white pixels ✓
+  - Same rendering quality as IL-patch version!
+
+Stage Summary:
+- Source-compiled SDV WORKS in browser ✓
+- 0 compile errors → 0 runtime crashes ✓
+- Title screen renders (clouds + logo) ✓
+- No IL patching needed for AssemblyRef/TypeRef (source already correct)
+- KNI compat shim + MG facade sufficient for browser runtime
+
+Key Achievement:
+This proves the source-compile approach (方案B) is viable.
+The compiled SDV loads and renders identically to the IL-patched version,
+but with ZERO runtime IL modification needed. This means:
+1. No more WASM JIT IL limitations
+2. Can modify _draw source directly for full rendering
+3. Can add SMAPI mod support (Harmony works on source-compiled code)
+4. Can modify XNB resources for visual customization
+
+Next Steps:
+- Modify _draw source to render full title screen (no 3-draw-call limit)
+- Add SMAPI mod loading support
+- Add XNB resource customization (visual mods)
+- Implement mobile virtual input
