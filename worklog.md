@@ -1086,3 +1086,36 @@ Next Steps:
   individual Texture2D objects at load time
 - Or investigate the WASM JIT Nullable<T> bug more deeply (may be fixable
   with a specific IL pattern not yet tried)
+
+---
+Task ID: phase2.8-nullable-breakthrough
+Agent: main
+Task: Nullable<Rectangle> WORKS — title screen content rendering
+
+Work Log:
+- Ran diagnostic: drew cloudsTexture with source rect (0, 0, 200, 150) using 4-param Draw
+  - Result: Canvas changed from 225 colors/76.6% to 41 colors/85.0%
+  - New colors appeared: (217,244,255) light blue, (179,215,251) light blue
+  - These are ZOOMED IN clouds pixels — the source rect worked!
+- CONCLUSION: Nullable<Rectangle> creation via newobj WORKS in WASM JIT!
+  Previous conclusion was WRONG. The issue was NOT Nullable<Rectangle> —
+  it was that the specific source rects (282,311,111,60) and (0,187,74,58)
+  pointed to transparent areas of titleButtonsTexture.
+- Drew titleButtonsTexture with source rect (0, 0, 300, 200) at center screen:
+  - Result: 260 colors, 270 white pixels
+  - New colors: (255,215,137) yellow, (226,122,62) orange, (163,108,91) brown
+  - These are SDV title logo colors (yellow chicken, orange/brown text)!
+  - The title screen content IS rendering!
+
+Stage Summary:
+- Nullable<Rectangle> WORKS via newobj pattern ✅
+- titleButtonsTexture renders with correct source rect ✅
+- 260 colors, 270 white pixels — real SDV title screen content visible ✅
+- 0 crashes, 5 successful ticks, stable game loop ✅
+- The previous "Nullable broken" conclusion was incorrect — the source
+  rect coordinates were wrong, not the Nullable creation
+
+Next Steps:
+- Find the exact source rect for the SDV title logo on titleButtonsTexture
+- Fix buttons loop (ldfld on ClickableTextureComponent causes transform.c:366)
+- Render the full title screen with logo + buttons

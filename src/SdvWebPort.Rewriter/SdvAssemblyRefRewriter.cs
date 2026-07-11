@@ -1577,16 +1577,71 @@ public static class SdvAssemblyRefRewriter
         }
         instrs.Add(skipCloudsLabel);
 
-        // 4b. Title logo rendering — DISABLED.
-        // The 4-param Draw (Texture2D, Rectangle, Nullable<Rectangle>, Color) requires
-        // creating a Nullable<Rectangle> value. Both approaches fail in WASM JIT:
-        //   1. newobj Nullable<Rectangle>::.ctor(Rectangle) — runs but doesn't render
-        //      (Nullable appears to be null, so Draw uses entire texture or skips)
-        //   2. ldloca + initobj + call .ctor — crashes the page (WASM assertion)
-        // The 3-param Draw (no source rect) works but draws the ENTIRE texture,
-        // which for titleButtonsTexture is mostly opaque black sprite sheet background.
-        // TODO: Find a way to create Nullable<Rectangle> that works in WASM JIT,
-        //   or use a different rendering approach (e.g., custom texture cropping).
+        // 4b. Draw titleButtonsTexture with source rect to test rendering
+        // NULLABLE<RECTANGLE> WORKS! (proven by cloudsTexture test in previous iteration)
+        // The issue was that titleButtonsTexture's source rects (282,311,111,60) and
+        // (0,187,74,58) point to transparent areas. Let me draw the SDV title logo
+        // using source rect (198, 198, 300, 100) — a larger area that should contain
+        // the logo with opaque pixels.
+        //
+        // Actually, let me draw the title logo using the CORRECT source rect from
+        // the original SDV code. The logo at "normal" state (logoFadeTimer >= 500,
+        // logoSurprisedTimer <= 0) uses source rect X=282 (171 + 111), Y=311, W=111, H=60.
+        // But wait — that area was transparent. Let me try the "surprised" state:
+        // X=171, Y=311, W=111, H=60 (when logoSurprisedTimer > 0 or alternating frame).
+        // And also try the character logo: X=306, Y=198 (+69 if shades), W=85, H=69.
+        //
+        // Let me try drawing at a position that's clearly visible: center of screen,
+        // large dest rect, and the "surprised" source rect (171, 311, 111, 60).
+        if (iGetACM != null && iTitleButtons != null && iDraw4 != null
+            && iColorWhite != null && iNullableRectCtor != null)
+        {
+            var skipTitleLabel = Instruction.Create(OpCodes.Nop);
+
+            // if (activeClickableMenu is TitleMenu)
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel));
+
+            // Check titleButtonsTexture != null
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel));
+
+            // spriteBatch.Draw(titleButtonsTexture, destRect, sourceRect, Color.White)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
+            // dest rect: centered, large — new Rectangle(width/2 - 222, height/2 - 120, 444, 240)
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));        // width
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
+            instrs.Add(Instruction.Create(OpCodes.Div));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 222));
+            instrs.Add(Instruction.Create(OpCodes.Sub));            // width/2 - 222
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));        // height
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
+            instrs.Add(Instruction.Create(OpCodes.Div));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 120));
+            instrs.Add(Instruction.Create(OpCodes.Sub));            // height/2 - 120
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 444));   // dest width
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 240));   // dest height
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));
+            // source rect: new Nullable<Rectangle>(new Rectangle(0, 0, 300, 200))
+            // Draw the top-left 300x200 area of titleButtonsTexture — should have opaque content
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // x=0
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));       // y=0
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 300));    // width=300
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 200));    // height=200
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));          // new Rectangle(0,0,300,200)
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iNullableRectCtor));  // new Nullable<Rectangle>(rect)
+            // Color.White
+            instrs.Add(Instruction.Create(OpCodes.Call, iColorWhite));
+            // Call Draw(Texture2D, Rectangle, Nullable<Rectangle>, Color)
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw4));
+
+            instrs.Add(skipTitleLabel);
+        }
 
         // 4c. Draw buttons — DISABLED for now.
         // The buttons list iteration causes transform.c:366 / page crash.
