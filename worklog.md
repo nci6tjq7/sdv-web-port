@@ -1012,3 +1012,39 @@ Next Steps:
 - Investigate why 9-param Draw doesn't render the logo (try different source rects)
 - Fix buttons loop: use ldflda+ldobj instead of ldfld for value type fields
 - Or try the 4-param Draw with Nullable<Rectangle> source rect (may work better)
+
+---
+Task ID: phase2.8-nullable-rect-investigation
+Agent: main
+Task: Investigate why Nullable<Rectangle> source rect doesn't work in WASM JIT
+
+Work Log:
+- Tested 9-param SpriteBatch.Draw with Nullable<Rectangle> source rect:
+  - Source rect (282, 311, 111, 60) for SDV logo
+  - IL runs without crashes (5 successful ticks)
+  - But 0 white pixels rendered — logo not visible
+- Tested 4-param SpriteBatch.Draw with Nullable<Rectangle> source rect:
+  - Source rect (0, 187, 74, 58) for "New Game" button (known visible content)
+  - Same result: 0 new colors, 0 white pixels
+- Verified titleButtonsTexture IS loaded and non-null:
+  - Drew entire texture fullscreen with 3-param Draw
+  - Result: 86.4% black, 13% CornflowerBlue (sprite sheet with black background)
+- Tried ldloca+initobj+call pattern instead of newobj for Nullable<Rectangle>:
+  - Result: PAGE CRASH (WASM assertion)
+  - The initobj+call pattern is not safe in WASM JIT
+- Conclusion: Nullable<Rectangle> creation is fundamentally broken in WASM JIT
+  - newobj: runs but produces null Nullable (Draw skips or uses entire texture)
+  - ldloca+initobj+call: crashes the page
+
+Stage Summary:
+- Reverted to stable state: 3-param Draw (clouds only), no source rect
+- 0 crashes, 5 successful ticks, 225 colors, 76.6% non-black
+- Root cause identified: Nullable<T> value type creation doesn't work in WASM JIT
+- This blocks ALL source-rect-based rendering (title logo, buttons, sprites)
+
+Next Steps:
+- Find alternative to Nullable<Rectangle> for source rects:
+  1. Patch SpriteBatch.Draw to accept plain Rectangle (non-nullable) source
+  2. Pre-crop textures at load time into individual sprite textures
+  3. Use a different rendering API that doesn't need Nullable<Rectangle>
+  4. Patch the WASM JIT to handle Nullable<T> correctly (very hard)

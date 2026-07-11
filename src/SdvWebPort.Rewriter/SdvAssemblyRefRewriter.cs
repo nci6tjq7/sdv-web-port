@@ -1391,10 +1391,16 @@ public static class SdvAssemblyRefRewriter
             draw.Body.Variables.Add(new VariableDefinition(ctcType));
         else
             draw.Body.Variables.Add(new VariableDefinition(module.ImportReference(typeof(object))));
+        // V_6 = Nullable<Rectangle> for source rect
+        if (nullableRectCtorRef != null)
+            draw.Body.Variables.Add(new VariableDefinition(nullableRectCtorRef.DeclaringType));
+        else
+            draw.Body.Variables.Add(new VariableDefinition(module.ImportReference(typeof(object))));
 
-        // Keep references to V_4 and V_5 for Stloc_S/Ldloc_S (which take VariableDefinition)
+        // Keep references to V_4, V_5, V_6 for Stloc_S/Ldloc_S (which take VariableDefinition)
         var v4Buttons = draw.Body.Variables[4];
         var v5Btn = draw.Body.Variables[5];
+        var v6NullableRect = draw.Body.Variables[6];
 
         var iBgColor = module.ImportReference(bgColorField);
         var iSpriteBatch = module.ImportReference(spriteBatchField);
@@ -1571,77 +1577,16 @@ public static class SdvAssemblyRefRewriter
         }
         instrs.Add(skipCloudsLabel);
 
-        // 4b. Draw title logo (SDV logo) — titleButtonsTexture at center top
-        // Uses 9-param Draw: Draw(Texture2D, Vector2, Nullable<Rectangle>, Color, float, Vector2, float, SpriteEffects, float)
-        // Source rect: (282, 311, 111, 60) — the SDV logo on titleButtonsTexture
-        //   (X=282 is the "normal" logo state when logoFadeTimer=0 and logoSurprisedTimer<=0)
-        // Position: (width/2, height/2 - 30*pixelZoom) — center, slightly above middle
-        // Scale: pixelZoom (4x) — logo is 444x240 on screen
-        // LayerDepth: 0.2
-        if (iGetACM != null && iTitleButtons != null && iDraw9 != null
-            && iVector2Ctor != null && iColorWhite != null && iVector2Zero != null
-            && iNullableRectCtor != null && iPixelZoom != null)
-        {
-            var skipTitleLabel = Instruction.Create(OpCodes.Nop);
-            // if (activeClickableMenu is TitleMenu) — get titleButtonsTexture
-            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
-            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel));
-
-            // Check titleButtonsTexture != null
-            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
-            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));              // (TitleMenu)menu
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));    // .titleButtonsTexture
-            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel)); // skip if null
-
-            // spriteBatch
-            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
-            // texture: titleButtonsTexture (from TitleMenu instance)
-            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
-            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));              // (TitleMenu)menu
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));    // .titleButtonsTexture
-            // position: new Vector2(width/2, height/2 - 30*pixelZoom)
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));                 // width
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Div));                     // width/2 (float)
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));                 // height
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Div));                     // height/2 (float)
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 30));              // 30
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPixelZoom));      // pixelZoom
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
-            instrs.Add(Instruction.Create(OpCodes.Mul));                     // 30 * pixelZoom
-            instrs.Add(Instruction.Create(OpCodes.Sub));                     // height/2 - 30*pixelZoom
-            instrs.Add(Instruction.Create(OpCodes.Newobj, iVector2Ctor));    // new Vector2(x, y)
-            // source rect: new Nullable<Rectangle>(new Rectangle(282, 311, 111, 60))
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 282));             // x
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 311));             // y
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 111));             // width
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 60));              // height
-            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));       // new Rectangle(282, 311, 111, 60)
-            instrs.Add(Instruction.Create(OpCodes.Newobj, iNullableRectCtor)); // new Nullable<Rectangle>(...)
-            // color: Color.White
-            instrs.Add(Instruction.Create(OpCodes.Call, iColorWhite));       // Color.White
-            // rotation: 0
-            instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));              // rotation = 0
-            // origin: Vector2.Zero
-            instrs.Add(Instruction.Create(OpCodes.Call, iVector2Zero));      // Vector2.Zero
-            // scale: pixelZoom (as float)
-            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPixelZoom));      // pixelZoom
-            instrs.Add(Instruction.Create(OpCodes.Conv_R4));                 // (float)pixelZoom
-            // effects: SpriteEffects.None = 0
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));                // SpriteEffects.None
-            // layerDepth: 0.2
-            instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0.2f));            // layerDepth = 0.2
-            // call Draw
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw9));
-
-            instrs.Add(skipTitleLabel);
-        }
+        // 4b. Title logo rendering — DISABLED.
+        // The 4-param Draw (Texture2D, Rectangle, Nullable<Rectangle>, Color) requires
+        // creating a Nullable<Rectangle> value. Both approaches fail in WASM JIT:
+        //   1. newobj Nullable<Rectangle>::.ctor(Rectangle) — runs but doesn't render
+        //      (Nullable appears to be null, so Draw uses entire texture or skips)
+        //   2. ldloca + initobj + call .ctor — crashes the page (WASM assertion)
+        // The 3-param Draw (no source rect) works but draws the ENTIRE texture,
+        // which for titleButtonsTexture is mostly opaque black sprite sheet background.
+        // TODO: Find a way to create Nullable<Rectangle> that works in WASM JIT,
+        //   or use a different rendering approach (e.g., custom texture cropping).
 
         // 4c. Draw buttons — DISABLED for now.
         // The buttons list iteration causes transform.c:366 / page crash.
@@ -1659,7 +1604,7 @@ public static class SdvAssemblyRefRewriter
         // 6. Return
         instrs.Add(retInstr);
 
-        Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + Title logo + End)");
+        Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + End)");
     }
 
     /// <summary>
