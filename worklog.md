@@ -1237,3 +1237,46 @@ The WASM JIT has severe limitations for runtime-modified assemblies:
 
 These limitations mean we cannot render the full title screen with buttons
 using IL-generated code. The best we can do is clouds + title logo.
+
+---
+Task ID: phase3-decompile-sdv
+Agent: main
+Task: Decompile SDV.dll to C# source for source-level WASM compatibility
+
+Work Log:
+- Installed ICSharpCode.Decompiler 8.2.0 (ILSpy engine)
+- Decompiled SDV.dll using ilspycmd -p (project mode):
+  - 950 C# files generated, 306,774 lines of code
+  - 69 namespaces, 0 decompilation errors
+  - Code quality: clean, readable C# with lambda syntax
+- Copied decompiled project to src/StardewValley.Decompiled/
+- Created KniCompatShim.cs with stub types:
+  - CueDefinition (missing from KNI Audio)
+  - XactSound (used by CueDefinition)
+  - NoAudioHardwareException
+- Created KniGamePatcher.cs:
+  - Patches KNI Game.Initialize/UnloadContent/Update/Draw
+  - Changes accessibility from "protected internal" to "protected"
+  - Allows SDV's GameRunner to override them
+- Fixed GameRunner.OnActivated signature (KNI uses 1-param version)
+- Initial build: 14 errors → 8 errors → 6 override errors → 472 errors
+  - Override errors fixed by patching KNI Game DLL
+  - 472 errors are mostly CS0012 (type defined in unreferenced assembly)
+  - Root cause: SDV deps (xTile, GameData) reference MonoGame.Framework v3.6
+    but we use KNI Xna.Framework.* — need type forwarding
+
+Stage Summary:
+- SDV successfully decompiled to 950 C# files (306K lines) ✅
+- KNI Game method accessibility patched ✅
+- CueDefinition stub created ✅
+- 472 build errors remain, mostly API mismatch between MG and KNI:
+  - 370 CS0012: type defined in unreferenced MG assembly
+  - 48 CS1061: missing methods in KNI
+  - 20 CS0103: missing types
+- Next: create MonoGame.Framework facade that type-forwards to KNI
+
+Next Steps:
+- Add MonoGame.Framework facade reference to resolve CS0012 errors
+- Fix remaining API mismatches (audio, SoundEffect.FromStream, etc.)
+- Compile decompiled SDV as a library for BlazorWebAssembly
+- This approach bypasses ALL WASM JIT IL limitations (Nullable, method count, etc.)

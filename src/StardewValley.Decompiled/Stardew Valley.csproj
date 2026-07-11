@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Stardew Valley</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>11.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <NoWarn>CS0168;CS0219;CS0414;CS0649;CS0169;CS8600;CS8601;CS8602;CS8603;CS8604;CS8610;CS8611;CS8625;CS8714;CS8765;CS8767;CS8769;CS1998;CS0108;CS0114;CS8019;CS0246;CS0234</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup>
+    <RootNamespace />
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="StardewValley.Icon.ico" LogicalName="StardewValley.Icon.ico" />
+    <EmbeddedResource Include="StardewValley.Icon.bmp" LogicalName="StardewValley.Icon.bmp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.Xna.Framework">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Game">
+      <HintPath>/tmp/Xna.Framework.Game.patched.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Graphics">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.Graphics.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Content">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.Content.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Input">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.Input.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Audio">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.Audio.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Xna.Framework.Media">
+      <HintPath>/home/z/my-project/src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/deps/kni/Xna.Framework.Media.dll</HintPath>
+    </Reference>
+    <Reference Include="xTile">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/xTile.dll</HintPath>
+    </Reference>
+    <Reference Include="StardewValley.GameData">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/StardewValley.GameData.dll</HintPath>
+    </Reference>
+    <Reference Include="SkiaSharp">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/SkiaSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/Steamworks.NET.dll</HintPath>
+    </Reference>
+    <Reference Include="GalaxyCSharp">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/GalaxyCSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Lidgren.Network">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/Lidgren.Network.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.HashFunction.Interfaces">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/System.Data.HashFunction.Interfaces.dll</HintPath>
+    </Reference>
+    <Reference Include="BmFont">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/BmFont.dll</HintPath>
+    </Reference>
+    <Reference Include="TextCopy">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/TextCopy.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.HashFunction.xxHash">
+      <HintPath>/tmp/sdv-extract/Stardew Valley/System.Data.HashFunction.xxHash.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

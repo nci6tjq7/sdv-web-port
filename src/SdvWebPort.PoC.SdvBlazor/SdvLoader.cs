@@ -159,6 +159,23 @@ public static class SdvLoader
                     }
                 }
 
+                // Run GamePatcher on Xna.Framework.Game to fix method accessibility
+                // (Initialize, UnloadContent, Update, Draw are "protected internal" in KNI
+                // but need to be "protected" for SDV's GameRunner to override them)
+                if (name == "Xna.Framework.Game")
+                {
+                    try
+                    {
+                        bytes = SdvWebPort.Rewriter.KniGamePatcher.Patch(bytes);
+                        Console.WriteLine($"[SdvLoader]   {name}: Game-patched ({bytes.Length:N0} bytes)");
+                        _preloadedStubs[name] = bytes;
+                    }
+                    catch (Exception rex)
+                    {
+                        Console.WriteLine($"[SdvLoader]   {name}: Game patch failed: {rex.Message}");
+                    }
+                }
+
                 var existing2 = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == name);
                 if (existing2 != null)
