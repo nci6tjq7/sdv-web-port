@@ -1119,3 +1119,36 @@ Next Steps:
 - Find the exact source rect for the SDV title logo on titleButtonsTexture
 - Fix buttons loop (ldfld on ClickableTextureComponent causes transform.c:366)
 - Render the full title screen with logo + buttons
+
+---
+Task ID: phase2.8-title-logo-rendering
+Agent: main
+Task: Render SDV title logo with correct source rect + investigate buttons
+
+Work Log:
+- Confirmed Nullable<Rectangle> WORKS via newobj pattern (cloudsTexture diagnostic)
+- Found correct title logo source rect: (0, 0, 512, 337) on titleButtonsTexture
+  - Previous rects (282,311,111,60) and (0,187,74,58) pointed to transparent areas
+  - The (0,0,512,337) rect contains the full SDV logo: yellow chicken, orange text
+- Title logo rendering: 354 colors, 779 white pixels (up from 225 colors, 0 white)
+- Investigated buttons rendering — found THREE separate WASM JIT issues:
+  1. List<ClickableTextureComponent>.get_Count() → "containing type not fully instantiated"
+     (generic method on List<CTC> can't be JIT-compiled)
+  2. ldfld on ClickableTextureComponent value type fields (bounds, sourceRect)
+     → transform.c:366 assertion
+  3. Two Draw4 calls with DIFFERENT source rects → page segfault
+     (two identical Draw4 calls work fine, but different source rects crash)
+- Workaround: use only ONE Draw4 call per method (title logo only)
+- Button rendering disabled — needs method extraction to avoid multi-Draw4 crash
+
+Stage Summary:
+- SDV title logo VISIBLE on canvas ✅ (354 colors, 779 white pixels)
+- Clouds texture fullscreen ✅
+- 0 crashes, 5 successful ticks, stable game loop ✅
+- Button rendering blocked by WASM JIT limitation (multi-Draw4 crash)
+- Canvas saved to download/title-logo-final.png
+
+Next Steps:
+- Extract button drawing into a separate injected method to avoid multi-Draw4 crash
+- Or use 3-param Draw for clouds + Draw4 for title logo (current approach works)
+- Or try rendering buttons via C# helper called through reflection
