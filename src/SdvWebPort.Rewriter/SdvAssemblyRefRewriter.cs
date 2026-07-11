@@ -630,6 +630,9 @@ public static class SdvAssemblyRefRewriter
         // Custom draw (proper Begin/End pairing)
         PatchTitleMenuDrawCustom(asmDef);
         PatchDrawCustom(asmDef);
+        // InjectDrawButtonsHelper DISABLED — injecting new methods into Game1
+        // causes WASM JIT instability even if the method is never called.
+        // InjectDrawButtonsHelper(asmDef);
 
         // Pass 5e: constrained. prefix handling
         PatchUpdateRemoveConstrained(asmDef);
@@ -1629,38 +1632,11 @@ public static class SdvAssemblyRefRewriter
             instrs.Add(skipTitleLabel);
         }
 
-        // 4c. Draw button texture at button position using 3-param Draw
-        // 3-param Draw + Draw4 + 3-param Draw works (3 draw calls total is the limit).
-        // More than 3 draw calls or mixing Draw4 + Draw9 causes WASM JIT hang/crash.
-        if (iGetACM != null && iTitleButtons != null && iDraw != null)
-        {
-            var skipButtonLabel = Instruction.Create(OpCodes.Nop);
-
-            // if (activeClickableMenu is TitleMenu)
-            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
-            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipButtonLabel));
-
-            // spriteBatch.Draw(titleButtonsTexture, new Rectangle(100, 400, 296, 232), Color.White)
-            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
-            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
-            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
-            // dest rect: new Rectangle(100, 400, 296, 232)
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 100));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 400));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 296));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 232));
-            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));
-            // Color.White
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
-            instrs.Add(Instruction.Create(OpCodes.Newobj, iColorCtor));
-            // Call 3-param Draw(Texture2D, Rectangle, Color)
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw));
-
-            instrs.Add(skipButtonLabel);
-        }
+        // 4c. Call DrawButtonsHelper to render buttons
+        // DISABLED: calling the injected helper from _draw causes WASM JIT hang.
+        // The method call itself (not the draw calls) triggers the issue.
+        // Keeping the helper injection for future use, but not calling it.
+        // Current stable state: clouds (3-param) + title logo (Draw4) = 2 draw calls.
 
         // 5. SpriteBatch.End
         instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
@@ -1670,6 +1646,135 @@ public static class SdvAssemblyRefRewriter
         instrs.Add(retInstr);
 
         Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + End)");
+    }
+
+    /// <summary>
+    /// Inject a static helper method DrawButtonsHelper into Game1 that draws
+    /// the 4 title screen buttons. This is called from _draw to avoid the
+    /// 3-draw-call complexity limit (each method can have ~3 draw calls).
+    /// By extracting button drawing into a separate method, _draw can have
+    /// clouds + title logo (2 calls) + call to DrawButtonsHelper (which has 4 calls).
+    /// </summary>
+    private static void InjectDrawButtonsHelper(AssemblyDefinition asmDef)
+    {
+        var g1 = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Game1");
+        if (g1 == null) return;
+
+        var module = asmDef.MainModule;
+        var tm = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Menus.TitleMenu");
+        if (tm == null) return;
+
+        // Find SpriteBatch type
+        TypeDefinition? sbType = null;
+        var sbTypeRef = module.GetTypeReferences().FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Graphics.SpriteBatch");
+        if (sbTypeRef != null) { try { sbType = sbTypeRef.Resolve(); } catch { } }
+        if (sbType == null) return;
+
+        // Find 3-param Draw(Texture2D, Rectangle, Color)
+        var drawMethod = sbType.Methods.FirstOrDefault(m =>
+            m.Name == "Draw" && m.Parameters.Count == 3
+            && m.Parameters[0].ParameterType.Name == "Texture2D"
+            && m.Parameters[1].ParameterType.Name == "Rectangle"
+            && m.Parameters[2].ParameterType.Name == "Color");
+        if (drawMethod == null) return;
+
+        // Find Rectangle ctor
+        MethodReference? rectCtorRef = null;
+        foreach (var t in module.GetTypes())
+            foreach (var m in t.Methods)
+            {
+                if (m.Body == null) continue;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.OpCode != OpCodes.Newobj) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+                    if (rectCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Rectangle"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 4)
+                        rectCtorRef = mr;
+                    if (rectCtorRef != null) break;
+                }
+                if (rectCtorRef != null) break;
+            }
+        if (rectCtorRef == null) return;
+
+        // Find Color ctor(int, int, int)
+        MethodReference? colorCtorRef = null;
+        foreach (var t in module.GetTypes())
+            foreach (var m in t.Methods)
+            {
+                if (m.Body == null) continue;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.OpCode != OpCodes.Newobj) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+                    if (colorCtorRef == null && mr.DeclaringType.FullName == "Microsoft.Xna.Framework.Color"
+                        && mr.Name == ".ctor" && mr.Parameters.Count == 3)
+                        colorCtorRef = mr;
+                    if (colorCtorRef != null) break;
+                }
+                if (colorCtorRef != null) break;
+            }
+        if (colorCtorRef == null) return;
+
+        // Find fields
+        var spriteBatchField = g1.Fields.FirstOrDefault(f => f.Name == "spriteBatch");
+        var titleButtonsField = tm.Fields.FirstOrDefault(f => f.Name == "titleButtonsTexture");
+        var getActiveClickableMenu = g1.Methods.FirstOrDefault(m => m.Name == "get_activeClickableMenu");
+        if (spriteBatchField == null || titleButtonsField == null || getActiveClickableMenu == null) return;
+
+        // Create the new method
+        var helperMethod = new MethodDefinition("DrawButtonsHelper",
+            MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
+
+        var iSpriteBatch = module.ImportReference(spriteBatchField);
+        var iTitleButtons = module.ImportReference(titleButtonsField);
+        var iGetACM = module.ImportReference(getActiveClickableMenu);
+        var iDraw = module.ImportReference(drawMethod);
+        var iRectCtor = module.ImportReference(rectCtorRef);
+        var iColorCtor = module.ImportReference(colorCtorRef);
+
+        var instrs = helperMethod.Body.Instructions;
+        helperMethod.Body.Variables.Add(new VariableDefinition(tm));  // V_0 = TitleMenu instance
+
+        var skipLabel = Instruction.Create(OpCodes.Nop);
+
+        // if (activeClickableMenu is TitleMenu tm)
+        instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+        instrs.Add(Instruction.Create(OpCodes.Isinst, tm));
+        instrs.Add(Instruction.Create(OpCodes.Stloc_0));  // V_0 = (TitleMenu)menu
+        instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
+        instrs.Add(Instruction.Create(OpCodes.Brfalse, skipLabel));
+
+        // Check titleButtonsTexture != null
+        instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
+        instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
+        instrs.Add(Instruction.Create(OpCodes.Brfalse, skipLabel));
+
+        // Draw 2 buttons at different positions (keep method simple to avoid JIT crash)
+        int[] buttonXOffsets = { 100, 450 };
+        foreach (var xOffset in buttonXOffsets)
+        {
+            // spriteBatch.Draw(titleButtonsTexture, new Rectangle(xOffset, 400, 296, 232), Color.White)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, xOffset));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 400));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 296));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 232));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iColorCtor));
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw));
+        }
+
+        instrs.Add(skipLabel);
+        instrs.Add(Instruction.Create(OpCodes.Ret));
+
+        g1.Methods.Add(helperMethod);
+        Console.WriteLine("[AssemblyRefRewriter] Injected Game1.DrawButtonsHelper (2 button draws)");
     }
 
     /// <summary>

@@ -1201,3 +1201,39 @@ Stage Summary:
 - 334 colors, 420 white pixels, 5 successful ticks, 0 crashes ✅
 - WASM JIT method complexity limit: ~3 SpriteBatch.Draw calls per method
 - To render more elements, need to split _draw into multiple sub-methods
+
+---
+Task ID: phase2.8-injected-helper-failed
+Agent: main
+Task: Try injecting DrawButtonsHelper method to bypass 3-draw-call limit
+
+Work Log:
+- Created InjectDrawButtonsHelper: injects a static method into Game1 that draws
+  2-4 buttons. The method is called from _draw to bypass the 3-draw-call limit.
+- Result: ALL configurations hang/timeout:
+  - 4 buttons in helper → timeout
+  - 2 buttons in helper → timeout
+  - Helper injected but NOT called → timeout
+- Conclusion: injecting NEW methods into Game1 causes WASM JIT instability
+  even if the method is never called. The JIT tries to compile all methods
+  in the type and chokes on the injected method.
+- Disabled InjectDrawButtonsHelper call in the rewrite pipeline
+- Reverted to stable state: clouds (3-param) + title logo (Draw4) = 2 draw calls
+
+Stage Summary:
+- Stable state: 354 colors, 779 white pixels, 5 successful ticks, 0 crashes ✅
+- Cannot inject new methods into SDV assembly (WASM JIT instability)
+- Cannot have more than 3 draw calls per method
+- Cannot call injected methods from _draw (hangs even if method is simple)
+- The InjectDrawButtonsHelper code is kept for reference but disabled
+
+Key Insight:
+The WASM JIT has severe limitations for runtime-modified assemblies:
+1. Max ~3 SpriteBatch.Draw calls per method
+2. Cannot inject new methods (causes JIT instability)
+3. Cannot use ldloca+initobj on Nullable<T>
+4. Cannot call List<T>.get_Count on generic types
+5. Cannot use ldfld on value type fields in some contexts
+
+These limitations mean we cannot render the full title screen with buttons
+using IL-generated code. The best we can do is clouds + title logo.
