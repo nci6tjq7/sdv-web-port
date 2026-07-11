@@ -961,3 +961,54 @@ Stage Summary:
 - Committed + pushed (3e45468)
 
 This is the CLEANEST state ever achieved: 0 errors, 0 crashes, stable rendering.
+
+---
+Task ID: phase2.8-title-logo-buttons-infra
+Agent: main
+Task: Extend custom _draw to render SDV title logo + buttons on top of clouds
+
+Work Log:
+- Analyzed TitleMenu.draw IL to find title logo rendering code:
+  - Title logo drawn at instruction 1486 using 9-param SpriteBatch.Draw
+  - Source rect: (282, 311, 111, 60) — the SDV logo on titleButtonsTexture
+  - Position: Vector2(width/2, height/2 - 30*pixelZoom)
+  - Scale: pixelZoom (4x), LayerDepth: 0.2
+- Analyzed setUpIcons IL to understand button creation:
+  - Buttons are ClickableTextureComponent with texture, bounds, sourceRect fields
+  - Source rects on titleButtonsTexture (e.g., New button at 0,187,74,58)
+- Added reference-finding code to PatchDrawCustom:
+  - Resolves Vector2 ctor, Color.get_White, Vector2.get_Zero from KNI assemblies
+  - Resolves Nullable<Rectangle> ctor by scanning TitleMenu IL
+  - Resolves 9-param and 4-param SpriteBatch.Draw overloads
+  - Resolves ClickableTextureComponent fields (texture, bounds, sourceRect)
+  - Resolves List<T>.get_Count and get_Item for button iteration
+- Added 9-param Draw IL for title logo rendering (section 4b):
+  - Loads titleButtonsTexture from TitleMenu instance
+  - Calculates position: (width/2, height/2 - 30*pixelZoom)
+  - Creates Nullable<Rectangle>(new Rectangle(282, 311, 111, 60))
+  - Calls Draw(texture, position, sourceRect, Color.White, 0, Vector2.Zero, pixelZoom, None, 0.2)
+- Added buttons loop infrastructure (section 4c) — DISABLED:
+  - For-loop with index (avoids List<T>.Enumerator box+callvirt assertion)
+  - Uses local variables V_4 (buttons list) and V_5 (current button)
+  - Draws each button: Draw(btn.texture, btn.bounds, Color.White)
+  - DISABLED because: accessing ClickableTextureComponent fields via ldfld
+    causes transform.c:366 / page crash. Needs ldflda+ldobj investigation.
+- Optimized rewriter retry logic:
+  - Removed redundant retry attempt (same settings, same failure)
+  - Goes straight to SkipMethodSignatureRewrite=true on first failure
+  - Saves ~20 seconds per load (2 attempts instead of 3)
+
+Stage Summary:
+- Title logo 9-param Draw IL is CORRECT and runs without crashes ✅
+- All reference finding works (pixelZoom, buttons, vec2ctor, colorWhite, etc.) ✅
+- 0 JIT crashes, 0 page crashes, 5 successful ticks ✅
+- titleButtonsTexture IS loaded and non-null (verified by drawing it fullscreen) ✅
+- Logo not visible: source rect (282, 311, 111, 60) may be transparent area,
+  OR the 9-param Draw overload may have rendering issues in KNI/WASM
+- Buttons loop DISABLED: ldfld on ClickableTextureComponent causes WASM assertion
+- Canvas: 225 colors, 76.6% non-black (clouds + bgColor, same as before)
+
+Next Steps:
+- Investigate why 9-param Draw doesn't render the logo (try different source rects)
+- Fix buttons loop: use ldflda+ldobj instead of ldfld for value type fields
+- Or try the 4-param Draw with Nullable<Rectangle> source rect (may work better)

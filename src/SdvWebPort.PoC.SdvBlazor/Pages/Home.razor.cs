@@ -236,32 +236,20 @@ public partial class Home : ComponentBase
         catch (Exception ex)
         {
             Console.WriteLine($"[FAIL] Rewriter threw: {ex.GetType().Name}: {ex.Message}");
-            Console.WriteLine($"    Stack: {ex.StackTrace}");
-            // Rewriter failed during Write (Cecil can't resolve nested types).
-            // Retry with CustomMetadataResolver's dummy type fallback.
+            // Rewriter failed during Write (Cecil can't resolve nested types like QuantityModifier/QuantityModifierMode).
+            // Skip the redundant retry (same settings, same failure) and go straight to last resort:
+            // skip method signature rewrite, which avoids the ResolutionException entirely.
             try
             {
-                Console.WriteLine("[+] Retrying rewriter (with dummy type fallback)...");
-                SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = false;
+                Console.WriteLine("[+] Last resort: skip method signature rewrite...");
+                SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = true;
                 rewrittenBytes = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
-                Console.WriteLine($"[+] Retry succeeded: {rewrittenBytes.Length:N0} bytes");
+                Console.WriteLine($"[+] Last resort succeeded: {rewrittenBytes.Length:N0} bytes");
             }
             catch (Exception ex2)
             {
-                Console.WriteLine($"[FAIL] Retry also failed: {ex2.Message}");
-                // Last resort: skip method signature rewrite
-                try
-                {
-                    Console.WriteLine("[+] Last resort: skip method signature rewrite...");
-                    SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SkipMethodSignatureRewrite = true;
-                    rewrittenBytes = SdvWebPort.Rewriter.SdvAssemblyRefRewriter.Rewrite(sdvBytes);
-                    Console.WriteLine($"[+] Last resort succeeded: {rewrittenBytes.Length:N0} bytes");
-                }
-                catch (Exception ex3)
-                {
-                    Console.WriteLine($"[FAIL] Last resort also failed: {ex3.Message}");
-                    rewrittenBytes = sdvBytes;
-                }
+                Console.WriteLine($"[FAIL] Last resort also failed: {ex2.Message}");
+                rewrittenBytes = sdvBytes;
             }
         }
 

@@ -1238,6 +1238,137 @@ public static class SdvAssemblyRefRewriter
             }
         }
 
+        // === Title logo + buttons rendering references ===
+        // TitleMenu.pixelZoom (static int, typically 4)
+        var pixelZoomField = tm.Fields.FirstOrDefault(f => f.Name == "pixelZoom");
+        // TitleMenu.buttons (List<ClickableTextureComponent>)
+        var buttonsField = tm.Fields.FirstOrDefault(f => f.Name == "buttons");
+
+        // Resolve types directly from SDV's own module (no IL scanning — much faster)
+        // Vector2 ctor (float, float)
+        MethodReference? vector2CtorRef = null;
+        // Color.get_White — static property getter
+        MethodReference? colorWhiteRef = null;
+        // Vector2.get_Zero — static property getter
+        MethodReference? vector2ZeroRef = null;
+        // Nullable<Rectangle> ctor
+        MethodReference? nullableRectCtorRef = null;
+        // 9-param Draw overload: Draw(Texture2D, Vector2, Nullable<Rectangle>, Color, float, Vector2, float, SpriteEffects, float)
+        MethodReference? draw9Ref = null;
+        // 4-param Draw overload: Draw(Texture2D, Rectangle, Nullable<Rectangle>, Color)
+        MethodReference? draw4Ref = null;
+
+        // Resolve Vector2 type definition from the KNI assembly via type reference
+        TypeDefinition? vector2Type = null;
+        var vector2TypeRef = module.GetTypeReferences().FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Vector2");
+        if (vector2TypeRef != null) { try { vector2Type = vector2TypeRef.Resolve(); } catch { } }
+        if (vector2Type != null)
+        {
+            var v2ctor = vector2Type.Methods.FirstOrDefault(m => m.Name == ".ctor" && m.Parameters.Count == 2);
+            if (v2ctor != null) vector2CtorRef = v2ctor;
+            var v2zero = vector2Type.Methods.FirstOrDefault(m => m.Name == "get_Zero");
+            if (v2zero != null) vector2ZeroRef = v2zero;
+        }
+
+        // Resolve Color type definition
+        TypeDefinition? colorType = null;
+        var colorTypeRef = module.GetTypeReferences().FirstOrDefault(tr => tr.FullName == "Microsoft.Xna.Framework.Color");
+        if (colorTypeRef != null) { try { colorType = colorTypeRef.Resolve(); } catch { } }
+        if (colorType != null)
+        {
+            var white = colorType.Methods.FirstOrDefault(m => m.Name == "get_White");
+            if (white != null) colorWhiteRef = white;
+        }
+
+        // Resolve SpriteBatch type definition (already resolved above as sbType)
+        if (sbType != null)
+        {
+            draw9Ref = sbType.Methods.FirstOrDefault(m => m.Name == "Draw" && m.Parameters.Count == 9);
+            draw4Ref = sbType.Methods.FirstOrDefault(m => m.Name == "Draw" && m.Parameters.Count == 4
+                && m.Parameters[1].ParameterType.FullName == "Microsoft.Xna.Framework.Rectangle"
+                && m.Parameters[2].ParameterType.FullName.StartsWith("System.Nullable`1<Microsoft.Xna.Framework.Rectangle"));
+        }
+
+        // Find Nullable<Rectangle> ctor — scan SDV IL for newobj Nullable<Rectangle>(.ctor)
+        // This is the only way to get a GenericInstanceType method reference without manually constructing it
+        if (nullableRectCtorRef == null)
+        {
+            // Limit scan to just TitleMenu methods (where we know it's used) for speed
+            foreach (var m in tm.Methods)
+            {
+                if (m.Body == null) continue;
+                foreach (var ins in m.Body.Instructions)
+                {
+                    if (ins.OpCode != OpCodes.Newobj) continue;
+                    if (ins.Operand is not MethodReference mr) continue;
+                    if (mr.DeclaringType.FullName.StartsWith("System.Nullable`1<Microsoft.Xna.Framework.Rectangle"))
+                    {
+                        nullableRectCtorRef = mr;
+                        break;
+                    }
+                }
+                if (nullableRectCtorRef != null) break;
+            }
+            // Fallback: scan Game1 methods
+            if (nullableRectCtorRef == null)
+            {
+                foreach (var m in g1.Methods)
+                {
+                    if (m.Body == null) continue;
+                    foreach (var ins in m.Body.Instructions)
+                    {
+                        if (ins.OpCode != OpCodes.Newobj) continue;
+                        if (ins.Operand is not MethodReference mr) continue;
+                        if (mr.DeclaringType.FullName.StartsWith("System.Nullable`1<Microsoft.Xna.Framework.Rectangle"))
+                        {
+                            nullableRectCtorRef = mr;
+                            break;
+                        }
+                    }
+                    if (nullableRectCtorRef != null) break;
+                }
+            }
+        }
+
+        // ClickableTextureComponent type + fields (texture, bounds, sourceRect)
+        // Search the module's own types directly (ClickableTextureComponent is in SDV itself)
+        TypeDefinition? ctcType = asmDef.MainModule.Types.FirstOrDefault(t => t.FullName == "StardewValley.Menus.ClickableTextureComponent");
+        var ctcTextureField = ctcType?.Fields.FirstOrDefault(f => f.Name == "texture");
+        var ctcSourceRectField = ctcType?.Fields.FirstOrDefault(f => f.Name == "sourceRect");
+        // bounds is inherited from ClickableComponent — find it in the base type
+        FieldDefinition? ctcBoundsField = ctcType?.Fields.FirstOrDefault(f => f.Name == "bounds");
+        if (ctcBoundsField == null && ctcType?.BaseType != null)
+        {
+            try
+            {
+                var ccType = ctcType.BaseType.Resolve();
+                ctcBoundsField = ccType?.Fields.FirstOrDefault(f => f.Name == "bounds");
+            }
+            catch { }
+        }
+
+        // List<ClickableTextureComponent>.get_Count and get_Item — find via the buttons field type
+        MethodReference? listGetCountRef = null;
+        MethodReference? listGetItemRef = null;
+        if (buttonsField != null)
+        {
+            var listType = buttonsField.FieldType.Resolve();
+            if (listType != null)
+            {
+                listGetCountRef = listType.Methods.FirstOrDefault(m => m.Name == "get_Count");
+                listGetItemRef = listType.Methods.FirstOrDefault(m => m.Name == "get_Item");
+            }
+        }
+
+        // SpriteEffects enum type (just need the type for ldc.i4.0 = None)
+        // No reference needed — we just push 0 on the stack
+
+        Console.WriteLine($"[AssemblyRefRewriter] _draw refs: pixelZoom={pixelZoomField != null}, buttons={buttonsField != null}, "
+            + $"vec2ctor={vector2CtorRef != null}, colorWhite={colorWhiteRef != null}, vec2Zero={vector2ZeroRef != null}, "
+            + $"nullableRectCtor={nullableRectCtorRef != null}, draw9={draw9Ref != null}, draw4={draw4Ref != null}, "
+            + $"ctcTexture={ctcTextureField != null}, ctcBounds={ctcBoundsField != null}, ctcSourceRect={ctcSourceRectField != null}, "
+            + $"listCount={listGetCountRef != null}, listGetItem={listGetItemRef != null}");
+
         // Build the custom _draw body
         var instrs = draw.Body.Instructions;
         instrs.Clear();
@@ -1245,8 +1376,25 @@ public static class SdvAssemblyRefRewriter
         draw.Body.Variables.Clear();
 
         var intType = module.TypeSystem.Int32;
+        var floatType = module.TypeSystem.Single;
         draw.Body.Variables.Add(new VariableDefinition(intType));  // V_0 = width
         draw.Body.Variables.Add(new VariableDefinition(intType));  // V_1 = height
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_2 = button loop counter
+        draw.Body.Variables.Add(new VariableDefinition(intType));  // V_3 = button count
+        // V_4 = buttons list reference (List<ClickableTextureComponent>)
+        if (buttonsField != null)
+            draw.Body.Variables.Add(new VariableDefinition(buttonsField.FieldType));
+        else
+            draw.Body.Variables.Add(new VariableDefinition(module.ImportReference(typeof(object))));
+        // V_5 = current button (ClickableTextureComponent)
+        if (ctcType != null)
+            draw.Body.Variables.Add(new VariableDefinition(ctcType));
+        else
+            draw.Body.Variables.Add(new VariableDefinition(module.ImportReference(typeof(object))));
+
+        // Keep references to V_4 and V_5 for Stloc_S/Ldloc_S (which take VariableDefinition)
+        var v4Buttons = draw.Body.Variables[4];
+        var v5Btn = draw.Body.Variables[5];
 
         var iBgColor = module.ImportReference(bgColorField);
         var iSpriteBatch = module.ImportReference(spriteBatchField);
@@ -1266,6 +1414,21 @@ public static class SdvAssemblyRefRewriter
         var iGraphics = graphicsField != null ? module.ImportReference(graphicsField) : null;
         var iAlphaBlend = alphaBlendField != null ? module.ImportReference(alphaBlendField) : null;
         var iPointClamp = pointClampField != null ? module.ImportReference(pointClampField) : null;
+
+        // Imports for title logo + buttons rendering
+        var iPixelZoom = pixelZoomField != null ? module.ImportReference(pixelZoomField) : null;
+        var iButtons = buttonsField != null ? module.ImportReference(buttonsField) : null;
+        var iVector2Ctor = vector2CtorRef != null ? module.ImportReference(vector2CtorRef) : null;
+        var iColorWhite = colorWhiteRef != null ? module.ImportReference(colorWhiteRef) : null;
+        var iVector2Zero = vector2ZeroRef != null ? module.ImportReference(vector2ZeroRef) : null;
+        var iNullableRectCtor = nullableRectCtorRef != null ? module.ImportReference(nullableRectCtorRef) : null;
+        var iDraw9 = draw9Ref != null ? module.ImportReference(draw9Ref) : null;
+        var iDraw4 = draw4Ref != null ? module.ImportReference(draw4Ref) : null;
+        var iCtcTexture = ctcTextureField != null ? module.ImportReference(ctcTextureField) : null;
+        var iCtcBounds = ctcBoundsField != null ? module.ImportReference(ctcBoundsField) : null;
+        var iCtcSourceRect = ctcSourceRectField != null ? module.ImportReference(ctcSourceRectField) : null;
+        var iListGetCount = listGetCountRef != null ? module.ImportReference(listGetCountRef) : null;
+        var iListGetItem = listGetItemRef != null ? module.ImportReference(listGetItemRef) : null;
 
         var retInstr = Instruction.Create(OpCodes.Ret);
 
@@ -1408,6 +1571,87 @@ public static class SdvAssemblyRefRewriter
         }
         instrs.Add(skipCloudsLabel);
 
+        // 4b. Draw title logo (SDV logo) — titleButtonsTexture at center top
+        // Uses 9-param Draw: Draw(Texture2D, Vector2, Nullable<Rectangle>, Color, float, Vector2, float, SpriteEffects, float)
+        // Source rect: (282, 311, 111, 60) — the SDV logo on titleButtonsTexture
+        //   (X=282 is the "normal" logo state when logoFadeTimer=0 and logoSurprisedTimer<=0)
+        // Position: (width/2, height/2 - 30*pixelZoom) — center, slightly above middle
+        // Scale: pixelZoom (4x) — logo is 444x240 on screen
+        // LayerDepth: 0.2
+        if (iGetACM != null && iTitleButtons != null && iDraw9 != null
+            && iVector2Ctor != null && iColorWhite != null && iVector2Zero != null
+            && iNullableRectCtor != null && iPixelZoom != null)
+        {
+            var skipTitleLabel = Instruction.Create(OpCodes.Nop);
+            // if (activeClickableMenu is TitleMenu) — get titleButtonsTexture
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel));
+
+            // Check titleButtonsTexture != null
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));              // (TitleMenu)menu
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));    // .titleButtonsTexture
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipTitleLabel)); // skip if null
+
+            // spriteBatch
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+            // texture: titleButtonsTexture (from TitleMenu instance)
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));           // menu
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));              // (TitleMenu)menu
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));    // .titleButtonsTexture
+            // position: new Vector2(width/2, height/2 - 30*pixelZoom)
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));                 // width
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Div));                     // width/2 (float)
+            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));                 // height
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_2));
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Div));                     // height/2 (float)
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 30));              // 30
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPixelZoom));      // pixelZoom
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));
+            instrs.Add(Instruction.Create(OpCodes.Mul));                     // 30 * pixelZoom
+            instrs.Add(Instruction.Create(OpCodes.Sub));                     // height/2 - 30*pixelZoom
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iVector2Ctor));    // new Vector2(x, y)
+            // source rect: new Nullable<Rectangle>(new Rectangle(282, 311, 111, 60))
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 282));             // x
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 311));             // y
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 111));             // width
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 60));              // height
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));       // new Rectangle(282, 311, 111, 60)
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iNullableRectCtor)); // new Nullable<Rectangle>(...)
+            // color: Color.White
+            instrs.Add(Instruction.Create(OpCodes.Call, iColorWhite));       // Color.White
+            // rotation: 0
+            instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0f));              // rotation = 0
+            // origin: Vector2.Zero
+            instrs.Add(Instruction.Create(OpCodes.Call, iVector2Zero));      // Vector2.Zero
+            // scale: pixelZoom (as float)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iPixelZoom));      // pixelZoom
+            instrs.Add(Instruction.Create(OpCodes.Conv_R4));                 // (float)pixelZoom
+            // effects: SpriteEffects.None = 0
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));                // SpriteEffects.None
+            // layerDepth: 0.2
+            instrs.Add(Instruction.Create(OpCodes.Ldc_R4, 0.2f));            // layerDepth = 0.2
+            // call Draw
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw9));
+
+            instrs.Add(skipTitleLabel);
+        }
+
+        // 4c. Draw buttons — DISABLED for now.
+        // The buttons list iteration causes transform.c:366 / page crash.
+        // The title logo rendering (4b) works correctly.
+        // TODO: Investigate why accessing ClickableTextureComponent fields (texture, bounds)
+        //       via ldfld causes WASM JIT assertion. May need ldflda + ldobj pattern,
+        //       or the issue may be with the inherited bounds field (from ClickableComponent).
+        // For now, only the title logo is rendered (4b), which produces a visible SDV logo
+        // on the clouds background.
+
         // 5. SpriteBatch.End
         instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
         instrs.Add(Instruction.Create(OpCodes.Callvirt, iEnd));
@@ -1415,7 +1659,7 @@ public static class SdvAssemblyRefRewriter
         // 6. Return
         instrs.Add(retInstr);
 
-        Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + End)");
+        Console.WriteLine("[AssemblyRefRewriter] Game1._draw → custom (Clear + Begin + Draw clouds + Title logo + End)");
     }
 
     /// <summary>
