@@ -1629,11 +1629,38 @@ public static class SdvAssemblyRefRewriter
             instrs.Add(skipTitleLabel);
         }
 
-        // 4c. Button rendering — DISABLED.
-        // Having two Draw4 calls with different source rects causes a WASM JIT crash.
-        // Only one Draw4 call (the title logo above) is safe per method.
-        // To render buttons, we'd need to extract the button draw into a separate
-        // method (which requires injecting a new method into SDV's assembly).
+        // 4c. Draw button texture at button position using 3-param Draw
+        // 3-param Draw + Draw4 + 3-param Draw works (3 draw calls total is the limit).
+        // More than 3 draw calls causes WASM JIT instability.
+        if (iGetACM != null && iTitleButtons != null && iDraw != null)
+        {
+            var skipButtonLabel = Instruction.Create(OpCodes.Nop);
+
+            // if (activeClickableMenu is TitleMenu)
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Brfalse, skipButtonLabel));
+
+            // spriteBatch.Draw(titleButtonsTexture, new Rectangle(100, 400, 296, 232), Color.White)
+            instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));
+            instrs.Add(Instruction.Create(OpCodes.Call, iGetACM));
+            instrs.Add(Instruction.Create(OpCodes.Isinst, tm));
+            instrs.Add(Instruction.Create(OpCodes.Ldfld, iTitleButtons));
+            // dest rect: new Rectangle(100, 400, 296, 232)
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 100));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 400));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 296));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 232));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iRectCtor));
+            // Color.White
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 255));
+            instrs.Add(Instruction.Create(OpCodes.Newobj, iColorCtor));
+            // Call 3-param Draw(Texture2D, Rectangle, Color)
+            instrs.Add(Instruction.Create(OpCodes.Callvirt, iDraw));
+
+            instrs.Add(skipButtonLabel);
+        }
 
         // 5. SpriteBatch.End
         instrs.Add(Instruction.Create(OpCodes.Ldsfld, iSpriteBatch));

@@ -1152,3 +1152,32 @@ Next Steps:
 - Extract button drawing into a separate injected method to avoid multi-Draw4 crash
 - Or use 3-param Draw for clouds + Draw4 for title logo (current approach works)
 - Or try rendering buttons via C# helper called through reflection
+
+---
+Task ID: phase2.8-multi-element-rendering
+Agent: main
+Task: Add button rendering alongside title logo (multi-element draw)
+
+Work Log:
+- Confirmed 3-param Draw + Draw4 + 3-param Draw works (3 draw calls total)
+  - Clouds (3-param) + Title logo (Draw4 with source rect) + Button (3-param)
+  - 334 colors, 420 white pixels, 5 successful ticks, 0 crashes
+- Tested 4+ draw calls (1 clouds + 1 logo + 4 buttons) → hangs/crashes
+  - WASM JIT has a limit on method complexity (~3 draw calls max)
+- Tested ldloca+initobj+ldloc pattern for null Nullable<Rectangle> → hangs
+  - initobj on Nullable<Rectangle> doesn't work in WASM JIT
+- Button texture (titleButtonsTexture) renders at button position (100, 400)
+  - Shows full sprite sheet (not just button region) due to 3-param Draw limitation
+  - But proves multi-element rendering with mixed Draw overloads works
+
+Stage Summary:
+- Clouds + Title logo + Button all rendering on canvas ✅
+- 334 colors, 420 white pixels (down from 354/779 due to button texture overlay)
+- 0 crashes, 5 successful ticks, stable game loop ✅
+- Limit: max 3 draw calls per method (WASM JIT complexity limit)
+- Canvas saved to download/title-logo-with-button.png
+
+Next Steps:
+- Extract button drawing into separate injected method to render more buttons
+- Or accept current 3-element rendering as the stable state for now
+- Or investigate splitting _draw into multiple sub-methods
