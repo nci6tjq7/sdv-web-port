@@ -24,7 +24,10 @@ jobs:
         run: dotnet workload install wasm-tools
 
       - name: Patch KNI DLLs (Graphics + Content FS redirect for AOT)
-        run: bash scripts/patch-kni.sh
+        run: |
+          # Clear NuGet HTTP cache to force re-extraction of patched DLLs
+          dotnet nuget locals http-cache --clear 2>/dev/null || true
+          bash scripts/patch-kni.sh
 
       - name: Verify .NET version
         run: dotnet --version
