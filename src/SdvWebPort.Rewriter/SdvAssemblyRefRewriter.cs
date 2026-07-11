@@ -1631,7 +1631,7 @@ public static class SdvAssemblyRefRewriter
 
         // 4c. Draw button texture at button position using 3-param Draw
         // 3-param Draw + Draw4 + 3-param Draw works (3 draw calls total is the limit).
-        // More than 3 draw calls causes WASM JIT instability.
+        // More than 3 draw calls or mixing Draw4 + Draw9 causes WASM JIT hang/crash.
         if (iGetACM != null && iTitleButtons != null && iDraw != null)
         {
             var skipButtonLabel = Instruction.Create(OpCodes.Nop);

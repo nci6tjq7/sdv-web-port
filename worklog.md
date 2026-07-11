@@ -1181,3 +1181,23 @@ Next Steps:
 - Extract button drawing into separate injected method to render more buttons
 - Or accept current 3-element rendering as the stable state for now
 - Or investigate splitting _draw into multiple sub-methods
+
+---
+Task ID: phase2.8-draw9-investigation
+Agent: main
+Task: Try Draw9 (9-param) for button rendering to avoid multi-Draw4 crash
+
+Work Log:
+- Tested Draw4 (title logo) + Draw9 (button) combo:
+  - Draw9 signature: Draw(Texture2D, Vector2, Nullable<Rectangle>, Color, float, Vector2, float, SpriteEffects, float)
+  - Result: hang/timeout — same as multi-Draw4
+  - The issue is method complexity, not the specific Draw overload
+- Confirmed 3-param Draw + Draw4 + 3-param Draw is the stable maximum (3 draw calls)
+- Reverted to 3-param Draw for button (shows full sprite sheet, but stable)
+- 4+ draw calls cause WASM JIT to hang or crash regardless of overload mix
+
+Stage Summary:
+- Stable state: clouds (3-param) + title logo (Draw4) + button (3-param) ✅
+- 334 colors, 420 white pixels, 5 successful ticks, 0 crashes ✅
+- WASM JIT method complexity limit: ~3 SpriteBatch.Draw calls per method
+- To render more elements, need to split _draw into multiple sub-methods
