@@ -39,7 +39,9 @@ jobs:
           
           # Bump ALL versions to 4.2.9002
           # Bump ALL framework versions
-          find /tmp/kni-src/src -name '*.csproj' -exec sed -i 's/4.2.9001/4.2.9002/g' {} ;
+          for f in $(find /tmp/kni-src/src /tmp/kni-src/Platforms -name '*.csproj'); do
+                      sed -i 's/4.2.9001/4.2.9002/g' "$f"
+                    done
           sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj
           
           echo "KNI source fixed (Graphics only)"
