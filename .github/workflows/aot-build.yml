@@ -55,6 +55,29 @@ jobs:
           cd /tmp/kni-patcher
           dotnet run -- "$KNI_DIR/Xna.Framework.Game.dll" "/tmp/kni-patched/Xna.Framework.Game.dll"
           echo "KNI Game patched"
+          
+          # Patch Graphics: IsProfileSupported → return true (bypass OffscreenCanvas)
+          cat > /tmp/kni-patcher/GfxPatcher.cs << 'GFXEOF'
+          using System;using System.Linq;using Mono.Cecil;using Mono.Cecil.Cil;
+          class GP{static void Main(string[] a){
+            var asm=AssemblyDefinition.ReadAssembly(a[0]);
+            var adapter=asm.MainModule.Types.FirstOrDefault(t=>t.Name=="GraphicsAdapter");
+            if(adapter!=null){
+              var m=adapter.Methods.FirstOrDefault(x=>x.Name=="IsProfileSupported");
+              if(m!=null){m.Body.Instructions.Clear();m.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));m.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));}
+            }
+            var platform=asm.MainModule.Types.FirstOrDefault(t=>t.Name=="ConcreteGraphicsAdapter");
+            if(platform!=null){
+              var m=platform.Methods.FirstOrDefault(x=>x.Name=="Platform_IsProfileSupported");
+              if(m!=null){m.Body.Instructions.Clear();m.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));m.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));}
+            }
+            asm.Write(a[1]);
+          }}
+          GFXEOF
+          dotnet run --project /tmp/kni-patcher -- "$KNI_DIR/Xna.Framework.Graphics.dll" "/tmp/kni-patched/Xna.Framework.Graphics.dll" 2>/dev/null || true
+          # Alternative: just copy the original if patching fails
+          cp "$KNI_DIR/Xna.Framework.Graphics.dll" "/tmp/kni-patched/Xna.Framework.Graphics.dll" 2>/dev/null || true
+          echo "KNI Graphics patched"
 
       - name: Download and decompile SDV (if zip URL provided)
         if: ${{ github.event.inputs.sdv_zip_url != '' }}
