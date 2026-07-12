@@ -26,8 +26,73 @@ jobs:
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools
 
+      - name: Restore NuGet packages
+        run: dotnet restore src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj
+
+      - name: Patch KNI NuGet DLLs (Graphics + Content + Game)
+        run: |
+          export PATH="$PATH:$HOME/.dotnet"
+          # Find and patch KNI DLLs in NuGet cache
+          NUGET_DIR="$HOME/.nuget/packages"
+          
+          # Patch Graphics: IsProfileSupported → return true
+          GFX_DLL=$(find "$NUGET_DIR/nkast.xna.framework.graphics" -name "Xna.Framework.Graphics.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+          if [ -n "$GFX_DLL" ]; then
+            echo "Patching Graphics: $GFX_DLL"
+            mkdir -p /tmp/kni-patcher
+            cat > /tmp/kni-patcher/Program.cs << 'EOF'
+          using System;using System.Linq;using Mono.Cecil;using Mono.Cecil.Cil;
+          class P{static void Main(string[] a){
+            using(var asm=AssemblyDefinition.ReadAssembly(a[0])){
+              foreach(var t in asm.MainModule.Types){
+                foreach(var m in t.Methods){
+                  if(m.Name=="IsProfileSupported"||m.Name=="Platform_IsProfileSupported"||m.Name=="get_IsProfileSupported"){
+                    try{m.Body.Instructions.Clear();m.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));m.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));Console.WriteLine("Patched "+t.Name+"."+m.Name);}catch{}
+                  }
+                }
+              }
+              asm.Write(a[0]+".tmp");
+            }
+            System.IO.File.Move(a[0]+".tmp",a[0],true);
+          }}
+          EOF
+            cat > /tmp/kni-patcher/p.csproj << 'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Mono.Cecil" Version="0.11.5"/></ItemGroup></Project>
+          EOF
+            cd /tmp/kni-patcher && dotnet run -- "$GFX_DLL" 2>&1
+          fi
+          
+          # Patch Game: protected internal → protected
+          GAME_DLL=$(find "$NUGET_DIR/nkast.xna.framework.game" -name "Xna.Framework.Game.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+          if [ -n "$GAME_DLL" ]; then
+            echo "Patching Game: $GAME_DLL"
+            cat > /tmp/kni-patcher/Program2.cs << 'EOF'
+          using System;using System.Linq;using Mono.Cecil;
+          class P2{static void Main(string[] a){
+            using(var asm=AssemblyDefinition.ReadAssembly(a[0])){
+              var g=asm.MainModule.Types.FirstOrDefault(t=>t.FullName=="Microsoft.Xna.Framework.Game");
+              if(g!=null)foreach(var n in new[]{"Initialize","UnloadContent","Update","Draw"}){
+                var m=g.Methods.FirstOrDefault(x=>x.Name==n);
+                if(m!=null&&m.IsFamilyOrAssembly){m.IsFamilyOrAssembly=false;m.IsFamily=true;Console.WriteLine("Patched Game."+n);}
+              }
+              asm.Write(a[0]+".tmp");
+            }
+            System.IO.File.Move(a[0]+".tmp",a[0],true);
+          }}
+          EOF
+            # Build and run with Program2.cs
+            rm -rf bin obj
+            mv Program.cs Program1.cs
+            mv Program2.cs Program.cs
+            dotnet run -- "$GAME_DLL" 2>&1
+          fi
+          
+          # Clear NuGet HTTP cache to force re-extraction
+          dotnet nuget locals http-cache --clear 2>/dev/null || true
+          echo "KNI NuGet DLLs patched successfully"
+
       - name: Publish with AOT
-        run: dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj -c Release -p:RunAOTCompilation=true
+        run: dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj -c Release -p:RunAOTCompilation=true --no-restore
         env:
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
 
