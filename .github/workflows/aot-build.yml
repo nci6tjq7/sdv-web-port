@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       sdv_zip_url:
-        description: 'URL to download SDV zip (GOG release)'
-        required: true
+        description: 'Direct download URL for SDV zip (leave empty for standard build)'
+        required: false
         default: ''
   push:
-    branches: [main, feat/*]
+    branches: [main]
 
 jobs:
   build:
-    runs-on: ubuntu-latest # 16GB RAM — enough for AOT LLVM precompilation
+    runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
@@ -29,31 +29,13 @@ jobs:
       - name: Install ILSpy decompiler
         run: dotnet tool install --global ilspycmd --version 8.2.0.7535
 
-      - name: Download and extract SDV
-        if: ${{ github.event.inputs.sdv_zip_url != '' }}
-        run: |
-          mkdir -p /tmp/sdv-extract
-          wget -q "${{ github.event.inputs.sdv_zip_url }}" -O /tmp/sdv.zip
-          unzip -o /tmp/sdv.zip -d /tmp/sdv-extract
-          ls "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-
-      - name: Decompile SDV to C# source
-        if: ${{ github.event.inputs.sdv_zip_url != '' }}
-        run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          export DOTNET_ROLL_FORWARD=LatestMajor
-          mkdir -p /tmp/sdv-src
-          ilspycmd "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" -p -o /tmp/sdv-src
-          rm -f "/tmp/sdv-src/Stardew Valley.csproj"
-          echo "Decompiled: $(find /tmp/sdv-src -name '*.cs' | wc -l) files"
-
       - name: Patch KNI DLLs
         run: |
           export PATH="$PATH:$HOME/.dotnet"
-          dotnet nuget locals http-cache --clear 2>/dev/null || true
-          bash scripts/patch-kni.sh || true
-          # Also patch KNI Game method visibility (protected internal → protected)
-          mkdir -p /tmp/kni-patcher
+          KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
+          # Patch Game method visibility
+          mkdir -p /tmp/kni-patcher /tmp/kni-patched
+          cp "$KNI_DIR"/*.dll /tmp/kni-patched/
           cat > /tmp/kni-patcher/Program.cs << 'EOF'
           using System;using System.Linq;using Mono.Cecil;
           class P{static void Main(string[] a){
@@ -71,25 +53,34 @@ jobs:
           <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Mono.Cecil" Version="0.11.5"/></ItemGroup></Project>
           EOF
           cd /tmp/kni-patcher
-          KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
-          mkdir -p /tmp/kni-patched
-          cp "$KNI_DIR"/*.dll /tmp/kni-patched/
           dotnet run -- "$KNI_DIR/Xna.Framework.Game.dll" "/tmp/kni-patched/Xna.Framework.Game.dll"
+          echo "KNI Game patched"
 
-      - name: Build MonoGame.Framework facade
+      - name: Download and decompile SDV (if zip URL provided)
         if: ${{ github.event.inputs.sdv_zip_url != '' }}
         run: |
-          export PATH="$PATH:$HOME/.dotnet"
+          export PATH="$PATH:$HOME/.dotnet/tools:$HOME/.dotnet"
+          export DOTNET_ROLL_FORWARD=LatestMajor
+          mkdir -p /tmp/sdv-extract /tmp/sdv-src
+          wget -q "${{ github.event.inputs.sdv_zip_url }}" -O /tmp/sdv.zip
+          unzip -o /tmp/sdv.zip -d /tmp/sdv-extract
+          ls "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          ilspycmd "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" -p -o /tmp/sdv-src
+          rm -f "/tmp/sdv-src/Stardew Valley.csproj"
+          echo "Decompiled: $(find /tmp/sdv-src -name '*.cs' | wc -l) files"
+
+      - name: Build MG facade and source-compiled SDV (if zip URL provided)
+        if: ${{ github.event.inputs.sdv_zip_url != '' }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools:$HOME/.dotnet"
           KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
-          mkdir -p /tmp/mg-facade
+          SDV_DIR="/tmp/sdv-extract/Stardew Valley"
+          
+          # Build MG facade
+          mkdir -p /tmp/mg-facade /tmp/extract-types
           cat > /tmp/mg-facade/MonoGame.Framework.csproj << EOF
           <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <AssemblyName>MonoGame.Framework</AssemblyName>
-              <OutputType>Library</OutputType>
-              <TargetFramework>net8.0</TargetFramework>
-              <Version>3.6.0.862</Version>
-            </PropertyGroup>
+            <PropertyGroup><AssemblyName>MonoGame.Framework</AssemblyName><OutputType>Library</OutputType><TargetFramework>net8.0</TargetFramework><Version>3.6.0.862</Version></PropertyGroup>
             <ItemGroup>
               <Reference Include="Xna.Framework"><HintPath>$KNI_DIR/Xna.Framework.dll</HintPath></Reference>
               <Reference Include="Xna.Framework.Game"><HintPath>/tmp/kni-patched/Xna.Framework.Game.dll</HintPath></Reference>
@@ -101,8 +92,6 @@ jobs:
             </ItemGroup>
           </Project>
           EOF
-          # Generate type forwarders
-          mkdir -p /tmp/extract-types
           cat > /tmp/extract-types/Program.cs << 'CSEOF'
           using System;using System.Linq;using System.IO;using System.Text;using Mono.Cecil;
           class P{static void Main(string[]a){
@@ -112,23 +101,16 @@ jobs:
             foreach(var dl in dlls){var p=Path.Combine(d,dl);if(!File.Exists(p))continue;var asm=AssemblyDefinition.ReadAssembly(p);
             foreach(var t in asm.MainModule.Types){if(!t.IsPublic||t.FullName.StartsWith("<")||t.FullName.StartsWith("_"))continue;
             if(string.IsNullOrEmpty(t.Namespace)||s.Contains(t.FullName))continue;s.Add(t.FullName);
-            if(t.HasGenericParameters)continue;sb.AppendLine($"[assembly: TypeForwardedTo(typeof({t.FullName}))]");}}
-            File.WriteAllText(a[1],sb.ToString());Console.WriteLine($"Generated {s.Count} forwarders");}}
+            if(t.HasGenericParameters)continue;sb.AppendLine("[assembly: TypeForwardedTo(typeof("+t.FullName+"))]");}}
+            File.WriteAllText(a[1],sb.ToString());Console.WriteLine("Generated "+s.Count+" forwarders");}}
           CSEOF
           cat > /tmp/extract-types/e.csproj << 'CSEOF'
           <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Mono.Cecil" Version="0.11.5"/></ItemGroup></Project>
           CSEOF
           cd /tmp/extract-types && dotnet run -- "$KNI_DIR" /tmp/mg-facade/TypeForwarders.cs
           cd /tmp/mg-facade && rm -rf bin obj && dotnet build
-
-      - name: Create KniCompatShim and build source-compiled SDV
-        if: ${{ github.event.inputs.sdv_zip_url != '' }}
-        run: |
-          export PATH="$PATH:$HOME/.dotnet"
-          SDV_DIR="/tmp/sdv-extract/Stardew Valley"
-          KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
           
-          # Create KniCompatShim.cs
+          # Create KniCompatShim
           cat > /tmp/sdv-src/KniCompatShim.cs << 'CSHEOF'
           using System;using System.Collections.Generic;using System.IO;using System.Runtime.CompilerServices;
           namespace Microsoft.Xna.Framework.Audio{
@@ -146,66 +128,41 @@ jobs:
           namespace xTile.ObjectModel{
           public static class PropertyValueExtensions{public static bool StartsWith(this PropertyValue v,string s)=>v.ToString().StartsWith(s);public static bool Contains(this PropertyValue v,string s)=>v.ToString().Contains(s);public static bool Contains(this PropertyValue v,string s,StringComparison sc)=>v.ToString().Contains(s,sc);public static int get_Length(this PropertyValue v)=>v.ToString().Length;}}
           CSHEOF
-
-          # Create DontLoadDefaultSetting.cs
           cat > /tmp/sdv-src/DontLoadDefaultSetting.cs << 'EOF'
-          using System;
-          namespace StardewValley {
-            [AttributeUsage(AttributeTargets.Field, AllowMultiple = false)]
-            public class DontLoadDefaultSettingAttribute : Attribute {}
-          }
+          using System;namespace StardewValley{[AttributeUsage(AttributeTargets.Field,AllowMultiple=false)]public class DontLoadDefaultSettingAttribute:Attribute{}}
           EOF
 
           # Create csproj
           cat > /tmp/sdv-src/StardewValley.csproj << CSPROJEOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <AssemblyName>Stardew Valley</AssemblyName>
-              <OutputType>Library</OutputType>
-              <TargetFramework>net8.0</TargetFramework>
-              <LangVersion>11.0</LangVersion>
-              <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-              <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-              <NoWarn>CS0168;CS0219;CS0414;CS0649;CS0169;CS8600;CS8601;CS8602;CS8603;CS8604;CS8610;CS8611;CS8625;CS8714;CS8765;CS8767;CS8769;CS1998;CS0108;CS0114;CS8019;CS0246;CS0234;CS0618;CS8321</NoWarn>
-              <RootNamespace />
-            </PropertyGroup>
-            <ItemGroup>
-              <Reference Include="MonoGame.Framework"><HintPath>/tmp/mg-facade/bin/Debug/net8.0/MonoGame.Framework.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework"><HintPath>\${KNI_DIR}/Xna.Framework.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Game"><HintPath>/tmp/kni-patched/Xna.Framework.Game.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Graphics"><HintPath>\${KNI_DIR}/Xna.Framework.Graphics.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Content"><HintPath>\${KNI_DIR}/Xna.Framework.Content.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Input"><HintPath>\${KNI_DIR}/Xna.Framework.Input.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Audio"><HintPath>\${KNI_DIR}/Xna.Framework.Audio.dll</HintPath></Reference>
-              <Reference Include="Xna.Framework.Media"><HintPath>\${KNI_DIR}/Xna.Framework.Media.dll</HintPath></Reference>
-              <Reference Include="xTile"><HintPath>\${SDV_DIR}/xTile.dll</HintPath></Reference>
-              <Reference Include="StardewValley.GameData"><HintPath>\${SDV_DIR}/StardewValley.GameData.dll</HintPath></Reference>
-              <Reference Include="Lidgren.Network"><HintPath>\${SDV_DIR}/Lidgren.Network.dll</HintPath></Reference>
-              <Reference Include="BmFont"><HintPath>\${SDV_DIR}/BmFont.dll</HintPath></Reference>
-              <Reference Include="Steamworks.NET"><HintPath>\${SDV_DIR}/Steamworks.NET.dll</HintPath></Reference>
-              <Reference Include="GalaxyCSharp"><HintPath>\${SDV_DIR}/GalaxyCSharp.dll</HintPath></Reference>
-              <Reference Include="SkiaSharp"><HintPath>\${SDV_DIR}/SkiaSharp.dll</HintPath></Reference>
-              <Reference Include="TextCopy"><HintPath>\${SDV_DIR}/TextCopy.dll</HintPath></Reference>
-              <Reference Include="System.Data.HashFunction.Interfaces"><HintPath>\${SDV_DIR}/System.Data.HashFunction.Interfaces.dll</HintPath></Reference>
-              <Reference Include="System.Data.HashFunction.Core"><HintPath>\${SDV_DIR}/System.Data.HashFunction.Core.dll</HintPath></Reference>
-              <Reference Include="System.Data.HashFunction.xxHash"><HintPath>\${SDV_DIR}/System.Data.HashFunction.xxHash.dll</HintPath></Reference>
-            </ItemGroup>
-          </Project>
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Stardew Valley</AssemblyName><OutputType>Library</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>11.0</LangVersion><AllowUnsafeBlocks>true</AllowUnsafeBlocks><GenerateAssemblyInfo>false</GenerateAssemblyInfo><NoWarn>CS0168;CS0219;CS0414;CS0649;CS0169;CS8600;CS8601;CS8602;CS8603;CS8604;CS8610;CS8611;CS8625;CS8714;CS8765;CS8767;CS8769;CS1998;CS0108;CS0114;CS8019;CS0246;CS0234;CS0618;CS8321</NoWarn><RootNamespace /></PropertyGroup>
+          <ItemGroup>
+          <Reference Include="MonoGame.Framework"><HintPath>/tmp/mg-facade/bin/Debug/net8.0/MonoGame.Framework.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework"><HintPath>${KNI_DIR}/Xna.Framework.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Game"><HintPath>/tmp/kni-patched/Xna.Framework.Game.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Graphics"><HintPath>${KNI_DIR}/Xna.Framework.Graphics.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Content"><HintPath>${KNI_DIR}/Xna.Framework.Content.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Input"><HintPath>${KNI_DIR}/Xna.Framework.Input.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Audio"><HintPath>${KNI_DIR}/Xna.Framework.Audio.dll</HintPath></Reference>
+          <Reference Include="Xna.Framework.Media"><HintPath>${KNI_DIR}/Xna.Framework.Media.dll</HintPath></Reference>
+          <Reference Include="xTile"><HintPath>${SDV_DIR}/xTile.dll</HintPath></Reference>
+          <Reference Include="StardewValley.GameData"><HintPath>${SDV_DIR}/StardewValley.GameData.dll</HintPath></Reference>
+          <Reference Include="Lidgren.Network"><HintPath>${SDV_DIR}/Lidgren.Network.dll</HintPath></Reference>
+          <Reference Include="BmFont"><HintPath>${SDV_DIR}/BmFont.dll</HintPath></Reference>
+          <Reference Include="Steamworks.NET"><HintPath>${SDV_DIR}/Steamworks.NET.dll</HintPath></Reference>
+          <Reference Include="GalaxyCSharp"><HintPath>${SDV_DIR}/GalaxyCSharp.dll</HintPath></Reference>
+          <Reference Include="SkiaSharp"><HintPath>${SDV_DIR}/SkiaSharp.dll</HintPath></Reference>
+          <Reference Include="TextCopy"><HintPath>${SDV_DIR}/TextCopy.dll</HintPath></Reference>
+          <Reference Include="System.Data.HashFunction.Interfaces"><HintPath>${SDV_DIR}/System.Data.HashFunction.Interfaces.dll</HintPath></Reference>
+          <Reference Include="System.Data.HashFunction.Core"><HintPath>${SDV_DIR}/System.Data.HashFunction.Core.dll</HintPath></Reference>
+          <Reference Include="System.Data.HashFunction.xxHash"><HintPath>${SDV_DIR}/System.Data.HashFunction.xxHash.dll</HintPath></Reference>
+          </ItemGroup></Project>
           CSPROJEOF
-          
-          # Fix paths in csproj
-          sed -i "s|\\\${KNI_DIR}|$KNI_DIR|g" /tmp/sdv-src/StardewValley.csproj
-          sed -i "s|\\\${SDV_DIR}|$SDV_DIR|g" /tmp/sdv-src/StardewValley.csproj
-          
+
           # Apply source fixes
           cd /tmp/sdv-src
           sed -i 's/protected override void OnActivated(object sender, EventArgs args)/protected override void OnActivated(EventArgs args)/' StardewValley/GameRunner.cs
           sed -i 's/instance.Instance_OnActivated(sender, args)/instance.Instance_OnActivated(this, args)/' StardewValley/GameRunner.cs
-          python3 -c "
-          with open('StardewValley.Internal/ForEachItemHelper.cs', 'r') as f: c = f.read()
-          c = c.replace('return CombinePath(((_003C_003Ec__DisplayClass4_0<TItem>)this).getParentPath, ((_003C_003Ec__DisplayClass4_0<TItem>)this).list);', 'return new System.Collections.Generic.List<object>();')
-          with open('StardewValley.Internal/ForEachItemHelper.cs', 'w') as f: f.write(c)
-          "
+          python3 -c "f=open('StardewValley.Internal/ForEachItemHelper.cs','r');c=f.read();f.close();c=c.replace('return CombinePath(((_003C_003Ec__DisplayClass4_0<TItem>)this).getParentPath, ((_003C_003Ec__DisplayClass4_0<TItem>)this).list);','return new System.Collections.Generic.List<object>();');f=open('StardewValley.Internal/ForEachItemHelper.cs','w');f.write(c);f.close()"
           sed -i '1i using StardewValley.Internal;' StardewValley.SaveMigrations/SaveMigrator_1_6.cs
           sed -i 's/Utility.ForEachItemContext(HandleItem)/Utility.ForEachItemContext((in ForEachItemContext context) => true)/' StardewValley.SaveMigrations/SaveMigrator_1_6.cs
           sed -i 's/cue\.Volume/cue.get_Volume()/g; s/cue\.Pitch/cue.get_Pitch()/g; s/cue\.IsPitchBeingControlledByRPC/cue.get_IsPitchBeingControlledByRPC()/g' StardewValley/CueWrapper.cs
@@ -219,56 +176,26 @@ jobs:
           sed -i 's/!GameRunner.instance.Window.CenterOnDisplay(startupPreferences.displayIndex)/GameRunner.instance.Window.CenterOnDisplay(startupPreferences.displayIndex)/' StardewValley.Menus/TitleMenu.cs
           sed -i 's/reference = ref val;/\/\/reference = ref val;/' Netcode/NetDictionary.cs
           sed -i '1i using Microsoft.Xna.Framework;' StardewValley/Options.cs
-          python3 -c \"
-          with open('StardewValley/Program.cs', 'r') as f: c = f.read()
-          c = c.replace('_sdk = new SteamHelper ();\n\t\t\t\tif (_sdk == null) {\n\t\t\t\t\t_sdk = new NullSDKHelper ();\n\t\t\t\t}', '_sdk = new NullSDKHelper ();')
-          with open('StardewValley/Program.cs', 'w') as f: f.write(c)
-          \"
+          python3 -c "f=open('StardewValley/Program.cs','r');c=f.read();f.close();c=c.replace('_sdk = new SteamHelper ();\n\t\t\t\tif (_sdk == null) {\n\t\t\t\t\t_sdk = new NullSDKHelper ();\n\t\t\t\t}','_sdk = new NullSDKHelper ();');f=open('StardewValley/Program.cs','w');f.write(c);f.close()"
           sed -i 's/RequestLock(ContinueDemolish, BuildingLockFailed)/RequestLock(() => {}, BuildingLockFailed)/' StardewValley.Menus/CarpenterMenu.cs
-          python3 -c \"
-          with open('StardewValley.Menus/EmoteMenu.cs', 'r') as f: c = f.read()
-          old = 'Vector2.Dot(value2: new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)), value1: value)'
-          new = 'Vector2.Dot(value, new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)))'
-          c = c.replace(old, new)
-          with open('StardewValley.Menus/EmoteMenu.cs', 'w') as f: f.write(c)
-          \"
+          python3 -c "f=open('StardewValley.Menus/EmoteMenu.cs','r');c=f.read();f.close();c=c.replace('Vector2.Dot(value2: new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)), value1: value)','Vector2.Dot(value, new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)))');f=open('StardewValley.Menus/EmoteMenu.cs','w');f.write(c);f.close()"
           sed -i 's/, mipmap: false//g; s/, mipmap: true//g' StardewValley/Game1.cs StardewValley/DebugMetricsComponent.cs
           sed -i 's/value\.Length > 0/value.ToString().Length > 0/' StardewValley/GameLocation.cs
-          sed -i '1i using xTile.ObjectModel;' StardewValley/GameLocation.cs StardewValley/InteriorDoor.cs StardewValley.Pathfinding/PathFindController.cs 2>/dev/null
-          python3 -c \"
-          with open('StardewValley/ItemContextTagManager.cs', 'r') as f: c = f.read()
-          c = c.replace('goto IL_0207;', '')
-          c = c.replace('IL_0207:', 'if (true)')
-          import re
-          c = re.sub(r'(\t\t\t\})\n(\t\t\tcase .\(H\).:)', r'\1\n\t\t\t\tbreak;\n\2', c)
-          c = c.replace('if (true)\n\t\t\t\tif (!objectData.CanBeGivenAsGift)\n\t\t\t\t{\n\t\t\t\t\tvalue.Add(.not_giftable.);\n\t\t\t\t}\n\t\t\t\tbreak;', '')
-          with open('StardewValley/ItemContextTagManager.cs', 'w') as f: f.write(c)
-          \"
+          sed -i '1i using xTile.ObjectModel;' StardewValley/GameLocation.cs StardewValley/InteriorDoor.cs StardewValley.Pathfinding/PathFindController.cs 2>/dev/null || true
+          python3 -c "import re;f=open('StardewValley/ItemContextTagManager.cs','r');c=f.read();f.close();c=c.replace('goto IL_0207;','');c=c.replace('IL_0207:','if (true)');c=re.sub(r'(\t\t\t\})\n(\t\t\tcase .\(H\).:)',r'\1\n\t\t\t\tbreak;\n\2',c);c=c.replace('if (true)\n\t\t\t\tif (!objectData.CanBeGivenAsGift)\n\t\t\t\t{\n\t\t\t\t\tvalue.Add(\"not_giftable\");\n\t\t\t\t}\n\t\t\t\tbreak;','');f=open('StardewValley/ItemContextTagManager.cs','w');f.write(c);f.close()"
           sed -i 's/DontLoadDefaultSetting>/DontLoadDefaultSettingAttribute>/g' StardewValley/Options.cs
           
-          # Build source-compiled SDV
+          # Build
           rm -rf bin obj
           dotnet build
-          echo \"SDV build errors: $(dotnet build 2>&1 | grep 'error CS' | wc -l)\"
-
-      - name: Copy source-compiled SDV to publish
-        if: ${{ github.event.inputs.sdv_zip_url != '' }}
-        run: |
-          # Copy compiled SDV to wwwroot
-          cp /tmp/sdv-src/bin/Debug/net8.0/Stardew\ Valley.dll src/SdvWebPort.PoC.SdvBlazor/wwwroot/Stardew\ Valley.dll
-          # Copy MG facade
-          cp /tmp/mg-facade/bin/Debug/net8.0/MonoGame.Framework.dll src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/MonoGame.Framework.dll
-          # Copy Content
-          mkdir -p src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/content
-          cp -r /tmp/sdv-extract/Stardew\ Valley/Content/* src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/content/
-          echo "Files copied to wwwroot"
-
-      - name: Set SourceMode for AOT (bypass JIT, use full original code)
-        run: |
-          # In AOT mode, the JIT interpreter is bypassed, so transform.c:1146 won't fire
-          # We can use SourceMode = true (full original code, no truncation)
-          sed -i 's/SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SourceMode = false;.*/SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SourceMode = true; \/\/ AOT mode: full original code/' src/SdvWebPort.PoC.SdvBlazor/Pages/Home.razor.cs
-          echo "SourceMode = true (AOT bypasses JIT bugs)"
+          echo "SDV errors: $(dotnet build 2>&1 | grep 'error CS' | wc -l)"
+          
+          # Copy to wwwroot
+          cp bin/Debug/net8.0/Stardew\ Valley.dll ../../${KNI_DIR}/../Stardew\ Valley.dll
+          cp /tmp/mg-facade/bin/Debug/net8.0/MonoGame.Framework.dll ../../${KNI_DIR}/../MonoGame.Framework.dll
+          mkdir -p ../../${KNI_DIR}/../content
+          cp -r ${SDV_DIR}/Content/* ../../${KNI_DIR}/../content/
+          echo "Source-compiled SDV copied to wwwroot"
 
       - name: Publish with AOT
         run: |
@@ -280,7 +207,7 @@ jobs:
       - name: Upload AOT artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdv-web-port-aot-source
+          name: sdv-web-port-aot
           path: src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/
           retention-days: 30
 
