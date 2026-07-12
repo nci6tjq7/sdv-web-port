@@ -37,8 +37,9 @@ jobs:
           dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageWriteSharp 2>/dev/null || true
           dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageSharp 2>/dev/null || true
           
-          # Bump version to 4.2.9002
-          sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/src/Xna.Framework.Graphics/Xna.Framework.Graphics.csproj
+          # Bump ALL versions to 4.2.9002
+          # Bump ALL framework versions
+          find /tmp/kni-src/src -name '*.csproj' -exec sed -i 's/4.2.9001/4.2.9002/g' {} ;
           sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj
           
           echo "KNI source fixed (Graphics only)"
