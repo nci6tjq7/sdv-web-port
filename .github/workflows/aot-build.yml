@@ -1,12 +1,7 @@
-name: AOT Build
+name: AOT Build (Source-Fixed KNI)
 
 on:
   workflow_dispatch:
-    inputs:
-      sdv_zip_url:
-        description: 'Direct download URL for SDV zip (leave empty for standard build)'
-        required: false
-        default: ''
   push:
     branches: [main]
 
@@ -26,82 +21,65 @@ jobs:
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools
 
-      - name: Restore NuGet packages
-        run: dotnet restore src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj
-
-      - name: Patch KNI NuGet DLLs
+      - name: Clone and fix KNI source
         run: |
-          export PATH="$PATH:$HOME/.dotnet"
-          NUGET_DIR="$HOME/.nuget/packages"
+          git clone --depth 1 https://github.com/kniEngine/kni.git /tmp/kni-src
           
-          # Create patcher project
-          mkdir -p /tmp/kni-patcher
-          cat > /tmp/kni-patcher/Program.cs << 'EOF'
-          using System;using System.Linq;using Mono.Cecil;using Mono.Cecil.Cil;
-          class P{
-            static void Main(string[] args){
-              // Patch Graphics
-              var gfxPath = args[0];
-              Console.WriteLine("Patching Graphics: " + gfxPath);
-              using(var gfxAsm = AssemblyDefinition.ReadAssembly(gfxPath)){
-                foreach(var t in gfxAsm.MainModule.Types){
-                  foreach(var m in t.Methods){
-                    if(m.Name=="IsProfileSupported"||m.Name=="Platform_IsProfileSupported"||m.Name=="get_IsProfileSupported"){
-                      try{m.Body.Instructions.Clear();m.Body.Instructions.Add(Instruction.Create(OpCodes.Ldc_I4_1));m.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));Console.WriteLine("  Patched "+t.Name+"."+m.Name);}catch{}
-                    }
-                  }
-                }
-                gfxAsm.Write(gfxPath+".tmp");
-              }
-              System.IO.File.Move(gfxPath+".tmp", gfxPath, true);
-              
-              // Patch Game
-              var gamePath = args[1];
-              Console.WriteLine("Patching Game: " + gamePath);
-              using(var gameAsm = AssemblyDefinition.ReadAssembly(gamePath)){
-                var g = gameAsm.MainModule.Types.FirstOrDefault(t=>t.FullName=="Microsoft.Xna.Framework.Game");
-                if(g!=null) foreach(var n in new[]{"Initialize","UnloadContent","Update","Draw"}){
-                  var m = g.Methods.FirstOrDefault(x=>x.Name==n);
-                  if(m!=null && m.IsFamilyOrAssembly){m.IsFamilyOrAssembly=false; m.IsFamily=true; Console.WriteLine("  Patched Game."+n);}
-                }
-                gameAsm.Write(gamePath+".tmp");
-              }
-              System.IO.File.Move(gamePath+".tmp", gamePath, true);
-              Console.WriteLine("Done!");
-            }
-          }
-          EOF
-          cat > /tmp/kni-patcher/p.csproj << 'EOF'
-          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Mono.Cecil" Version="0.11.5"/></ItemGroup></Project>
-          EOF
+          # Fix 1: GraphicsAdapter.IsProfileSupported → return true
+          sed -i 's/return _strategy.Platform_IsProfileSupported(graphicsProfile);/return true; \/\/ Patched for WASM/' \
+            /tmp/kni-src/src/Xna.Framework.Graphics/Graphics/GraphicsAdapter.cs
           
-          # Find DLLs
-          GFX_DLL=$(find "$NUGET_DIR/nkast.xna.framework.graphics" -name "Xna.Framework.Graphics.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
-          GAME_DLL=$(find "$NUGET_DIR/nkast.xna.framework.game" -name "Xna.Framework.Game.dll" -path "*/net8.0/*" 2>/dev/null | head -1)
+          # Fix 2: ConcreteGraphicsAdapter.Platform_IsProfileSupported → return true (bypass OffscreenCanvas)
+          sed -i '/public override bool Platform_IsProfileSupported/,/^        }/c\        public override bool Platform_IsProfileSupported(GraphicsProfile graphicsProfile)\n        {\n            return true; \/\/ Patched for WASM\n        }' \
+            /tmp/kni-src/Platforms/Graphics/.BlazorGL/ConcreteGraphicsAdapter.cs
           
-          if [ -z "$GFX_DLL" ] || [ -z "$GAME_DLL" ]; then
-            echo "ERROR: Could not find KNI DLLs in NuGet cache"
-            find "$NUGET_DIR/nkast.xna.framework.graphics" -name "*.dll" 2>/dev/null
-            find "$NUGET_DIR/nkast.xna.framework.game" -name "*.dll" 2>/dev/null
-            exit 1
-          fi
+          # Fix 3: Game methods protected internal → protected (so SDV can override from another assembly)
+          sed -i 's/protected internal virtual/protected virtual/g' \
+            /tmp/kni-src/src/Xna.Framework.Game/Game.cs
           
-          cd /tmp/kni-patcher
-          dotnet run -- "$GFX_DLL" "$GAME_DLL"
+          # Add missing packages
+          dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageWriteSharp 2>/dev/null || true
+          dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageSharp 2>/dev/null || true
           
-          # Clear NuGet HTTP cache
-          dotnet nuget locals http-cache --clear 2>/dev/null || true
-          echo "KNI DLLs patched successfully"
+          # Bump version to 4.2.9002
+          sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/src/Xna.Framework.Graphics/Xna.Framework.Graphics.csproj
+          sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/src/Xna.Framework.Game/Xna.Framework.Game.csproj
+          sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj
+          
+          echo "KNI source fixed"
+
+      - name: Build and pack KNI NuGet packages
+        run: |
+          dotnet build /tmp/kni-src/Kni.Platform.Blazor.GL.sln -c Release
+          mkdir -p /tmp/kni-nuget
+          
+          # Pack all framework projects
+          for proj in Xna.Framework Xna.Framework.Game Xna.Framework.Graphics Xna.Framework.Content Xna.Framework.Audio Xna.Framework.Input Xna.Framework.Media Xna.Framework.XR; do
+            dotnet pack "/tmp/kni-src/src/$proj/$proj.csproj" -c Release -o /tmp/kni-nuget 2>/dev/null
+          done
+          # Pack Blazor platform
+          dotnet pack /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj -c Release -o /tmp/kni-nuget
+          
+          echo "KNI NuGet packages created:"
+          ls /tmp/kni-nuget/*.nupkg
+
+      - name: Clear NuGet cache and restore with fixed KNI
+        run: |
+          rm -rf ~/.nuget/packages/nkast.* 2>/dev/null
+          dotnet restore src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj \
+            --source /tmp/kni-nuget --source https://api.nuget.org/v3/index.json
 
       - name: Publish with AOT
-        run: dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj -c Release -p:RunAOTCompilation=true --no-restore
+        run: |
+          dotnet publish src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj \
+            -c Release -p:RunAOTCompilation=true --no-restore
         env:
           DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 1
 
       - name: Upload AOT artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdv-web-port-aot
+          name: sdv-web-port-aot-fixed-kni
           path: src/SdvWebPort.PoC.SdvBlazor/bin/Release/net8.0/publish/wwwroot/
           retention-days: 30
 
