@@ -224,6 +224,10 @@ public partial class Home : ComponentBase
             // Set bisection mode from URL query param (?bisect=N) for debugging
             var bisectMode = await ReadBisectModeFromUrlAsync();
             SdvWebPort.Rewriter.SdvAssemblyRefRewriter.BisectMode = bisectMode;
+            // Source mode: skip patches that replace original code (_draw, TitleMenu, etc.)
+            // Source-compiled SDV already has correct original code, no need to replace.
+            SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SourceMode = true;
+            Console.WriteLine("[+] SOURCE MODE: using original _draw and TitleMenu (no IL replacement)");
             if (bisectMode > 0)
                 Console.WriteLine($"[+] BISECT MODE {bisectMode} — patching GameRunner..ctor() for debugging");
 

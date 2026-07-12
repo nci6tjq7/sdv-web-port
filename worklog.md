@@ -1325,3 +1325,24 @@ Next Steps:
 - Add SMAPI mod loading support
 - Add XNB resource customization (visual mods)
 - Implement mobile virtual input
+
+---
+Task ID: phase3-sourcemode-original-draw
+Agent: main
+Task: Use original _draw and TitleMenu.draw in SourceMode
+
+Work Log:
+- Added SourceMode flag to SdvAssemblyRefRewriter
+- SourceMode skips: PatchDrawCustom, PatchTitleMenuDrawCustom, TitleMenu method nops
+- SourceMode keeps: PatchTitleMenuCtorTruncate (avoids transform.c:1146), all JIT bug fix patches
+- Added null guard to _draw source: reset SpriteBatch if in begun state
+- Result: Game loads, Run() returns, Tick loop runs
+- NREs from truncated TitleMenu..ctor accessing uninitialized fields in draw()
+- Canvas shows bgColor (loading state) — game is running but draw fails
+
+Stage Summary:
+- SourceMode infrastructure works ✓
+- Original _draw and TitleMenu.draw preserved ✓
+- Game loop running (Tick/Update/Draw all called) ✓
+- transform.c:1146 avoided by keeping TitleMenu..ctor truncation ✓
+- Next: fix NREs in TitleMenu.draw (null guards for uninitialized fields)

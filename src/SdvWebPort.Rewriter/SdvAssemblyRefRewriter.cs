@@ -80,6 +80,14 @@ public static class SdvAssemblyRefRewriter
     public static int BisectMode { get; set; } = 0;
 
     /// <summary>
+    /// When true, skip patches that REPLACE original code (PatchDrawCustom, TitleMenu
+    /// truncation, etc.). Used when loading source-compiled SDV which already has
+    /// correct original code. Only environment patches (GraphicsProfile, audio, etc.)
+    /// are applied.
+    /// </summary>
+    public static bool SourceMode { get; set; } = false;
+
+    /// <summary>
     /// When true, skip Pass 2b (method signature scope rewrite).
     /// This can be set to true as a fallback if the full rewrite fails during Write
     /// due to Cecil's inability to resolve nested types.
@@ -619,17 +627,28 @@ public static class SdvAssemblyRefRewriter
         // is bypassed entirely. But full AOT (with all original methods) runs out of
         // memory during LLVM compilation. Keep the nop patches to reduce code size
         // for AOT, while still getting the benefit of AOT-compiled runtime assemblies.
-        PatchTitleMenuCtorTruncate(asmDef);
+        if (!SourceMode)
+        {
+            PatchTitleMenuCtorTruncate(asmDef);
+            // Keep TitleMenu methods nopped (reduces AOT code size + avoids NREs from null fields)
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
+            PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
+            // Custom draw (proper Begin/End pairing)
+            PatchTitleMenuDrawCustom(asmDef);
+            PatchDrawCustom(asmDef);
+        }
+        else
+        {
+            Console.WriteLine("[AssemblyRefRewriter] SourceMode: keeping original _draw + TitleMenu.draw");
+            // Still truncate TitleMenu..ctor to avoid transform.c:1146 in constructor
+            // (the ctor has complex IL that triggers WASM JIT bug, but draw is safe)
+            PatchTitleMenuCtorTruncate(asmDef);
+        }
+        // These patches are needed in BOTH modes (environment fixes, not code replacements)
         PatchPlaySoundToNop(asmDef);
         PatchGetNameForInstance(asmDef);
-        // Keep TitleMenu methods nopped (reduces AOT code size + avoids NREs from null fields)
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "performHoverAction");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "receiveLeftClick");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "update");
-        PatchMethodToNop(asmDef, "StardewValley.Menus.TitleMenu", "gameWindowSizeChanged");
-        // Custom draw (proper Begin/End pairing)
-        PatchTitleMenuDrawCustom(asmDef);
-        PatchDrawCustom(asmDef);
         // InjectDrawButtonsHelper DISABLED — injecting new methods into Game1
         // causes WASM JIT instability even if the method is never called.
         // InjectDrawButtonsHelper(asmDef);
