@@ -32,7 +32,7 @@ jobs:
       - name: Patch KNI DLLs
         run: |
           export PATH="$PATH:$HOME/.dotnet"
-          KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
+          KNI_DIR="$GITHUB_WORKSPACE/src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
           # Patch Game method visibility
           mkdir -p /tmp/kni-patcher /tmp/kni-patched
           cp "$KNI_DIR"/*.dll /tmp/kni-patched/
@@ -73,7 +73,7 @@ jobs:
         if: ${{ github.event.inputs.sdv_zip_url != '' }}
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools:$HOME/.dotnet"
-          KNI_DIR="src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
+          KNI_DIR="$GITHUB_WORKSPACE/src/SdvWebPort.PoC.SdvBlazor/wwwroot/deps/kni"
           SDV_DIR="/tmp/sdv-extract/Stardew Valley"
           
           # Build MG facade
