@@ -641,10 +641,10 @@ public static class SdvAssemblyRefRewriter
         }
         else
         {
-            Console.WriteLine("[AssemblyRefRewriter] SourceMode: keeping original _draw + TitleMenu.draw");
-            // Still truncate TitleMenu..ctor to avoid transform.c:1146 in constructor
-            // (the ctor has complex IL that triggers WASM JIT bug, but draw is safe)
-            PatchTitleMenuCtorTruncate(asmDef);
+            Console.WriteLine("[AssemblyRefRewriter] SourceMode: keeping original _draw + TitleMenu + ctor");
+            // In SourceMode, the C# compiler generates different IL than original SDV.dll.
+            // The full ctor should be safe — if it triggers transform.c:1146, we'll fix
+            // the specific source pattern instead of truncating.
         }
         // These patches are needed in BOTH modes (environment fixes, not code replacements)
         PatchPlaySoundToNop(asmDef);

@@ -226,7 +226,7 @@ public partial class Home : ComponentBase
             SdvWebPort.Rewriter.SdvAssemblyRefRewriter.BisectMode = bisectMode;
             // Source mode: skip patches that replace original code (_draw, TitleMenu, etc.)
             // Source-compiled SDV already has correct original code, no need to replace.
-            SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SourceMode = true;
+            SdvWebPort.Rewriter.SdvAssemblyRefRewriter.SourceMode = false; // Hybrid: source-compiled SDV + IL patches
             Console.WriteLine("[+] SOURCE MODE: using original _draw and TitleMenu (no IL replacement)");
             if (bisectMode > 0)
                 Console.WriteLine($"[+] BISECT MODE {bisectMode} — patching GameRunner..ctor() for debugging");
