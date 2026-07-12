@@ -9,9 +9,8 @@
          the bundle. The trimmer strips them because our app doesn't directly
          reference them, but SDV's GetTypes() needs them at runtime. -->
     <PublishTrimmed>false</PublishTrimmed>
-    <!-- AOT disabled — sandbox runs out of memory (exit code 137) during LLVM precompilation.
-         AOT works in environments with more RAM (8GB+). Enable for production builds. -->
-    <RunAOTCompilation>false</RunAOTCompilation>
+    <!-- AOT: enabled via -p:RunAOTCompilation=true in GitHub Actions (16GB runner) -->
+    <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">false</RunAOTCompilation>
   </PropertyGroup>
 
   <ItemGroup>
