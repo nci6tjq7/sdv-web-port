@@ -21,7 +21,7 @@ jobs:
       - name: Install wasm-tools workload
         run: dotnet workload install wasm-tools
 
-      - name: Clone and fix KNI source
+      - name: Clone and fix KNI source (Graphics only)
         run: |
           git clone --depth 1 https://github.com/kniEngine/kni.git /tmp/kni-src
           
@@ -33,20 +33,15 @@ jobs:
           sed -i '/public override bool Platform_IsProfileSupported/,/^        }/c\        public override bool Platform_IsProfileSupported(GraphicsProfile graphicsProfile)\n        {\n            return true; \/\/ Patched for WASM\n        }' \
             /tmp/kni-src/Platforms/Graphics/.BlazorGL/ConcreteGraphicsAdapter.cs
           
-          # Fix 3: Game methods protected internal → protected (so SDV can override from another assembly)
-          sed -i 's/protected internal virtual/protected virtual/g' \
-            /tmp/kni-src/src/Xna.Framework.Game/Game.cs
-          
           # Add missing packages
           dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageWriteSharp 2>/dev/null || true
           dotnet add /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj package StbImageSharp 2>/dev/null || true
           
           # Bump version to 4.2.9002
           sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/src/Xna.Framework.Graphics/Xna.Framework.Graphics.csproj
-          sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/src/Xna.Framework.Game/Xna.Framework.Game.csproj
           sed -i 's/4.2.9001/4.2.9002/g' /tmp/kni-src/Platforms/Kni.Platform.Blazor.GL.csproj
           
-          echo "KNI source fixed"
+          echo "KNI source fixed (Graphics only)"
 
       - name: Build and pack KNI NuGet packages
         run: |
