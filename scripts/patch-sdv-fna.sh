@@ -111,11 +111,54 @@ CSPROJ
 
 # Apply source fixes (paths use nested layout: StardewValley/Internal/X.cs)
 cd "$SRC_DIR"
-python3 -c "
-with open('StardewValley/Internal/ForEachItemHelper.cs', 'r') as f: c = f.read()
-c = c.replace('return CombinePath(((_003C_003Ec__DisplayClass4_0<TItem>)this).getParentPath, ((_003C_003Ec__DisplayClass4_0<TItem>)this).list);', 'return new System.Collections.Generic.List<object>();')
-with open('StardewValley/Internal/ForEachItemHelper.cs', 'w') as f: f.write(c)
-"
+
+# Fix ForEachItemHelper.cs: replace broken <>c__DisplayClass4_0 compiler-generated
+# identifier with a valid name. The class declaration and all casts use the same
+# name, so a global replace in this file is safe.
+python3 << 'PYEOF'
+p = 'StardewValley/Internal/ForEachItemHelper.cs'
+with open(p, 'r') as f: c = f.read()
+# Replace the compiler-generated class name with a valid identifier.
+# '<>c__DisplayClass4_0' -> '_c__DisplayClass4_0'
+c = c.replace('<>c__DisplayClass4_0', '_c__DisplayClass4_0')
+# Also fix the GetPath() method body that uses CombinePath with this-casts.
+# Replace the entire return statement with a simple empty list (the path
+# is only used for debug logging in single-player).
+import re
+c = re.sub(
+    r'return CombinePath \([^;]+;',
+    'return new System.Collections.Generic.List<object>();',
+    c
+)
+with open(p, 'w') as f: f.write(c)
+print(f"  Fixed {p}")
+PYEOF
+
+# Fix NPC.cs: broken '(?.X)' pattern from ILSpy's null-conditional decompilation.
+# Example: 'GetData (?.MugShotSourceRect)' should be 'GetData ()?.MugShotSourceRect'
+python3 << 'PYEOF'
+import re
+p = 'StardewValley/NPC.cs'
+with open(p, 'r') as f: c = f.read()
+# Pattern: 'MethodName (?.X)' -> 'MethodName ()?.X'
+c, n = re.subn(r'(\w+)\s*\(\?\.\s*([^)]+)\)', r'\1 ()?.\2', c)
+with open(p, 'w') as f: f.write(c)
+if n > 0: print(f"  Fixed {n} (?.X) pattern(s) in {p}")
+PYEOF
+
+# Fix Preconditions.cs: broken '? val;' type-less variable declaration.
+# ILSpy sometimes emits this when it can't infer the type. Since the variable
+# is later cast with (Point)val, 'object' is a safe fallback type.
+python3 << 'PYEOF'
+import re
+p = 'StardewValley/Preconditions.cs'
+with open(p, 'r') as f: c = f.read()
+# Replace '\t? val;' or '    ? val;' with '\tobject val;'
+c, n = re.subn(r'^([ \t]+)\?\s+(\w+)\s*;', r'\1object \2;', c, flags=re.MULTILINE)
+with open(p, 'w') as f: f.write(c)
+if n > 0: print(f"  Fixed {n} '? var;' pattern(s) in {p}")
+PYEOF
+
 sed -i '1i using StardewValley.Internal;' StardewValley/SaveMigrations/SaveMigrator_1_6.cs
 sed -i 's/Utility.ForEachItemContext(HandleItem)/Utility.ForEachItemContext((in ForEachItemContext context) => true)/' StardewValley/SaveMigrations/SaveMigrator_1_6.cs
 sed -i '/TextureTuckAmount/d' StardewValley/GameRunner.cs
