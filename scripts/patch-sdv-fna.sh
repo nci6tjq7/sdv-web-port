@@ -6,13 +6,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "[+] Applying FNA compat patches to $SRC_DIR (script dir: ${SCRIPT_DIR})"
 
-# Defensive cleanup: replace any leftover ((Type)(ref VAR)) -> VAR
-# (ILSpy sometimes emits this for value-type IL patterns; safe to drop the cast
-# because the variable is already the same type.)
-echo "[+] Cleaning up any leftover ((Type)(ref VAR)) patterns..."
+# Defensive cleanup: replace broken ILSpy 8.2 patterns:
+#   ((Type)(ref EXPR))            -> EXPR
+#   ((Type1)(Type2)(ref EXPR))    -> EXPR   (nested casts)
+#   ((??)EXPR) ?? Y               -> EXPR ?? Y
+# These are invalid C# syntax emitted for constrained callvirt on value
+# types and nullable coalescing on value types.
+echo "[+] Cleaning up broken ILSpy patterns..."
 python3 << PYEOF
 import os, re
-PAT = re.compile(r'\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+(\w+)\)\)')
+# Match ((Type)(ref EXPR)) or ((Type1)(Type2)(ref EXPR)) — one outer paren,
+# then one or more (Type) cast groups, then (ref EXPR), then outer close.
+# EXPR can be a variable, dotted member access, array index, or method call
+# (allowing one level of nested parens for method arguments).
+REF_PAT = re.compile(r'\((?:\([A-Za-z_][A-Za-z0-9_.]*\))+(?:\(ref\s+([^()]*(?:\([^()]*\)[^()]*)*?)\))\)')
+NULL_PAT = re.compile(r'\(\(\?\?\)([^)]+?)\)')
 fixed = 0
 files_fixed = 0
 for root, dirs, files in os.walk('${SRC_DIR}'):
@@ -22,11 +30,19 @@ for root, dirs, files in os.walk('${SRC_DIR}'):
         p = os.path.join(root, fn)
         with open(p, 'r', encoding='utf-8', errors='replace') as f:
             c = f.read()
-        new_c, n = PAT.subn(r'\1', c)
-        if n > 0:
+        # Apply REF_PAT iteratively to handle nested cases
+        total = 0
+        while True:
+            new_c, n1 = REF_PAT.subn(r'\1', c)
+            new_c, n2 = NULL_PAT.subn(r'\1', new_c)
+            c = new_c
+            total += n1 + n2
+            if n1 + n2 == 0:
+                break
+        if total > 0:
             with open(p, 'w', encoding='utf-8') as f:
-                f.write(new_c)
-            fixed += n
+                f.write(c)
+            fixed += total
             files_fixed += 1
 print(f"  Cleaned {fixed} occurrences in {files_fixed} files")
 PYEOF

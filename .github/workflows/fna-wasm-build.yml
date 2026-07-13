@@ -111,11 +111,16 @@ jobs:
       - name: Patch SDV source for FNA
         run: bash scripts/patch-sdv-fna.sh /tmp/sdv-fna-src
 
-      - name: Verify no broken (ref X) patterns remain
+      - name: Verify no broken ILSpy patterns remain
         run: |
-          BAD=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+\w+\)\)' /tmp/sdv-fna-src/ | wc -l)
-          echo "Broken (ref X) patterns after patch: $BAD"
-          if [ "$BAD" -gt 0 ]; then echo "FAIL: patch script did not clean all (ref X) patterns"; exit 1; fi
+          BAD_REF=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+[^)]+\)\)' /tmp/sdv-fna-src/ | wc -l)
+          BAD_NULL=$(grep -rE '\(\(\?\?\)[^)]+\)' /tmp/sdv-fna-src/ | wc -l)
+          echo "Broken (ref X) patterns: $BAD_REF"
+          echo "Broken ((??)X) patterns: $BAD_NULL"
+          if [ "$BAD_REF" -gt 0 ] || [ "$BAD_NULL" -gt 0 ]; then
+            echo "FAIL: patch script did not clean all broken patterns"
+            exit 1
+          fi
 
       - name: Build SDV with FNA
         run: |
