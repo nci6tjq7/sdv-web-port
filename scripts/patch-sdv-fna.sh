@@ -31,6 +31,22 @@ for root, dirs, files in os.walk('${SRC_DIR}'):
 print(f"  Cleaned {fixed} occurrences in {files_fixed} files")
 PYEOF
 
+# Normalise directory layout: nested (StardewValley/Internal/X.cs) is the
+# default for our custom decompiler. The patches below use the nested layout.
+# If the decompiler output is flat (StardewValley.Internal/X.cs), bail out.
+if [ ! -d "$SRC_DIR/StardewValley/Internal" ] && [ -d "$SRC_DIR/StardewValley.Internal" ]; then
+  echo "[!] Detected flat layout (StardewValley.Internal/). Convert to nested layout..." >&2
+  # Move StardewValley.X -> StardewValley/X for all top-level StardewValley.* dirs
+  for d in "$SRC_DIR"/StardewValley.*; do
+    [ -d "$d" ] || continue
+    base=$(basename "$d")
+    sub="${base#StardewValley.}"
+    mkdir -p "$SRC_DIR/StardewValley/$sub"
+    cp -a "$d/." "$SRC_DIR/StardewValley/$sub/"
+    rm -rf "$d"
+  done
+fi
+
 # Remove duplicate root-level .cs files
 for f in "$SRC_DIR"/*.cs; do
   [ -f "$f" ] || continue
@@ -77,20 +93,20 @@ cat > "$SRC_DIR/StardewValley.csproj" << CSPROJ
 </Project>
 CSPROJ
 
-# Apply source fixes
+# Apply source fixes (paths use nested layout: StardewValley/Internal/X.cs)
 cd "$SRC_DIR"
 python3 -c "
-with open('StardewValley.Internal/ForEachItemHelper.cs', 'r') as f: c = f.read()
+with open('StardewValley/Internal/ForEachItemHelper.cs', 'r') as f: c = f.read()
 c = c.replace('return CombinePath(((_003C_003Ec__DisplayClass4_0<TItem>)this).getParentPath, ((_003C_003Ec__DisplayClass4_0<TItem>)this).list);', 'return new System.Collections.Generic.List<object>();')
-with open('StardewValley.Internal/ForEachItemHelper.cs', 'w') as f: f.write(c)
+with open('StardewValley/Internal/ForEachItemHelper.cs', 'w') as f: f.write(c)
 "
-sed -i '1i using StardewValley.Internal;' StardewValley.SaveMigrations/SaveMigrator_1_6.cs
-sed -i 's/Utility.ForEachItemContext(HandleItem)/Utility.ForEachItemContext((in ForEachItemContext context) => true)/' StardewValley.SaveMigrations/SaveMigrator_1_6.cs
+sed -i '1i using StardewValley.Internal;' StardewValley/SaveMigrations/SaveMigrator_1_6.cs
+sed -i 's/Utility.ForEachItemContext(HandleItem)/Utility.ForEachItemContext((in ForEachItemContext context) => true)/' StardewValley/SaveMigrations/SaveMigrator_1_6.cs
 sed -i '/TextureTuckAmount/d' StardewValley/GameRunner.cs
-sed -i 's/soundEffect = new OggStreamSoundEffect(filePath)/soundEffect = null; \/\/ WASM/' StardewValley.Audio/AudioCueModificationManager.cs
-sed -i 's/SoundEffect\.FromStream(stream, flag2)/SoundEffect.FromStream(stream)/' StardewValley.Audio/AudioCueModificationManager.cs
+sed -i 's/soundEffect = new OggStreamSoundEffect(filePath)/soundEffect = null; \/\/ WASM/' StardewValley/Audio/AudioCueModificationManager.cs
+sed -i 's/SoundEffect\.FromStream(stream, flag2)/SoundEffect.FromStream(stream)/' StardewValley/Audio/AudioCueModificationManager.cs
 sed -i 's/, SurfaceFormat.Color)/)/g' StardewValley/Game1.cs StardewValley/DebugMetricsComponent.cs
-sed -i 's/\.ActualWidth/.Width/g; s/\.ActualHeight/.Height/g' StardewValley.Extensions/FrameworkExtensions.cs
+sed -i 's/\.ActualWidth/.Width/g; s/\.ActualHeight/.Height/g' StardewValley/Extensions/FrameworkExtensions.cs
 sed -i 's/, mipmap: false//g; s/, mipmap: true//g' StardewValley/Game1.cs StardewValley/DebugMetricsComponent.cs
 sed -i '/HardwareModeSwitch/d' StardewValley/Game1.cs StardewValley/Options.cs
 sed -i 's/\.TextInput += /\/\/.TextInput += /g; s/\.TextInput -= /\/\/.TextInput -= /g' StardewValley/KeyboardDispatcher.cs
@@ -103,16 +119,16 @@ with open('StardewValley/Program.cs', 'r') as f: c = f.read()
 c = c.replace('_sdk = new SteamHelper ();\n\t\t\t\tif (_sdk == null) {\n\t\t\t\t\t_sdk = new NullSDKHelper ();\n\t\t\t\t}', '_sdk = new NullSDKHelper ();')
 with open('StardewValley/Program.cs', 'w') as f: f.write(c)
 "
-sed -i 's/RequestLock(ContinueDemolish, BuildingLockFailed)/RequestLock(() => {}, BuildingLockFailed)/' StardewValley.Menus/CarpenterMenu.cs
+sed -i 's/RequestLock(ContinueDemolish, BuildingLockFailed)/RequestLock(() => {}, BuildingLockFailed)/' StardewValley/Menus/CarpenterMenu.cs
 python3 -c "
-with open('StardewValley.Menus/EmoteMenu.cs', 'r') as f: c = f.read()
+with open('StardewValley/Menus/EmoteMenu.cs', 'r') as f: c = f.read()
 old = 'Vector2.Dot(value2: new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)), value1: value)'
 new = 'Vector2.Dot(value, new Vector2((float)_emoteButtons[i].bounds.Center.X - ((float)xPositionOnScreen + (float)width / 2f), (float)_emoteButtons[i].bounds.Center.Y - ((float)yPositionOnScreen + (float)height / 2f)))'
 c = c.replace(old, new)
-with open('StardewValley.Menus/EmoteMenu.cs', 'w') as f: f.write(c)
+with open('StardewValley/Menus/EmoteMenu.cs', 'w') as f: f.write(c)
 "
 sed -i 's/value\.Length > 0/value.ToString().Length > 0/' StardewValley/GameLocation.cs
-sed -i '1i using xTile.ObjectModel;' StardewValley/GameLocation.cs StardewValley/InteriorDoor.cs StardewValley.Pathfinding/PathFindController.cs 2>/dev/null
+sed -i '1i using xTile.ObjectModel;' StardewValley/GameLocation.cs StardewValley/InteriorDoor.cs StardewValley/Pathfinding/PathFindController.cs 2>/dev/null
 python3 -c "
 with open('StardewValley/ItemContextTagManager.cs', 'r') as f: c = f.read()
 import re
@@ -125,7 +141,7 @@ with open('StardewValley/ItemContextTagManager.cs', 'w') as f: f.write(c)
 sed -i 's/DontLoadDefaultSetting>/DontLoadDefaultSettingAttribute>/g' StardewValley/Options.cs
 sed -i 's/ShowSkillMastery/null/g' StardewValley/GameLocation.cs
 sed -i 's/null([0-9]*, new Vector2([^)]*));/{ }/g' StardewValley/GameLocation.cs
-sed -i 's/!GameRunner.instance.Window.CenterOnDisplay/startupPreferences.displayIndex/' StardewValley.Menus/TitleMenu.cs 2>/dev/null
+sed -i 's/!GameRunner.instance.Window.CenterOnDisplay/startupPreferences.displayIndex/' StardewValley/Menus/TitleMenu.cs 2>/dev/null
 sed -i 's/cue\.Volume/cue.get_Volume()/g; s/cue\.Pitch/cue.get_Pitch()/g; s/cue\.IsPitchBeingControlledByRPC/cue.get_IsPitchBeingControlledByRPC()/g' StardewValley/CueWrapper.cs
 sed -i 's/cue.get_Volume() = value;/cue.set_Volume(value);/' StardewValley/CueWrapper.cs
 sed -i 's/cue.get_Pitch() = value;/cue.set_Pitch(value);/' StardewValley/CueWrapper.cs
