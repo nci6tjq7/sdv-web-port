@@ -89,6 +89,43 @@ global using Vector4 = Microsoft.Xna.Framework.Vector4;
 global using Point = Microsoft.Xna.Framework.Point;
 EOF
 
+# Also add per-file using aliases to files that have 'using xTile.Dimensions;'
+# (global using should take precedence, but if it doesn't, per-file aliases definitely do)
+echo "[+] Adding per-file using aliases to files with 'using xTile.Dimensions;'..."
+python3 << PYEOF
+import os, re
+ALIASES = """using Rectangle = Microsoft.Xna.Framework.Rectangle;
+using Color = Microsoft.Xna.Framework.Color;
+using Vector2 = Microsoft.Xna.Framework.Vector2;
+using Point = Microsoft.Xna.Framework.Point;"""
+fixed = 0
+for root, dirs, files in os.walk('${SRC_DIR}'):
+    for fn in files:
+        if not fn.endswith('.cs'): continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f:
+            c = f.read()
+        # If file has 'using xTile.Dimensions;' and doesn't already have the alias
+        if 'using xTile.Dimensions;' in c and 'using Rectangle = Microsoft.Xna.Framework.Rectangle;' not in c:
+            # Insert the aliases right after the last 'using ...;' line at the top
+            # Find the position right after the namespace declaration if file-scoped
+            m = re.search(r'^(namespace [^;]+;)\s*\n', c, re.MULTILINE)
+            if m:
+                # File-scoped namespace - insert after namespace
+                pos = m.end()
+                c = c[:pos] + ALIASES + '\n' + c[pos:]
+            else:
+                # Insert after the last 'using ...;' at the start
+                usings = list(re.finditer(r'^using [^;]+;\s*$', c, re.MULTILINE))
+                if usings:
+                    pos = usings[-1].end()
+                    c = c[:pos] + '\n' + ALIASES + c[pos:]
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write(c)
+            fixed += 1
+print(f"  Added aliases to {fixed} files")
+PYEOF
+
 # FnaCompat.cs
 cp "${SCRIPT_DIR}/FnaCompat.cs" "$SRC_DIR/FnaCompat.cs"
 
