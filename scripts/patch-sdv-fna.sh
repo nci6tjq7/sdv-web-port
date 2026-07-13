@@ -2,8 +2,9 @@
 set -e
 SRC_DIR="${1:-/tmp/sdv-fna-src}"
 SDV_DIR="/tmp/sdv-extract/Stardew Valley"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "[+] Applying FNA compat patches to $SRC_DIR"
+echo "[+] Applying FNA compat patches to $SRC_DIR (script dir: ${SCRIPT_DIR})"
 
 # Remove duplicate root-level .cs files
 for f in "$SRC_DIR"/*.cs; do
@@ -18,7 +19,7 @@ using System;namespace StardewValley{[AttributeUsage(AttributeTargets.Field,Allo
 EOF
 
 # FnaCompat.cs
-cp /home/z/my-project/scripts/FnaCompat.cs "$SRC_DIR/FnaCompat.cs"
+cp "${SCRIPT_DIR}/FnaCompat.cs" "$SRC_DIR/FnaCompat.cs"
 
 # Create csproj
 cat > "$SRC_DIR/StardewValley.csproj" << CSPROJ

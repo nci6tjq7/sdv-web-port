@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -52,17 +55,36 @@ jobs:
           cd /tmp/mg-facade-fna && dotnet build
 
       - name: Download SDV DLL and dependencies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "/tmp/sdv-extract/Stardew Valley"
-          
-          # Download from GitHub release
-          echo "Downloading SDV DLL from GitHub release..."
-          curl -sL "https://github.com/nci6tjq7/sdv-web-port/releases/download/sdv-dlls-v1/StardewValley.dll"             -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-          
-          echo "Downloading deps from GitHub release..."
-          curl -sL "https://github.com/nci6tjq7/sdv-web-port/releases/download/sdv-dlls-v1/sdv-deps.zip"             -o /tmp/sdv-deps.zip
+
+          # Private repo: releases/download URLs return 404 without auth.
+          # Use the assets API endpoint with Accept: application/octet-stream.
+          RELEASE_TAG="sdv-dlls-v1"
+          API="https://api.github.com/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}"
+
+          echo "Fetching release metadata for ${RELEASE_TAG}..."
+          ASSETS_JSON=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${API}")
+
+          SDV_DLL_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='StardewValley.dll'))")
+          DEPS_ZIP_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='sdv-deps.zip'))")
+
+          echo "Downloading StardewValley.dll from ${SDV_DLL_URL}..."
+          curl -sL -H "Authorization: token ${GH_TOKEN}" \
+               -H "Accept: application/octet-stream" \
+               "${SDV_DLL_URL}" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+
+          echo "Downloading sdv-deps.zip from ${DEPS_ZIP_URL}..."
+          curl -sL -H "Authorization: token ${GH_TOKEN}" \
+               -H "Accept: application/octet-stream" \
+               "${DEPS_ZIP_URL}" -o /tmp/sdv-deps.zip
+
+          file "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          file /tmp/sdv-deps.zip
           unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
-          
+
           # Verify
           ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           ls "/tmp/sdv-extract/Stardew Valley/"*.dll | wc -l
