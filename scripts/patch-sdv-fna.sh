@@ -320,6 +320,28 @@ for f in StardewValley/ButtonCollection.cs; do
   fi
 done
 
+# Fix SpriteEffects | int and (SpriteEffects)(VAR | int) across all files
+# FNA's SpriteEffects doesn't support bitwise ops with int.
+# Pattern: (SpriteEffects)(VAR | N) → (SpriteEffects)((int)VAR | N)
+# Pattern: (SpriteEffects)(VAR & N) → (SpriteEffects)((int)VAR & N)
+python3 << 'PYEOF'
+import os, re
+# Pattern: (SpriteEffects)(IDENT | N) or (SpriteEffects)(IDENT & N)
+# where IDENT is a variable name, N is a number
+PAT = re.compile(r'\(SpriteEffects\)\((\w+)\s*([\|&])\s*(\d+)\)')
+fixed = 0
+for root, dirs, files in os.walk('.'):
+    for fn in files:
+        if not fn.endswith('.cs'): continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+        new_c, n = PAT.subn(r'(SpriteEffects)((int)\1 \2 \3)', c)
+        if n > 0:
+            with open(p, 'w', encoding='utf-8') as f: f.write(new_c)
+            fixed += n
+print(f"  SpriteEffects | int: fixed {fixed}")
+PYEOF
+
 # Fix (SpriteEffects)(bool_expr) → (SpriteEffects)((bool_expr) ? 1 : 0)
 # FNA's SpriteEffects enum can't be cast from bool directly.
 python3 << 'PYEOF'
@@ -338,6 +360,23 @@ for root, dirs, files in os.walk('.'):
             with open(p, 'w', encoding='utf-8') as f: f.write(new_c)
             fixed += n
 print(f"  SpriteEffects bool cast: fixed {fixed}")
+PYEOF
+
+# Fix (Matrix?)null argument - FNA's SpriteBatch.Begin takes Matrix (not Matrix?)
+# Replace (Matrix?)null with Matrix.Identity
+python3 << 'PYEOF'
+import os, re
+fixed = 0
+for root, dirs, files in os.walk('.'):
+    for fn in files:
+        if not fn.endswith('.cs'): continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+        if '(Matrix?)null' in c:
+            new_c = c.replace('(Matrix?)null', 'Matrix.Identity')
+            with open(p, 'w', encoding='utf-8') as f: f.write(new_c)
+            fixed += c.count('(Matrix?)null')
+print(f"  (Matrix?)null → Matrix.Identity: fixed {fixed}")
 PYEOF
 
 # Fix AudioCueModificationManager: SoundEffect.FromStream with 2 args
