@@ -306,4 +306,47 @@ sed -i 's/cue\.Volume/cue.get_Volume()/g; s/cue\.Pitch/cue.get_Pitch()/g; s/cue\
 sed -i 's/cue.get_Volume() = value;/cue.set_Volume(value);/' StardewValley/CueWrapper.cs
 sed -i 's/cue.get_Pitch() = value;/cue.set_Pitch(value);/' StardewValley/CueWrapper.cs
 
+# Fix FNA Buttons enum bitwise operators (FNA's Buttons doesn't have [Flags] attribute,
+# so | and & with int literals fail with CS0019).
+# Pattern: (Buttons)(VAR | 0xNNN) → (Buttons)((int)VAR | 0xNNN)
+# Pattern: (VAR & 0xNNN) where VAR is Buttons → ((int)VAR & 0xNNN)
+# Only apply to known files to avoid breaking other code.
+for f in StardewValley/ButtonCollection.cs; do
+  if [ -f "$f" ]; then
+    # Fix: (Buttons)(_pressed | 0xNNN) → (Buttons)((int)_pressed | 0xNNN)
+    sed -i -E 's/\(Buttons\)\((_pressed|oldPadState\.\w+|padState\.\w+)\s*\|\s*(0x[0-9A-Fa-f]+|[0-9]+)\)/(Buttons)((int)\1 | \2)/g' "$f"
+    # Fix: (_pressed & (1 << N)) → ((int)_pressed & (1 << N))
+    sed -i -E 's/\((_pressed|oldPadState\.\w+|padState\.\w+)\s*&\s*\(([^)]+)\)/((int)\1 \& (\2)/g' "$f"
+  fi
+done
+
+# Fix (SpriteEffects)(bool_expr) → (SpriteEffects)((bool_expr) ? 1 : 0)
+# FNA's SpriteEffects enum can't be cast from bool directly.
+python3 << 'PYEOF'
+import os, re
+# Match (SpriteEffects)(BOOLEAN_EXPR) where BOOLEAN_EXPR contains comparison operators
+# This is risky - only do it for specific patterns we've seen
+PAT = re.compile(r'\(SpriteEffects\)\(([^()]*[<>!=]=?[^()]*)\)')
+fixed = 0
+for root, dirs, files in os.walk('.'):
+    for fn in files:
+        if not fn.endswith('.cs'): continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+        new_c, n = PAT.subn(r'(SpriteEffects)((\1) ? 1 : 0)', c)
+        if n > 0:
+            with open(p, 'w', encoding='utf-8') as f: f.write(new_c)
+            fixed += n
+print(f"  SpriteEffects bool cast: fixed {fixed}")
+PYEOF
+
+# Fix AudioCueModificationManager: SoundEffect.FromStream with 2 args
+# FNA only has FromStream(Stream), not FromStream(Stream, bool)
+if [ -f "StardewValley/Audio/AudioCueModificationManager.cs" ]; then
+  sed -i 's/SoundEffect\.FromStream(stream, flag2)/SoundEffect.FromStream(stream)/g' StardewValley/Audio/AudioCueModificationManager.cs
+  sed -i 's/soundEffect = new OggStreamSoundEffect(filePath)/soundEffect = null; \/\/ WASM: OggStream not available/g' StardewValley/Audio/AudioCueModificationManager.cs
+  # Also fix the cast issue: (SoundEffect)OggStreamSoundEffect is invalid
+  sed -i 's/(SoundEffect)soundEffect/soundEffect/g' StardewValley/Audio/AudioCueModificationManager.cs 2>/dev/null
+fi
+
 echo "[+] Patches applied"
