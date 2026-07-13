@@ -1346,3 +1346,52 @@ Stage Summary:
 - Game loop running (Tick/Update/Draw all called) ✓
 - transform.c:1146 avoided by keeping TitleMenu..ctor truncation ✓
 - Next: fix NREs in TitleMenu.draw (null guards for uninitialized fields)
+
+---
+Task ID: phase4-fna-wasm-build-progress
+Agent: main
+Task: FNA WASM Build workflow - fix decompiler/patch issues to get SDV+FNA compiling
+
+Work Log:
+- Fixed private repo auth: switched to GitHub Assets API with GITHUB_TOKEN
+- Fixed ILSpy 8.2 broken patterns (8 distinct types):
+  1. ((Type)(ref EXPR))              → EXPR
+  2. ((Type1)(Type2)(ref EXPR))      → EXPR (nested casts)
+  3. ((??)EXPR) ?? Y                 → EXPR ?? Y (broken nullable coalescing)
+  4. <>c__DisplayClass4_0            → _c__DisplayClass4_0 (compiler-gen identifier)
+  5. GetData (?.X)                   → GetData ()?.X (broken null-conditional)
+  6. '? val;                         → 'object val;' (broken type inference)
+  7. VAR..ctor(args);                → VAR = new Type(args); (paren-matched, type-inferred)
+  8. (Matrix?)null                   → Matrix.Identity (FNA overload mismatch)
+- Added GlobalUsings.cs + per-file using aliases to disambiguate Rectangle/Color/Vector2/Point
+- Fixed directory layout (nested vs flat) for custom decompiler output
+- Added namespace declaration wrapper (ILSpy Decompile(typeDef) drops the namespace block)
+- Fixed FNA-specific issues:
+  - Buttons enum bitwise ops with int: (Buttons)(VAR | N) → (Buttons)((int)VAR | N)
+  - SpriteEffects | int: same pattern
+  - (SpriteEffects)(bool_expr): → (SpriteEffects)((bool_expr) ? 1 : 0)
+
+Stage Summary:
+- Build pipeline now succeeds through: download → decompile → patch → verify → build (fails)
+- Error count progression:
+  Run #1: failed at download (404 private repo)
+  Run #2: failed at decompile (ilspycmd broken syntax)
+  Run #5: 7915 errors (ref/?? broken patterns)
+  Run #6: 1105 errors
+  Run #7: 51 errors (ForEachItemHelper, NPC, Preconditions)
+  Run #8: 5497 errors (missing namespace declarations)
+  Run #9: 551 errors (Rectangle ambiguity)
+  Run #10: 551 errors (global using didn't disambiguate)
+  Run #11: 5871 errors (..ctor patterns)
+  Run #12: 1089 errors (.ctor regex couldn't handle nested parens)
+  Run #13: 507 errors (Buttons/SpriteEffects ops)
+  Run #14: 213 errors (Matrix? null)
+  Run #15: 175 errors (current)
+- Remaining 175 errors: CS0266 (int→Buttons/Keys), CS1061 (Rectangle.MaxCorner),
+  CS0119 (Color method vs type), CS1540 (protected member access via base.Game)
+
+Next Steps:
+- Fix CS0266: add explicit (Buttons)/(Keys) casts for int assignments
+- Fix CS0119: rename Color method in ChatCommands.cs
+- Fix CS1540: change base.Game.Draw() to base.Draw() in GameRunner.cs
+- Fix CS1061: add MaxCorner extension method to FnaCompat.cs
