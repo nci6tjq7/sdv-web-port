@@ -27,6 +27,13 @@ jobs:
       - name: Install ILSpy
         run: dotnet tool install --global ilspycmd --version 8.2.0.7535
 
+      - name: Build custom SDV decompiler
+        run: |
+          # The custom decompiler uses DecompilerSettings(LanguageVersion.Latest)
+          # with ShowDebugInfo=false, which avoids the broken ((Type)(ref VAR))
+          # syntax that ilspycmd emits by default (3027 occurrences in SDV).
+          dotnet build scripts/decompile-sdv/decompile.csproj -c Release -o /tmp/decompiler
+
       - name: Clone FNA
         run: |
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
@@ -92,12 +99,16 @@ jobs:
 
       - name: Decompile SDV
         run: |
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          export DOTNET_ROLL_FORWARD=LatestMajor
           mkdir -p /tmp/sdv-fna-src
-          ilspycmd "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" -p -o /tmp/sdv-fna-src
+          dotnet /tmp/decompiler/decompile-sdv.dll \
+                 "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" \
+                 /tmp/sdv-fna-src
           rm -f "/tmp/sdv-fna-src/Stardew Valley.csproj"
           echo "Decompiled: $(find /tmp/sdv-fna-src -name '*.cs' | wc -l) files"
+          # Sanity check: no broken (ref X) pattern
+          BAD=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+\w+\)\)' /tmp/sdv-fna-src/ | wc -l)
+          echo "Broken (ref X) patterns: $BAD"
+          if [ "$BAD" -gt 0 ]; then echo "FAIL: decompiler produced broken syntax"; exit 1; fi
 
       - name: Patch SDV source for FNA
         run: bash scripts/patch-sdv-fna.sh /tmp/sdv-fna-src

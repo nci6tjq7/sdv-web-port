@@ -6,6 +6,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "[+] Applying FNA compat patches to $SRC_DIR (script dir: ${SCRIPT_DIR})"
 
+# Defensive cleanup: replace any leftover ((Type)(ref VAR)) -> VAR
+# (ILSpy sometimes emits this for value-type IL patterns; safe to drop the cast
+# because the variable is already the same type.)
+echo "[+] Cleaning up any leftover ((Type)(ref VAR)) patterns..."
+python3 << PYEOF
+import os, re
+PAT = re.compile(r'\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+(\w+)\)\)')
+fixed = 0
+files_fixed = 0
+for root, dirs, files in os.walk('${SRC_DIR}'):
+    for fn in files:
+        if not fn.endswith('.cs'):
+            continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f:
+            c = f.read()
+        new_c, n = PAT.subn(r'\1', c)
+        if n > 0:
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write(new_c)
+            fixed += n
+            files_fixed += 1
+print(f"  Cleaned {fixed} occurrences in {files_fixed} files")
+PYEOF
+
 # Remove duplicate root-level .cs files
 for f in "$SRC_DIR"/*.cs; do
   [ -f "$f" ] || continue
