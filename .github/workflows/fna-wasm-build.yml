@@ -2,11 +2,6 @@ name: FNA WASM Build
 
 on:
   workflow_dispatch:
-    inputs:
-      sdv_zip_url:
-        description: 'URL to SDV zip (leave empty to use cached)'
-        required: false
-        default: ''
   push:
     branches: [main]
 
@@ -37,7 +32,7 @@ jobs:
       - name: Build FNA
         run: dotnet build /tmp/FNA/FNA.Core.csproj -c Release
 
-      - name: Build MG Facade (for xTile compat)
+      - name: Build MG Facade
         run: |
           mkdir -p /tmp/mg-facade-fna /tmp/extract-fna-types
           cat > /tmp/mg-facade-fna/MonoGame.Framework.csproj << 'EOF'
@@ -56,16 +51,29 @@ jobs:
           cd /tmp/extract-fna-types && dotnet run -- "/tmp/FNA/bin/Release/net8.0/FNA.dll" /tmp/mg-facade-fna/Forwarders.cs
           cd /tmp/mg-facade-fna && dotnet build
 
-      - name: Download and extract SDV
+      - name: Download SDV DLL and dependencies
         run: |
-          mkdir -p /tmp/sdv-extract
-          if [ -n "${{ github.event.inputs.sdv_zip_url }}" ]; then
-            wget -q "${{ github.event.inputs.sdv_zip_url }}" -O /tmp/sdv.zip
-            unzip -o /tmp/sdv.zip -d /tmp/sdv-extract
-          else
-            echo "No SDV zip URL provided - will use placeholder"
+          mkdir -p /tmp/sdv-extract/Stardew\ Valley
+          # Download SDV DLL from gofile
+          wget -q "https://store8.gofile.io/download/d4e3e3f0-5b8f-4e1a-9c2f-7a6b8c9d0e1f/Stardew%20Valley.dll" -O "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || true
+          # If direct download fails, try gofile API
+          if [ ! -f "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" ] || [ $(stat -c%s "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || echo 0) -lt 1000000 ]; then
+            echo "Direct download failed, trying gofile API..."
+            # Get download link from gofile API
+            SDV_API=$(curl -s "https://api.gofile.io/contents/ZXa1o7")
+            SDV_URL=$(echo "$SDV_API" | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d['data']['contents'].values())[0]['link'])" 2>/dev/null)
+            echo "SDV DLL URL: $SDV_URL"
+            wget -q "$SDV_URL" -O "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           fi
-          ls "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || echo "SDV DLL not found"
+          ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          
+          # Download dependency DLLs
+          DEPS_API=$(curl -s "https://api.gofile.io/contents/vUSsEL")
+          DEPS_URL=$(echo "$DEPS_API" | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d['data']['contents'].values())[0]['link'])" 2>/dev/null)
+          echo "Deps URL: $DEPS_URL"
+          wget -q "$DEPS_URL" -O /tmp/sdv-deps.zip
+          unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
+          ls "/tmp/sdv-extract/Stardew Valley/"*.dll
 
       - name: Decompile SDV
         run: |
@@ -90,68 +98,23 @@ jobs:
       - name: Download FNA WASM native libs
         run: |
           mkdir -p /tmp/fnalibs
-          # Download pre-built fnalibs from FNA-WASM-Build releases
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/SDL3.a" -O /tmp/fnalibs/SDL3.a || true
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || true
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/FAudio.a" -O /tmp/fnalibs/FAudio.a || true
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || true
+          STATICS_RELEASE="5ca6e290-3dbe-49dd-b7f8-647e3af0a709"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/SDL3.a" -O /tmp/fnalibs/SDL3.a || echo "SDL3 download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || echo "FNA3D download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FAudio.a" -O /tmp/fnalibs/FAudio.a || echo "FAudio download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
           ls -la /tmp/fnalibs/
 
-      - name: Create WASM project
-        run: |
-          mkdir -p /tmp/sdv-wasm
-          cat > /tmp/sdv-wasm/SdvWasm.csproj << 'EOF'
-          <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
-            <PropertyGroup>
-              <TargetFramework>net8.0</TargetFramework>
-              <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-              <AssemblyName>SdvWasm</AssemblyName>
-              <RunAOTCompilation>false</RunAOTCompilation>
-              <PublishTrimmed>false</PublishTrimmed>
-              <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sWASMFS</EmccExtraLDFlags>
-              <EmccEnvironment>web</EmccEnvironment>
-            </PropertyGroup>
-            <ItemGroup>
-              <NativeFileReference Include="/tmp/fnalibs/SDL3.a" />
-              <NativeFileReference Include="/tmp/fnalibs/FNA3D.a" />
-              <NativeFileReference Include="/tmp/fnalibs/FAudio.a" />
-              <NativeFileReference Include="/tmp/fnalibs/libmojoshader.a" />
-            </ItemGroup>
-            <ItemGroup>
-              <ProjectReference Include="/tmp/FNA/FNA.Core.csproj" />
-              <Reference Include="Stardew Valley"><HintPath>/tmp/sdv-fna-src/bin/Debug/net8.0/Stardew Valley.dll</HintPath></Reference>
-            </ItemGroup>
-          </Project>
-          EOF
-          # Create minimal Program.cs
-          cat > /tmp/sdv-wasm/Program.cs << 'EOF'
-          using System;
-          using StardewValley;
-          class Program {
-            static void Main(string[] args) {
-              Console.WriteLine("SDV Web Port starting...");
-              Program.sdk = new StardewValley.SDKs.NullSDKHelper();
-              using var game = new GameRunner();
-              GameRunner.instance = game;
-              game.Run();
-            }
-          }
-          EOF
-
-      - name: Build WASM
-        run: |
-          cd /tmp/sdv-wasm
-          dotnet publish -c Release 2>&1 || true
-          echo "=== WASM build attempted ==="
-
-      - name: Upload artifact
-        if: always()
+      - name: Upload SDV+FNA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdv-fna-wasm
+          name: sdv-fna-compiled
           path: |
-            /tmp/sdv-wasm/bin/Release/net8.0/publish/wwwroot/
             /tmp/sdv-fna-src/bin/Debug/net8.0/Stardew Valley.dll
+            /tmp/FNA/bin/Release/net8.0/FNA.dll
+            /tmp/mg-facade-fna/bin/Debug/net8.0/MonoGame.Framework.dll
+            /tmp/fnalibs/
+            /tmp/sdv-extract/Stardew Valley/*.dll
           retention-days: 30
 
       - name: Upload build logs on failure
@@ -160,6 +123,6 @@ jobs:
         with:
           name: build-logs
           path: |
-            /tmp/sdv-wasm/
-            /tmp/sdv-fna-src/bin/
+            /tmp/sdv-fna-src/
+            /tmp/sdv-extract/
           retention-days: 7
