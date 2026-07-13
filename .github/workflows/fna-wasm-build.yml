@@ -53,27 +53,46 @@ jobs:
 
       - name: Download SDV DLL and dependencies
         run: |
-          mkdir -p /tmp/sdv-extract/Stardew\ Valley
-          # Download SDV DLL from gofile
-          wget -q "https://store8.gofile.io/download/d4e3e3f0-5b8f-4e1a-9c2f-7a6b8c9d0e1f/Stardew%20Valley.dll" -O "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || true
-          # If direct download fails, try gofile API
-          if [ ! -f "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" ] || [ $(stat -c%s "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || echo 0) -lt 1000000 ]; then
-            echo "Direct download failed, trying gofile API..."
-            # Get download link from gofile API
-            SDV_API=$(curl -s "https://api.gofile.io/contents/ZXa1o7")
-            SDV_URL=$(echo "$SDV_API" | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d['data']['contents'].values())[0]['link'])" 2>/dev/null)
-            echo "SDV DLL URL: $SDV_URL"
-            wget -q "$SDV_URL" -O "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-          fi
-          ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          mkdir -p "/tmp/sdv-extract/Stardew Valley"
           
-          # Download dependency DLLs
-          DEPS_API=$(curl -s "https://api.gofile.io/contents/vUSsEL")
-          DEPS_URL=$(echo "$DEPS_API" | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d['data']['contents'].values())[0]['link'])" 2>/dev/null)
-          echo "Deps URL: $DEPS_URL"
-          wget -q "$DEPS_URL" -O /tmp/sdv-deps.zip
-          unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
-          ls "/tmp/sdv-extract/Stardew Valley/"*.dll
+          # Get SDV DLL download link from gofile API
+          echo "Getting SDV DLL from gofile..."
+          SDV_API=$(curl -s -L "https://api.gofile.io/contents/ZXa1o7" 2>/dev/null)
+          echo "API response: $SDV_API" | head -c 500
+          SDV_URL=$(echo "$SDV_API" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for k,v in d.get('data',{}).get('contents',{}).items():
+              print(v.get('link',''))
+              break
+          " 2>/dev/null)
+          echo "SDV DLL direct URL: $SDV_URL"
+          
+          if [ -n "$SDV_URL" ]; then
+            curl -s -L "$SDV_URL" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          fi
+          
+          # Get deps download link
+          echo "Getting deps from gofile..."
+          DEPS_API=$(curl -s -L "https://api.gofile.io/contents/vUSsEL" 2>/dev/null)
+          DEPS_URL=$(echo "$DEPS_API" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for k,v in d.get('data',{}).get('contents',{}).items():
+              print(v.get('link',''))
+              break
+          " 2>/dev/null)
+          echo "Deps direct URL: $DEPS_URL"
+          
+          if [ -n "$DEPS_URL" ]; then
+            curl -s -L "$DEPS_URL" -o /tmp/sdv-deps.zip
+            unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
+          fi
+          
+          # Verify
+          ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          ls "/tmp/sdv-extract/Stardew Valley/"*.dll | wc -l
+          echo "DLLs found"
 
       - name: Decompile SDV
         run: |
@@ -105,12 +124,12 @@ jobs:
           wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
           ls -la /tmp/fnalibs/
 
-      - name: Upload SDV+FNA artifact
+      - name: Upload all artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sdv-fna-compiled
+          name: sdv-fna-build
           path: |
-            /tmp/sdv-fna-src/bin/Debug/net8.0/Stardew Valley.dll
+            /tmp/sdv-fna-src/bin/Debug/net8.0/
             /tmp/FNA/bin/Release/net8.0/FNA.dll
             /tmp/mg-facade-fna/bin/Debug/net8.0/MonoGame.Framework.dll
             /tmp/fnalibs/
@@ -122,7 +141,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            /tmp/sdv-fna-src/
-            /tmp/sdv-extract/
+          path: /tmp/sdv-fna-src/
           retention-days: 7
