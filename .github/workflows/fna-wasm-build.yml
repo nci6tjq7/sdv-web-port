@@ -105,13 +105,17 @@ jobs:
                  /tmp/sdv-fna-src
           rm -f "/tmp/sdv-fna-src/Stardew Valley.csproj"
           echo "Decompiled: $(find /tmp/sdv-fna-src -name '*.cs' | wc -l) files"
-          # Sanity check: no broken (ref X) pattern
-          BAD=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+\w+\)\)' /tmp/sdv-fna-src/ | wc -l)
-          echo "Broken (ref X) patterns: $BAD"
-          if [ "$BAD" -gt 0 ]; then echo "FAIL: decompiler produced broken syntax"; exit 1; fi
+          # NOTE: ILSpy emits ((Type)(ref VAR)) patterns for value-type constrained
+          # callvirt — these are invalid C# but cleaned up by patch-sdv-fna.sh.
 
       - name: Patch SDV source for FNA
         run: bash scripts/patch-sdv-fna.sh /tmp/sdv-fna-src
+
+      - name: Verify no broken (ref X) patterns remain
+        run: |
+          BAD=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+\w+\)\)' /tmp/sdv-fna-src/ | wc -l)
+          echo "Broken (ref X) patterns after patch: $BAD"
+          if [ "$BAD" -gt 0 ]; then echo "FAIL: patch script did not clean all (ref X) patterns"; exit 1; fi
 
       - name: Build SDV with FNA
         run: |

@@ -21,12 +21,18 @@ class Program
         var settings = new DecompilerSettings(LanguageVersion.Latest)
         {
             ThrowOnAssemblyResolveErrors = false,
-            RemoveDeadCode = false,
-            RemoveDeadStores = false,
+            // RemoveDeadCode/Stores = true causes ILSpy to inline single-use
+            // temporaries like 'Color val = base.Value; return ((Color)(ref val)).R;'
+            // → 'return base.Value.R;', which avoids the broken (ref X) syntax.
+            RemoveDeadCode = true,
+            RemoveDeadStores = true,
             UseDebugSymbols = false,
             ShowDebugInfo = false,
             UseLambdaSyntax = true,
-            FileScopedNamespaces = false,
+            FileScopedNamespaces = true,
+            UseRefLocalsForRefReturns = false,
+            AlwaysCastTargetsOfExplicitInterfaceImplementationCall = false,
+            ShowILInstructions = false,
         };
 
         var decompiler = new CSharpDecompiler(dllPath, settings);
