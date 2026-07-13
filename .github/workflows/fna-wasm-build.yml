@@ -55,44 +55,18 @@ jobs:
         run: |
           mkdir -p "/tmp/sdv-extract/Stardew Valley"
           
-          # Get SDV DLL download link from gofile API
-          echo "Getting SDV DLL from gofile..."
-          SDV_API=$(curl -s -L "https://api.gofile.io/contents/ZXa1o7" 2>/dev/null)
-          echo "API response: $SDV_API" | head -c 500
-          SDV_URL=$(echo "$SDV_API" | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          for k,v in d.get('data',{}).get('contents',{}).items():
-              print(v.get('link',''))
-              break
-          " 2>/dev/null)
-          echo "SDV DLL direct URL: $SDV_URL"
+          # Download from GitHub release
+          echo "Downloading SDV DLL from GitHub release..."
+          curl -sL "https://github.com/nci6tjq7/sdv-web-port/releases/download/sdv-dlls-v1/StardewValley.dll"             -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           
-          if [ -n "$SDV_URL" ]; then
-            curl -s -L "$SDV_URL" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-          fi
-          
-          # Get deps download link
-          echo "Getting deps from gofile..."
-          DEPS_API=$(curl -s -L "https://api.gofile.io/contents/vUSsEL" 2>/dev/null)
-          DEPS_URL=$(echo "$DEPS_API" | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          for k,v in d.get('data',{}).get('contents',{}).items():
-              print(v.get('link',''))
-              break
-          " 2>/dev/null)
-          echo "Deps direct URL: $DEPS_URL"
-          
-          if [ -n "$DEPS_URL" ]; then
-            curl -s -L "$DEPS_URL" -o /tmp/sdv-deps.zip
-            unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
-          fi
+          echo "Downloading deps from GitHub release..."
+          curl -sL "https://github.com/nci6tjq7/sdv-web-port/releases/download/sdv-dlls-v1/sdv-deps.zip"             -o /tmp/sdv-deps.zip
+          unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
           
           # Verify
           ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           ls "/tmp/sdv-extract/Stardew Valley/"*.dll | wc -l
-          echo "DLLs found"
+          echo "DLLs downloaded"
 
       - name: Decompile SDV
         run: |
