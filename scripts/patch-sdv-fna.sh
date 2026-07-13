@@ -21,6 +21,8 @@ import os, re
 # (allowing one level of nested parens for method arguments).
 REF_PAT = re.compile(r'\((?:\([A-Za-z_][A-Za-z0-9_.]*\))+(?:\(ref\s+([^()]*(?:\([^()]*\)[^()]*)*?)\))\)')
 NULL_PAT = re.compile(r'\(\(\?\?\)([^)]+?)\)')
+# Match VAR..ctor(args); - ILSpy's broken representation of constructor call
+CTOR_PAT = re.compile(r'(\b[A-Za-z_]\w*)\s*\.\.ctor\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*;')
 fixed = 0
 files_fixed = 0
 for root, dirs, files in os.walk('${SRC_DIR}'):
@@ -30,7 +32,7 @@ for root, dirs, files in os.walk('${SRC_DIR}'):
         p = os.path.join(root, fn)
         with open(p, 'r', encoding='utf-8', errors='replace') as f:
             c = f.read()
-        # Apply REF_PAT iteratively to handle nested cases
+        # Apply REF_PAT and NULL_PAT iteratively
         total = 0
         while True:
             new_c, n1 = REF_PAT.subn(r'\1', c)
@@ -39,6 +41,27 @@ for root, dirs, files in os.walk('${SRC_DIR}'):
             total += n1 + n2
             if n1 + n2 == 0:
                 break
+        # Now apply CTOR_PAT with type inference
+        def replace_ctor(m):
+            var = m.group(1)
+            args = m.group(2)
+            # Look backwards in the file for a declaration of `var`
+            # Pattern: 'SomeType VAR =' or 'SomeType VAR;' (SomeType can be qualified)
+            decl_pat = re.compile(r'\b([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*(?:<[^>]+>)?)\s+' + re.escape(var) + r'\s*(?:=|;)')
+            pos = m.start()
+            before = c[:pos]
+            decl_match = None
+            for dm in re.finditer(decl_pat, before):
+                decl_match = dm  # Keep the last one (closest to current position)
+            if decl_match:
+                var_type = decl_match.group(1)
+                return f'{var} = new {var_type}({args});'
+            else:
+                # Fallback: leave as a no-op assignment (might break logic but compiles)
+                return f'/* {var}..ctor({args}); -- type not inferred */'
+        new_c, n3 = CTOR_PAT.subn(replace_ctor, c)
+        c = new_c
+        total += n3
         if total > 0:
             with open(p, 'w', encoding='utf-8') as f:
                 f.write(c)
