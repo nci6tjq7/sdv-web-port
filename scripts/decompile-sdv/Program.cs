@@ -30,9 +30,6 @@ class Program
             ShowDebugInfo = false,
             UseLambdaSyntax = true,
             FileScopedNamespaces = true,
-            UseRefLocalsForRefReturns = false,
-            AlwaysCastTargetsOfExplicitInterfaceImplementationCall = false,
-            ShowILInstructions = false,
         };
 
         var decompiler = new CSharpDecompiler(dllPath, settings);
