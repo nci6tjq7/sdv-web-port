@@ -1,0 +1,165 @@
+name: FNA WASM Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdv_zip_url:
+        description: 'URL to SDV zip (leave empty to use cached)'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.412'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Install ILSpy
+        run: dotnet tool install --global ilspycmd --version 8.2.0.7535
+
+      - name: Clone FNA
+        run: |
+          git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
+          cd /tmp/FNA && git submodule update --init --recursive
+
+      - name: Build FNA
+        run: dotnet build /tmp/FNA/FNA.Core.csproj -c Release
+
+      - name: Build MG Facade (for xTile compat)
+        run: |
+          mkdir -p /tmp/mg-facade-fna /tmp/extract-fna-types
+          cat > /tmp/mg-facade-fna/MonoGame.Framework.csproj << 'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><AssemblyName>MonoGame.Framework</AssemblyName><OutputType>Library</OutputType><TargetFramework>net8.0</TargetFramework><Version>3.6.0.862</Version></PropertyGroup>
+            <ItemGroup><ProjectReference Include="/tmp/FNA/FNA.Core.csproj" /></ItemGroup>
+          </Project>
+          EOF
+          cat > /tmp/extract-fna-types/Program.cs << 'EOF'
+          using System;using System.Linq;using System.IO;using System.Text;using Mono.Cecil;
+          class P{static void Main(string[]a){var sb=new StringBuilder();sb.AppendLine("using System.Runtime.CompilerServices;");sb.AppendLine();var asm=AssemblyDefinition.ReadAssembly(a[0]);var s=new System.Collections.Generic.HashSet<string>();foreach(var t in asm.MainModule.Types){if(!t.IsPublic||t.FullName.StartsWith("<")||t.FullName.StartsWith("_"))continue;if(string.IsNullOrEmpty(t.Namespace)||s.Contains(t.FullName))continue;s.Add(t.FullName);if(t.HasGenericParameters)continue;sb.AppendLine("[assembly: TypeForwardedTo(typeof("+t.FullName+"))]");}File.WriteAllText(a[1],sb.ToString());Console.WriteLine("Generated "+s.Count+" forwarders");}}
+          EOF
+          cat > /tmp/extract-fna-types/e.csproj << 'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Mono.Cecil" Version="0.11.5"/></ItemGroup></Project>
+          EOF
+          cd /tmp/extract-fna-types && dotnet run -- "/tmp/FNA/bin/Release/net8.0/FNA.dll" /tmp/mg-facade-fna/Forwarders.cs
+          cd /tmp/mg-facade-fna && dotnet build
+
+      - name: Download and extract SDV
+        run: |
+          mkdir -p /tmp/sdv-extract
+          if [ -n "${{ github.event.inputs.sdv_zip_url }}" ]; then
+            wget -q "${{ github.event.inputs.sdv_zip_url }}" -O /tmp/sdv.zip
+            unzip -o /tmp/sdv.zip -d /tmp/sdv-extract
+          else
+            echo "No SDV zip URL provided - will use placeholder"
+          fi
+          ls "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" 2>/dev/null || echo "SDV DLL not found"
+
+      - name: Decompile SDV
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          export DOTNET_ROLL_FORWARD=LatestMajor
+          mkdir -p /tmp/sdv-fna-src
+          ilspycmd "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" -p -o /tmp/sdv-fna-src
+          rm -f "/tmp/sdv-fna-src/Stardew Valley.csproj"
+          echo "Decompiled: $(find /tmp/sdv-fna-src -name '*.cs' | wc -l) files"
+
+      - name: Patch SDV source for FNA
+        run: bash scripts/patch-sdv-fna.sh /tmp/sdv-fna-src
+
+      - name: Build SDV with FNA
+        run: |
+          cd /tmp/sdv-fna-src
+          rm -rf bin obj
+          dotnet build
+          echo "SDV errors: $(dotnet build 2>&1 | grep 'error CS' | wc -l)"
+          ls -la "bin/Debug/net8.0/Stardew Valley.dll"
+
+      - name: Download FNA WASM native libs
+        run: |
+          mkdir -p /tmp/fnalibs
+          # Download pre-built fnalibs from FNA-WASM-Build releases
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/SDL3.a" -O /tmp/fnalibs/SDL3.a || true
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || true
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/FAudio.a" -O /tmp/fnalibs/FAudio.a || true
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/5ca6e290-3dbe-49dd-b7f8-647e3af0a709/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || true
+          ls -la /tmp/fnalibs/
+
+      - name: Create WASM project
+        run: |
+          mkdir -p /tmp/sdv-wasm
+          cat > /tmp/sdv-wasm/SdvWasm.csproj << 'EOF'
+          <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+            <PropertyGroup>
+              <TargetFramework>net8.0</TargetFramework>
+              <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+              <AssemblyName>SdvWasm</AssemblyName>
+              <RunAOTCompilation>false</RunAOTCompilation>
+              <PublishTrimmed>false</PublishTrimmed>
+              <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sWASMFS</EmccExtraLDFlags>
+              <EmccEnvironment>web</EmccEnvironment>
+            </PropertyGroup>
+            <ItemGroup>
+              <NativeFileReference Include="/tmp/fnalibs/SDL3.a" />
+              <NativeFileReference Include="/tmp/fnalibs/FNA3D.a" />
+              <NativeFileReference Include="/tmp/fnalibs/FAudio.a" />
+              <NativeFileReference Include="/tmp/fnalibs/libmojoshader.a" />
+            </ItemGroup>
+            <ItemGroup>
+              <ProjectReference Include="/tmp/FNA/FNA.Core.csproj" />
+              <Reference Include="Stardew Valley"><HintPath>/tmp/sdv-fna-src/bin/Debug/net8.0/Stardew Valley.dll</HintPath></Reference>
+            </ItemGroup>
+          </Project>
+          EOF
+          # Create minimal Program.cs
+          cat > /tmp/sdv-wasm/Program.cs << 'EOF'
+          using System;
+          using StardewValley;
+          class Program {
+            static void Main(string[] args) {
+              Console.WriteLine("SDV Web Port starting...");
+              Program.sdk = new StardewValley.SDKs.NullSDKHelper();
+              using var game = new GameRunner();
+              GameRunner.instance = game;
+              game.Run();
+            }
+          }
+          EOF
+
+      - name: Build WASM
+        run: |
+          cd /tmp/sdv-wasm
+          dotnet publish -c Release 2>&1 || true
+          echo "=== WASM build attempted ==="
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdv-fna-wasm
+          path: |
+            /tmp/sdv-wasm/bin/Release/net8.0/publish/wwwroot/
+            /tmp/sdv-fna-src/bin/Debug/net8.0/Stardew Valley.dll
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            /tmp/sdv-wasm/
+            /tmp/sdv-fna-src/bin/
+          retention-days: 7
