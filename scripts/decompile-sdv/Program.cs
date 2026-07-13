@@ -70,6 +70,14 @@ class Program
                 var syntaxTree = decompiler.Decompile(typeDef.MetadataToken);
                 var code = syntaxTree.ToString();
 
+                // ILSpy's Decompile(typeDef) returns just the type declaration
+                // WITHOUT the surrounding namespace block. Wrap the output in a
+                // namespace declaration so the compiler can find the types.
+                if (!string.IsNullOrEmpty(ns))
+                {
+                    code = $"namespace {ns};\n\n{code}";
+                }
+
                 File.WriteAllText(filePath, code);
                 fileCount++;
 
