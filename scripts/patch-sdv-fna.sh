@@ -75,6 +75,20 @@ cat > "$SRC_DIR/DontLoadDefaultSetting.cs" << 'EOF'
 using System;namespace StardewValley{[AttributeUsage(AttributeTargets.Field,AllowMultiple=false)]public class DontLoadDefaultSettingAttribute:Attribute{}}
 EOF
 
+# GlobalUsings.cs: disambiguate types that exist in both Microsoft.Xna.Framework.* and xTile.Dimensions.
+# ILSpy often drops fully-qualified names, causing CS0104 (ambiguous reference) errors.
+# Default to the XNA types since SDV uses them ~95% of the time.
+cat > "$SRC_DIR/GlobalUsings.cs" << 'EOF'
+// Disambiguate types that appear in both Microsoft.Xna.Framework.* and xTile.Dimensions.
+// ILSpy sometimes drops fully-qualified names; these aliases default to XNA types.
+global using Rectangle = Microsoft.Xna.Framework.Rectangle;
+global using Color = Microsoft.Xna.Framework.Color;
+global using Vector2 = Microsoft.Xna.Framework.Vector2;
+global using Vector3 = Microsoft.Xna.Framework.Vector3;
+global using Vector4 = Microsoft.Xna.Framework.Vector4;
+global using Point = Microsoft.Xna.Framework.Point;
+EOF
+
 # FnaCompat.cs
 cp "${SCRIPT_DIR}/FnaCompat.cs" "$SRC_DIR/FnaCompat.cs"
 
