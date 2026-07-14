@@ -105,8 +105,6 @@
     <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlShaderBinaryToSPIRV" />
   </ItemGroup>
 
-</Project>
-
   <Target Name="ExportMojoShaderSymbols" AfterTargets="WasmBuild">
     <PropertyGroup>
       <EmccLinkRspFile>$(WasmAssetDir)\emcc-link.rsp</EmccLinkRspFile>
@@ -145,3 +143,5 @@
     </ItemGroup>
     <WriteLinesToFile File="$(EmccLinkRspFile)" Lines="@(ExportFlags)" Overwrite="false" />
   </Target>
+
+</Project>
