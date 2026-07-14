@@ -76,9 +76,6 @@
             font-family: monospace;
         }
     </style>
-    <!-- BlazorWebAssembly SDK injects the importmap here at publish time -->
-    <link rel="preload" id="webassembly" />
-    <script type="importmap"></script>
 </head>
 <body>
     <div id="header">
@@ -93,7 +90,23 @@
         <canvas id="canvas" width="1280" height="720"></canvas>
         <div id="error-log"></div>
     </div>
-    <!-- main.js is fingerprinted by SDK; importmap rewrites the reference -->
-    <script type="module" src="main#[.{fingerprint}].js"></script>
+    <!-- Standard Blazor WebAssembly bootstrapper -->
+    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+    <script>
+        // Start Blazor manually so we can hook into the boot process
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log("[SDV] DOM ready, starting Blazor...");
+            try {
+                await Blazor.start();
+                console.log("[SDV] Blazor started successfully");
+            } catch (e) {
+                console.error("[SDV] Blazor start failed:", e);
+                const el = document.getElementById('error-log');
+                if (el) el.textContent = 'Failed to start .NET runtime: ' + e.message;
+            }
+        });
+    </script>
+    <!-- Our custom JS for canvas/input -->
+    <script type="module" src="main.js"></script>
 </body>
 </html>

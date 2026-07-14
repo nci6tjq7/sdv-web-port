@@ -1,7 +1,6 @@
 // SDV WASM Runtime - main.js
-// Bootstraps the .NET WASM runtime and provides canvas/input to FNA
+// Provides canvas/input for FNA and hooks into Blazor boot
 
-let dotnetInstance = null;
 let canvas = null;
 let ctx = null;
 
@@ -10,8 +9,8 @@ const SDV = {
     ctx: null,
     input: {},
 
-    async init() {
-        console.log("[SDV] Initializing runtime...");
+    init() {
+        console.log("[SDV] Initializing UI...");
         canvas = document.getElementById('canvas');
         if (!canvas) {
             console.error("[SDV] Canvas element not found!");
@@ -28,38 +27,8 @@ const SDV = {
         SDV.ctx = ctx;
         console.log("[SDV] Canvas ready:", canvas.width, "x", canvas.height);
 
-        // Set up input handlers (passive where possible to avoid violations)
+        // Set up input handlers
         SDV.setupInput();
-
-        // Load .NET WASM runtime
-        console.log("[SDV] Loading .NET runtime...");
-        try {
-            const { dotnet } = await import('./_framework/dotnet.js');
-            console.log("[SDV] dotnet.js loaded, creating instance...");
-            dotnetInstance = await dotnet.create();
-            console.log("[SDV] .NET runtime loaded");
-            console.log("[SDV] dotnetInstance keys:", Object.keys(dotnetInstance));
-            if (dotnetInstance.getAssemblyExports) {
-                console.log("[SDV] getAssemblyExports available");
-            } else {
-                console.log("[SDV] getAssemblyExports NOT available - using Blazor boot mode");
-            }
-        } catch (e) {
-            console.error("[SDV] Failed to load .NET runtime:", e);
-            return;
-        }
-
-        // Call managed Main - BlazorWebAssembly auto-boots via Program.Main
-        // We don't need to call it manually; the runtime invokes it.
-        // But we need to set up the JS interop first.
-        try {
-            // For BlazorWebAssembly, the runtime auto-invokes Program.Main
-            // We just need to make sure our JS interop is ready
-            console.log("[SDV] .NET runtime booted. Waiting for SDV to start...");
-            // The runtime will call SDV.init() from C# via JSImport
-        } catch (e) {
-            console.error("[SDV] Error:", e);
-        }
     },
 
     setupInput() {
@@ -88,7 +57,7 @@ const SDV = {
             SDV.mouseX = Math.round((e.clientX - rect.left) * (canvas.width / rect.width));
             SDV.mouseY = Math.round((e.clientY - rect.top) * (canvas.height / rect.height));
         });
-        // Touch (mobile) - use passive: true to avoid violation warnings
+        // Touch (mobile) - passive to avoid violation warnings
         canvas.addEventListener('touchstart', (e) => {
             const t = e.touches[0];
             const rect = canvas.getBoundingClientRect();
@@ -111,7 +80,10 @@ const SDV = {
     // Called from C# via JSImport to signal that runtime is ready
     onReady() {
         console.log("[SDV] C# runtime signaled ready");
-        document.getElementById('loading').style.display = 'none';
+        const loading = document.getElementById('loading');
+        if (loading) loading.style.display = 'none';
+        const status = document.getElementById('status');
+        if (status) status.textContent = 'Game running';
     },
 
     // Log from C# (for debugging)
@@ -122,6 +94,11 @@ const SDV = {
     // Error from C#
     error(msg) {
         console.error("[C#]", msg);
+        const el = document.getElementById('error-log');
+        if (el) {
+            el.textContent += msg + '\n';
+            el.style.display = 'block';
+        }
     },
 
     // Get canvas element for FNA
