@@ -7,7 +7,6 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>SdvWebPort.FnaRuntime</AssemblyName>
     <OutputType>Exe</OutputType>
-    <RuntimeIdentifier>wasm</RuntimeIdentifier>
     <PublishTrimmed>false</PublishTrimmed>
     <InvariantGlobalization>true</InvariantGlobalization>
     <WasmMainJSPath>main.js</WasmMainJSPath>
