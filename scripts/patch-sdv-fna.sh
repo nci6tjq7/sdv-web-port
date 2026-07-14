@@ -837,16 +837,18 @@ if [ -f "StardewValley/Audio/AudioCueModificationManager.cs" ]; then
 fi
 
 # Fix CS1061: FarmHouse.cs BedFurniture.BedType.GetBedSpot doesn't exist
-# Replace the entire return statement with a stub using line-based replacement.
+# Replace ALL lines containing GetBed+GetBedSpot+return with a stub.
 if [ -f "StardewValley/Locations/FarmHouse.cs" ]; then
   python3 << 'PYEOF'
 p = 'StardewValley/Locations/FarmHouse.cs'
 with open(p) as f: lines = f.readlines()
+count = 0
 for i, line in enumerate(lines):
     if 'GetBed' in line and 'GetBedSpot' in line and 'return' in line:
         lines[i] = '\t\treturn new Point (-1000, -1000); // WASM: GetBed stubbed\n'
         print(f"  FarmHouse.cs line {i+1}: replaced GetBed statement")
-        break
+        count += 1
+print(f"  Total: replaced {count} lines")
 with open(p, 'w') as f: f.writelines(lines)
 PYEOF
 fi
