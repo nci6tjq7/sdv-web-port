@@ -35,21 +35,31 @@ jobs:
           # Find the latest successful FNA WASM Build run
           API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/fna-wasm-build.yml/runs?status=completed&conclusion=success&per_page=1"
           echo "Fetching latest successful FNA WASM Build run..."
-          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${API}")
-          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
+          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
+          echo "API response (first 500 chars): ${RUN_DATA:0:500}"
+          RUN_ID=$(echo "$RUN_DATA" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          runs = d.get('workflow_runs', [])
+          if not runs:
+              print('ERROR: no runs found', file=sys.stderr)
+              sys.exit(1)
+          print(runs[0]['id'])
+          ")
           echo "Found run ID: ${RUN_ID}"
-          
+
           # Get artifact ID
-          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
           ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
           import json,sys
-          for a in json.load(sys.stdin).get('artifacts',[]):
+          d=json.load(sys.stdin)
+          for a in d.get('artifacts',[]):
               if a['name']=='sdv-fna-build':
                   print(a['id']); break
           ")
           echo "Artifact ID: ${ARTIFACT_ID}"
-          
+
           # Download via API (handles private repo auth)
           curl -sL -H "Authorization: token ${GH_TOKEN}" \
                -H "Accept: application/octet-stream" \
