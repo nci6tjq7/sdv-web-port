@@ -1516,3 +1516,37 @@ Next Steps:
   1. No Content/ directory with XNB files
   2. FNA's native libs (SDL3/FNA3D) need to be loaded
   3. File system access needs to be shimmed for browser
+
+---
+Task ID: phase6-wasm-net9-deploy
+Agent: main
+Task: Fix WASM runtime boot - switch to .NET 9 + WebAssembly SDK + threads
+
+Work Log:
+- Switched from BlazorWebAssembly (.NET 8) to Microsoft.NET.Sdk.WebAssembly (.NET 9)
+  - BlazorWebAssembly SDK doesn't generate blazor.webassembly.js without extra packages
+  - Microsoft.NET.Sdk.WebAssembly generates dotnet.js (Celeste-WASM pattern)
+- Updated global.json to .NET 9.0.303 (was pinning to 8.0.412)
+- Removed RuntimeIdentifier=wasm (SDK handles internally)
+- Fixed SDL3.a linker errors:
+  - sched_get_priority_min/max, sem_getvalue: allow undefined symbols
+  - i32.atomic.load: enable WasmEnableThreads=true
+  - WasmStripOptimization=true to skip wasm-opt validation
+- Added COOP/COEP service worker (GitHub Pages doesn't support custom headers)
+  - coop-coep-sw.js intercepts fetch and adds COOP/COEP headers
+  - Required for SharedArrayBuffer (needed by SDL3 atomic ops)
+- main.js uses dotnet.create() + getAssemblyExports() pattern
+
+Stage Summary:
+- ✅ WASM runtime builds with .NET 9 + threads + SDL3/FNA3D/FAudio/libmojoshader
+- ✅ Deployed to GitHub Pages with COOP/COEP service worker
+- ✅ All files served correctly:
+  - index.html (2822 bytes)
+  - main.js (5463 bytes) 
+  - dotnet.js (42864 bytes)
+  - coop-coep-sw.js (1346 bytes)
+  - blazor.boot.json (maps fingerprinted filenames)
+
+Next Steps:
+- Test in browser: does SDV boot past the .NET runtime loading?
+- Debug runtime errors (FNA native lib loading, Content/ files, etc.)
