@@ -63,15 +63,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Native WASM static libraries for FNA.
-         Use whole-archive to prevent the linker from stripping P/Invoke
-         targets like MOJOSHADER_sdlGetShaderFormats that aren't referenced
-         by C code but are called from C# via DllImport. -->
+    <!-- Native WASM static libraries for FNA -->
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
-    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a">
-      <ForceLoad>true</ForceLoad>
-    </NativeLibrary>
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- C source that forces the linker to include MojoShader symbols
+         from FNA3D.a. Without this, the linker strips them because no
+         C code references them (only C# P/Invokes them at runtime). -->
+    <NativeFile Include="$(MSBuildThisFileDirectory)native\mojoshader_exports.c" />
   </ItemGroup>
 
 </Project>
