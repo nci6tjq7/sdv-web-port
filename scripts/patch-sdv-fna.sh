@@ -634,13 +634,12 @@ print(f"  Location→Point in Menus: fixed {fixed} files")
 PYEOF
 
 # Fix CS1503: Rectangle XNA → xTile.Dimensions.Rectangle
-# In Game1.cs and Minigames, viewport (XNA Rectangle) is passed to xTile methods.
+# In Game1.cs and Minigames, Game1.viewport (XNA Rectangle) is passed to xTile layer.Draw().
 # Wrap with new xTile.Dimensions.Rectangle(...)
 echo "[+] Fixing Rectangle → xTile.Dimensions.Rectangle conversions..."
 python3 << 'PYEOF'
 import os, re
 fixed = 0
-# Files with Rectangle→xTile.Rectangle errors
 target_files = [
     'StardewValley/Game1.cs',
     'StardewValley/Minigames/TargetGame.cs',
@@ -650,22 +649,53 @@ for p in target_files:
     if not os.path.exists(p): continue
     with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
     orig = c
-    # Pattern: .Draw (mapDisplayDevice, viewport, ...) → .Draw (mapDisplayDevice, new xTile.Dimensions.Rectangle(viewport.X, viewport.Y, viewport.Width, viewport.Height), ...)
+    # Pattern: .Draw (Game1.mapDisplayDevice, Game1.viewport, ...) → wrap Game1.viewport
+    # Also: .Draw (mapDisplayDevice, viewport, ...)
     c = re.sub(
-        r'(\.Draw\s*\(\s*mapDisplayDevice\s*,\s*)viewport(\s*,)',
-        r'\1new xTile.Dimensions.Rectangle (viewport.X, viewport.Y, viewport.Width, viewport.Height)\2',
-        c
-    )
-    # Also handle .Draw(mapDisplayDevice, viewport) without trailing comma
-    c = re.sub(
-        r'(\.Draw\s*\(\s*mapDisplayDevice\s*,\s*)viewport(\s*\))',
-        r'\1new xTile.Dimensions.Rectangle (viewport.X, viewport.Y, viewport.Width, viewport.Height)\2',
+        r'(\.Draw\s*\(\s*(?:Game1\.)?mapDisplayDevice\s*,\s*)((?:Game1\.)?viewport)(\s*[,)])',
+        r'\1new xTile.Dimensions.Rectangle (\2.X, \2.Y, \2.Width, \2.Height)\3',
         c
     )
     if c != orig:
         with open(p, 'w', encoding='utf-8') as f: f.write(c)
         fixed += 1
 print(f"  Rectangle→xTile.Rectangle: fixed {fixed} files")
+PYEOF
+
+# Fix CS0029/CS1503: Location ↔ Point in CarpenterMenu and PurchaseAnimalsMenu
+# BuilderViewport is xTile.Dimensions.Location, Game1.viewport.Location is Point in FNA
+echo "[+] Fixing Location ↔ Point in CarpenterMenu/PurchaseAnimalsMenu..."
+python3 << 'PYEOF'
+import os, re
+files = [
+    'StardewValley/Menus/CarpenterMenu.cs',
+    'StardewValley/Menus/PurchaseAnimalsMenu.cs',
+]
+for p in files:
+    if not os.path.exists(p): continue
+    with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+    orig = c
+    # BuilderViewport = Game1.viewport.Location → BuilderViewport = new Location(Game1.viewport.Location.X, Game1.viewport.Location.Y)
+    c = re.sub(
+        r'BuilderViewport = Game1\.viewport\.Location;',
+        r'BuilderViewport = new Location(Game1.viewport.Location.X, Game1.viewport.Location.Y);',
+        c
+    )
+    # Game1.viewport.Location = BuilderViewport → Game1.viewport.Location = new Point(BuilderViewport.X, BuilderViewport.Y)
+    c = re.sub(
+        r'Game1\.viewport\.Location = BuilderViewport;',
+        r'Game1.viewport.Location = new Point(BuilderViewport.X, BuilderViewport.Y);',
+        c
+    )
+    # isTilePassable(new Point(...), ...) → isTilePassable(new Location(...), ...) (arg1 expects Location)
+    c = re.sub(
+        r'isTilePassable\s*\(\s*new Point\s*\(',
+        'isTilePassable (new Location (',
+        c
+    )
+    if c != orig:
+        with open(p, 'w', encoding='utf-8') as f: f.write(c)
+        print(f"  Fixed {p}")
 PYEOF
 
 # Fix CS0149: NetClock.cs and NetVersion.cs - .Size()() double parens
@@ -727,9 +757,11 @@ if [ -f "StardewValley/Menus/NamingMenu.cs" ]; then
   sed -i 's/button - 1 > 1/(int)button - 1 > 1/g' StardewValley/Menus/NamingMenu.cs
 fi
 
-# Fix CS0266: AbigailGame.cs GameKeys returns int, Add expects Buttons
+# Fix CS0266: AbigailGame.cs - GameKeys is its own enum, not Buttons.
+# Remove the wrong (Buttons) cast. Also fix switch(current - 1) → switch((int)current - 1)
 if [ -f "StardewValley/Minigames/AbigailGame.cs" ]; then
-  sed -i 's/_buttonHeldState\.Add (GameKeys\./_buttonHeldState.Add ((Buttons)GameKeys./g' StardewValley/Minigames/AbigailGame.cs
+  sed -i 's/_buttonHeldState\.Add ((Buttons)GameKeys\./_buttonHeldState.Add (GameKeys./g' StardewValley/Minigames/AbigailGame.cs
+  sed -i 's/switch (current - 1)/switch ((int)current - 1)/g' StardewValley/Minigames/AbigailGame.cs
 fi
 
 # Fix CS0029: Location ↔ Point in CarpenterMenu and PurchaseAnimalsMenu
@@ -805,10 +837,9 @@ if [ -f "StardewValley/Audio/AudioCueModificationManager.cs" ]; then
 fi
 
 # Fix CS1061: FarmHouse.cs BedFurniture.BedType.GetBedSpot doesn't exist
-# bed_type is BedType (enum), GetBedSpot is on BedFurniture (not BedType)
-# Replace just bed_type.GetBedSpot() with a default Point (no comment to avoid eating ??)
+# GetBed expects BedType arg, not Point. Use default BedType.
 if [ -f "StardewValley/Locations/FarmHouse.cs" ]; then
-  sed -i 's/bed_type\.GetBedSpot ()/new Point (-1000, -1000)/g' StardewValley/Locations/FarmHouse.cs
+  sed -i 's/GetBed (bed_type\.GetBedSpot ())/GetBed (default(StardewValley.Objects.BedFurniture.BedType))/g' StardewValley/Locations/FarmHouse.cs
 fi
 
 # Fix CS1503: Rectangle XNA → xTile.Dimensions.Rectangle
