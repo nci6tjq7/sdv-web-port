@@ -1395,3 +1395,58 @@ Next Steps:
 - Fix CS0119: rename Color method in ChatCommands.cs
 - Fix CS1540: change base.Game.Draw() to base.Draw() in GameRunner.cs
 - Fix CS1061: add MaxCorner extension method to FnaCompat.cs
+
+---
+Task ID: phase4-fna-build-success
+Agent: main
+Task: Get SDV+FNA to compile successfully in CI
+
+Work Log:
+- Fixed 8 categories of ILSpy 8.2 broken decompiler patterns:
+  1. ((Type)(ref EXPR)) → EXPR (375 occurrences)
+  2. ((??)EXPR) ?? Y → EXPR ?? Y (51 occurrences)
+  3. <>c__DisplayClass4_0 → _c__DisplayClass4_0 (compiler-gen identifier)
+  4. GetData (?.X) → GetData()?.X (broken null-conditional)
+  5. '? val; → object val; (broken type inference)
+  6. VAR..ctor(args); → VAR = new Type(args); (797 occurrences, paren-matched)
+  7. (Matrix?)null → Matrix.Identity (FNA overload mismatch)
+  8. (Matrix?)value → value (remove nullable cast)
+- Added namespace declaration wrapper to decompiler output
+- Added GlobalUsings.cs + per-file using aliases for Rectangle/Color/Vector2/Point disambiguation
+- Fixed FNA-specific type conversion issues:
+  - Buttons/Keys enum bitwise ops with int: add (int) cast
+  - SpriteEffects | int: add (int) cast
+  - (SpriteEffects)(bool): → (SpriteEffects)(?1:0)
+  - Rectangle.MaxCorner/Size: direct expression replacement
+  - Location ↔ Point: method return type changes + explicit conversions
+  - Rectangle → xTile.Dimensions.Rectangle: wrap for xTile layer.Draw()
+  - protected member access: ((Game)this).Draw() → base.Draw()
+  - Color method/type collision: fully-qualify in ChatCommands.cs
+  - GameKeys enum: remove wrong (Buttons) cast
+  - BedType.GetBedSpot: stub with default
+  - Vector2.Min/Max: ref → out for 3rd arg
+  - Various other FNA-vs-MG API differences
+
+Stage Summary:
+- ✅ SDV+FNA compiles with 0 errors in GitHub Actions CI
+- ✅ Build artifact: sdv-fna-build (9.2MB)
+- ✅ Contains: Stardew Valley.dll (5.96MB), FNA.dll (1.16MB), MonoGame.Framework.dll facade (24KB)
+- ✅ Contains: fnalibs static libs (SDL3.a, FNA3D.a, FAudio.a, libmojoshader.a)
+- ✅ Contains: all SDV dependency DLLs (xTile, GameData, Lidgren, etc.)
+
+Error count progression (25 runs):
+  Run #1:  failed at download (404 private repo)
+  Run #5:  7915 errors (ILSpy broken patterns)
+  Run #8:  5497 errors (missing namespace declarations)
+  Run #9:  551 errors (Rectangle ambiguity)
+  Run #13: 507 errors (Buttons/SpriteEffects ops)
+  Run #15: 175 errors (CS0266, CS0119, CS1540, CS1061, etc.)
+  Run #17: 137 errors (Location↔Point, MaxCorner/Size)
+  Run #20: 111 errors (.Size() too aggressive)
+  Run #22: 7 errors (FarmHouse, CarpenterMenu Location)
+  Run #25: 0 errors ✅ BUILD SUCCESS
+
+Next Steps:
+- Create Microsoft.NET.Sdk.WebAssembly project that loads SDV+FNA+fnalibs
+- Add Content/ game resources
+- Browser test: title screen rendering and basic interaction
