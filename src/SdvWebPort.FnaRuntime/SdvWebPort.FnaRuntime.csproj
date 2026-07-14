@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -7,10 +7,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>SdvWebPort.FnaRuntime</AssemblyName>
     <OutputType>Exe</OutputType>
-    <RuntimeIdentifier>wasm</RuntimeIdentifier>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <PublishTrimmed>false</PublishTrimmed>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
   </PropertyGroup>
 
