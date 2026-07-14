@@ -134,8 +134,6 @@ jobs:
           ls -la mojoshader_exports.o
 
       - name: Build WASM runtime
-        env:
-          LDFLAGS: "--export=MOJOSHADER_sdlGetShaderFormats --export=MOJOSHADER_sdlCompileShader --export=MOJOSHADER_sdlGetShaderProfile --export=MOJOSHADER_sdlDestroyShader --export=MOJOSHADER_sdlBindShaders --export=MOJOSHADER_sdlGetBoundShaderProgram --export=MOJOSHADER_sdlBindProgram --export=MOJOSHADER_sdlMapUniformBuffer --export=MOJOSHADER_sdlUnmapUniformBuffer --export=MOJOSHADER_sdlGetUniformData --export=MOJOSHADER_sdlGetVertexData --export=MOJOSHADER_sdlGetPixelData --export=MOJOSHADER_sdlDestroyEffect --export=MOJOSHADER_sdlCreateEffect --export=MOJOSHADER_sdlCreateEffectRaw --export=MOJOSHADER_sdlEffectBeginPass --export=MOJOSHADER_sdlEffectEndPass --export=MOJOSHADER_sdlEffectCommitChanges --export=MOJOSHADER_sdlEffectEnd --export=MOJOSHADER_sdlEffectSetTechnique --export=MOJOSHADER_sdlEffectGetCurrentTechnique --export=MOJOSHADER_sdlEffectGetTechnique --export=MOJOSHADER_sdlEffectGetTechniqueName --export=MOJOSHADER_sdlEffectGetNumTechniques --export=MOJOSHADER_sdlEffectGetNumPasses --export=MOJOSHADER_sdlEffectGetPassName --export=MOJOSHADER_sdlGetAttribMappings --export=MOJOSHADER_sdlGetUniformMappings --export=MOJOSHADER_sdlShaderBinaryToSPIRV"
         run: |
           cd src/SdvWebPort.FnaRuntime
           dotnet publish -c Release -o /tmp/wasm-publish
