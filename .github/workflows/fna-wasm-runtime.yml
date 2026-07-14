@@ -28,12 +28,37 @@ jobs:
         run: dotnet workload install wasm-tools
 
       - name: Download SDV+FNA build artifact
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          workflow: fna-wasm-build.yml
-          workflow_conclusion: success
-          name: sdv-fna-build
-          path: download/sdv-fna-build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p download/sdv-fna-build
+          # Find the latest successful FNA WASM Build run
+          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/fna-wasm-build.yml/runs?status=completed&conclusion=success&per_page=1"
+          echo "Fetching latest successful FNA WASM Build run..."
+          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${API}")
+          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
+          echo "Found run ID: ${RUN_ID}"
+          
+          # Get artifact ID
+          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
+          ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import json,sys
+          for a in json.load(sys.stdin).get('artifacts',[]):
+              if a['name']=='sdv-fna-build':
+                  print(a['id']); break
+          ")
+          echo "Artifact ID: ${ARTIFACT_ID}"
+          
+          # Download via API (handles private repo auth)
+          curl -sL -H "Authorization: token ${GH_TOKEN}" \
+               -H "Accept: application/octet-stream" \
+               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+               -o download/sdv-fna-build.zip
+          file download/sdv-fna-build.zip
+          cd download/sdv-fna-build
+          unzip -q ../sdv-fna-build.zip
+          ls -la
 
       - name: Verify artifact contents
         run: |
