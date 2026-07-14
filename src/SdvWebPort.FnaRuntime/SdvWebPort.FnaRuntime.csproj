@@ -15,6 +15,9 @@
          sem_getvalue) that don't exist in WASM. Allow undefined symbols -
          these code paths won't be hit at runtime since WASM is single-threaded. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
+    <!-- SDL3.a uses atomic operations which require --enable-threads.
+         Enable WASM threads (SharedArrayBuffer) to support this. -->
+    <WasmEnableThreads>true</WasmEnableThreads>
   </PropertyGroup>
 
   <ItemGroup>
