@@ -837,14 +837,27 @@ if [ -f "StardewValley/Audio/AudioCueModificationManager.cs" ]; then
 fi
 
 # Fix CS1061: FarmHouse.cs BedFurniture.BedType.GetBedSpot doesn't exist
-# GetBed returns BedFurniture, can't coalesce with Point. Just return default Point.
+# Replace the entire return statement with a stub.
 if [ -f "StardewValley/Locations/FarmHouse.cs" ]; then
-  sed -i 's|return (Point)(GetBed (default(StardewValley.Objects.BedFurniture.BedType)) ?? new Point (-1000, -1000));|return new Point (-1000, -1000); // WASM: GetBed stubbed|g' StardewValley/Locations/FarmHouse.cs
+  python3 << 'PYEOF'
+import re
+p = 'StardewValley/Locations/FarmHouse.cs'
+with open(p) as f: c = f.read()
+# Replace: return (Point)(GetBed (bed_type.GetBedSpot ()) ?? new Point (-1000, -1000));
+# With:    return new Point (-1000, -1000); // WASM: GetBed stubbed
+c = re.sub(
+    r'return \(Point\)\(GetBed\s*\([^)]*\)\s*\?\?\s*new Point\s*\(-1000,\s*-1000\)\);',
+    'return new Point (-1000, -1000); // WASM: GetBed stubbed',
+    c
+)
+with open(p, 'w') as f: f.write(c)
+print("  FarmHouse.cs: GetBed stubbed")
+PYEOF
 fi
 
 # Fix CS0029: Location ↔ Point in CarpenterMenu and PurchaseAnimalsMenu
-# Methods declared to return xTile.Dimensions.Location but body returns new Point(x,y).
-# Change return new Point → return new Location in those specific methods.
+# Methods return xTile.Dimensions.Location but are assigned to viewport.Location (Point).
+# Change method return type from Location to Point.
 python3 << 'PYEOF'
 import os, re
 files = [
@@ -855,52 +868,16 @@ for p in files:
     if not os.path.exists(p): continue
     with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
     orig = c
-    # Find methods that return Location and fix their return new Point → return new Location
-    # Pattern: method signature has 'Location MethodName(' ... 'return new Point (x, y);'
-    # Use a simple heuristic: find 'Location MethodName(' and then fix 'return new Point' within that method
-    # Actually, easier: find 'return new Point (x, y);' that's inside a method returning Location
-    # Since we know the specific methods, just target them:
-    # GetInitialBuildingPlacementViewport returns Location, has 'return new Point (x, y);'
-    # GetTopLeftPixelToCenterBuilding returns Location, has 'return new Point (x, y);'
-    
-    # Generic approach: if a method signature has 'Location ' (return type), 
-    # find the next 'return new Point (' and change to 'return new Location ('
-    def fix_location_returns(content):
-        # Find method signatures with Location return type
-        # Pattern: 'Location MethodName (' or 'Location MethodName<'
-        result = []
-        pos = 0
-        while True:
-            # Find 'Location MethodName(' pattern
-            m = re.search(r'\bLocation\s+(\w+)\s*\(', content[pos:])
-            if not m:
-                result.append(content[pos:])
-                break
-            start = pos + m.start()
-            result.append(content[pos:start])
-            # Find the method body and fix 'return new Point (' → 'return new Location ('
-            method_start = pos + m.end()
-            # Find matching closing brace
-            depth = 1
-            i = method_start
-            while i < len(content) and depth > 0:
-                if content[i] == '{':
-                    depth += 1
-                elif content[i] == '}':
-                    depth -= 1
-                i += 1
-            method_body = content[method_start:i]
-            # Fix return new Point → return new Location
-            method_body = method_body.replace('return new Point (', 'return new Location (')
-            result.append(content[start:method_start])
-            result.append(method_body)
-            pos = i
-        return ''.join(result)
-    
-    c = fix_location_returns(c)
+    # Change method signatures: 'Location MethodName(' → 'Point MethodName('
+    # Only for methods that return Location (not parameters that take Location)
+    c = re.sub(r'public Location (\w+)\s*\(', r'public Point \1 (', c)
+    # Now fix return new Location → return new Point (since we changed the return type)
+    # But only within methods we just changed. Actually, just change all 'return new Location ('
+    # back to 'return new Point (' since the method now returns Point.
+    c = c.replace('return new Location (', 'return new Point (')
     if c != orig:
         with open(p, 'w', encoding='utf-8') as f: f.write(c)
-        print(f"  Fixed Location returns in {p}")
+        print(f"  Fixed Location→Point return type in {p}")
 PYEOF
 
 # Fix CS1503: Rectangle XNA → xTile.Dimensions.Rectangle
