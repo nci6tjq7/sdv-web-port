@@ -16,8 +16,11 @@
          These code paths won't be hit at runtime since WASM is single-threaded. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
     <!-- SDL3.a uses atomic operations which require threads enabled.
-         Enable WASM threads (SharedArrayBuffer) to support this. -->
+         Enable WASM threads (SharedArrayBuffer) to support this.
+         Requires COOP/COEP headers (provided via service worker). -->
     <WasmEnableThreads>true</WasmEnableThreads>
+    <!-- Skip wasm-opt optimization which validates and may reject atomic ops -->
+    <WasmStripOptimization>true</WasmStripOptimization>
   </PropertyGroup>
 
   <ItemGroup>

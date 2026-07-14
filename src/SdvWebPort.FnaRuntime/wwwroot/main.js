@@ -4,6 +4,21 @@
 let canvas = null;
 let dotnetInstance = null;
 
+// Register COOP/COEP service worker for SharedArrayBuffer support
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./coop-coep-sw.js')
+        .then(() => {
+            console.log("[SDV] COOP/COEP service worker registered");
+            // Reload once to activate the service worker
+            if (!navigator.serviceWorker.controller) {
+                console.log("[SDV] Reloading to activate service worker...");
+                window.location.reload();
+                return;
+            }
+        })
+        .catch(e => console.error("[SDV] Service worker registration failed:", e));
+}
+
 const SDV = {
     canvas: null,
     input: {},
