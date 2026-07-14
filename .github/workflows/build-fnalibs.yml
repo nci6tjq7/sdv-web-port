@@ -50,12 +50,9 @@ jobs:
             -DSDL_PTHREADS_SEM=OFF \
             -GNinja
           ninja
-          # Install SDL3 headers and lib to a prefix for FNA3D/FAudio to find
           ninja install
           cp libSDL3.a /tmp/SDL3.a
-          # Save the install prefix path for later steps
           echo "SDL3_PREFIX=$(pwd)/prefix" >> $GITHUB_ENV
-          ls prefix/include/SDL3/ | head -5
 
       - name: Build FNA3D
         run: |
@@ -63,12 +60,12 @@ jobs:
           cd FNA3D
           git submodule update --init --recursive
           mkdir emscripten-build && cd emscripten-build
-          # Point to SDL3 install prefix for headers
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
+            -DFNA3D_DRIVER_SDL=OFF \
             -GNinja
           ninja
           cp libFNA3D.a /tmp/FNA3D.a
