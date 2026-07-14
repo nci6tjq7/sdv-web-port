@@ -1550,3 +1550,31 @@ Stage Summary:
 Next Steps:
 - Test in browser: does SDV boot past the .NET runtime loading?
 - Debug runtime errors (FNA native lib loading, Content/ files, etc.)
+
+---
+Task ID: phase6-runtime-boot-success
+Agent: main
+Task: Get .NET runtime to boot and call SDV Program.Main
+
+Work Log:
+- Used puppeteer-core + headless Chrome to capture browser console logs
+- Fixed service worker race condition: wait for SW activation before loading runtime
+- Fixed runMain call: dotnet.create() only starts runtime, need explicit runMain()
+- Successfully booted .NET 9.0.18 runtime in browser!
+- C# Program.Main executes:
+  - Console.WriteLine output appears in browser console
+  - JSImport (OnReady, OnError) works correctly
+  - SDV.Program.Main is called
+
+Stage Summary:
+- ✅ .NET 9 WASM runtime loads and runs
+- ✅ C# Program.Main executes (Console.WriteLine visible in browser)
+- ✅ JS interop works (C# calls SDV.onReady() via JSImport)
+- ❌ SDV.Program.Main crashes with "function signature mismatch" in WASM worker
+  - This is likely from SDL3/FNA3D native lib P/Invoke
+  - The native .a files may be compiled for a different WASM ABI
+
+Next Steps:
+- Debug "function signature mismatch" error
+- May need to recompile fnalibs with matching Emscripten version
+- Or disable threading (if the worker is causing the signature mismatch)
