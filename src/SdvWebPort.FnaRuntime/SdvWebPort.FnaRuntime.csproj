@@ -1,20 +1,22 @@
-<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>SdvWebPort.FnaRuntime</AssemblyName>
     <OutputType>Exe</OutputType>
-    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <RuntimeIdentifier>wasm</RuntimeIdentifier>
     <PublishTrimmed>false</PublishTrimmed>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Reference the pre-built SDV, FNA, and dependency DLLs -->
+    <!-- Note: SDV/FNA are built for net8.0 but net9.0 runtime is backward compatible -->
     <Reference Include="Stardew Valley">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Stardew Valley.dll</HintPath>
       <Private>true</Private>
@@ -39,9 +41,7 @@
     <Reference Include="BmFont">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\BmFont.dll</HintPath>
     </Reference>
-    <!-- GalaxyCSharp and Steamworks.NET excluded: their P/Invoke callbacks
-         use non-blittable types that WASM AOT cannot compile.
-         SDV already uses NullSDKHelper at runtime, so these are not needed. -->
+    <!-- GalaxyCSharp and Steamworks.NET excluded: non-blittable P/Invoke callbacks -->
     <Reference Include="SkiaSharp">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\SkiaSharp.dll</HintPath>
     </Reference>

@@ -7,34 +7,31 @@ namespace SdvWebPort.FnaRuntime;
 
 public static partial class Program
 {
-    // BlazorWebAssembly SDK auto-invokes this Main method.
-    private static async Task Main(string[] args)
+    // Microsoft.NET.Sdk.WebAssembly invokes this Main method.
+    private static int Main(string[] args)
     {
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine($"[SdvWebPort.FnaRuntime] OS: {Environment.OSVersion}");
 
         try
         {
             // Signal JS that we're ready
-            Console.WriteLine("[SdvWebPort.FnaRuntime] Signaling JS...");
             OnReady();
             Console.WriteLine("[SdvWebPort.FnaRuntime] JS notified");
 
             // Boot Stardew Valley
-            // SDV's Program.Main creates Game1 and calls Run()
             Console.WriteLine("[SdvWebPort.FnaRuntime] Booting StardewValley.Program.Main...");
             StardewValley.Program.Main(args);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[SdvWebPort.FnaRuntime] FATAL: {ex}");
-            Console.WriteLine(ex.StackTrace);
-           OnError(ex.ToString());
+            OnError(ex.ToString());
         }
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Main returned, keeping alive...");
-        await Task.Delay(Timeout.Infinite);
+        Thread.Sleep(Timeout.Infinite);
+        return 0;
     }
 
     [JSImport("globalThis.SDV.onReady")]

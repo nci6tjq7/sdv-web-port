@@ -90,23 +90,7 @@
         <canvas id="canvas" width="1280" height="720"></canvas>
         <div id="error-log"></div>
     </div>
-    <!-- Standard Blazor WebAssembly bootstrapper -->
-    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
-    <script>
-        // Start Blazor manually so we can hook into the boot process
-        document.addEventListener('DOMContentLoaded', async () => {
-            console.log("[SDV] DOM ready, starting Blazor...");
-            try {
-                await Blazor.start();
-                console.log("[SDV] Blazor started successfully");
-            } catch (e) {
-                console.error("[SDV] Blazor start failed:", e);
-                const el = document.getElementById('error-log');
-                if (el) el.textContent = 'Failed to start .NET runtime: ' + e.message;
-            }
-        });
-    </script>
-    <!-- Our custom JS for canvas/input -->
+    <!-- Microsoft.NET.Sdk.WebAssembly generates dotnet.js -->
     <script type="module" src="main.js"></script>
 </body>
 </html>
