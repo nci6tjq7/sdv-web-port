@@ -59,13 +59,17 @@ jobs:
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
           git submodule update --init --recursive
+          # Remove mojoshader_sdlgpu.c - it has a compile error (SpirvPatchTable
+          # undeclared) and we don't need SDL GPU driver (only OpenGL)
+          rm -f MojoShader/mojoshader_sdlgpu.c
+          # Also remove it from CMakeLists.txt
+          sed -i 's/mojoshader_sdlgpu.c//g' CMakeLists.txt
           mkdir emscripten-build && cd emscripten-build
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
-            -DFNA3D_DRIVER_SDL=OFF \
             -GNinja
           ninja
           cp libFNA3D.a /tmp/FNA3D.a
