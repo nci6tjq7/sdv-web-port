@@ -106,3 +106,42 @@
   </ItemGroup>
 
 </Project>
+
+  <Target Name="ExportMojoShaderSymbols" AfterTargets="WasmBuild">
+    <PropertyGroup>
+      <EmccLinkRspFile>$(WasmAssetDir)\emcc-link.rsp</EmccLinkRspFile>
+    </PropertyGroup>
+    <Message Text="Patching emcc-link.rsp to export MojoShader symbols" Importance="high" />
+    <ItemGroup>
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetShaderFormats" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlCompileShader" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetShaderProfile" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlDestroyShader" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlBindShaders" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetBoundShaderProgram" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlBindProgram" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlMapUniformBuffer" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlUnmapUniformBuffer" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetUniformData" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetVertexData" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetPixelData" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlDestroyEffect" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlCreateEffect" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlCreateEffectRaw" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectBeginPass" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectEndPass" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectCommitChanges" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectEnd" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectSetTechnique" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetCurrentTechnique" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetTechnique" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetTechniqueName" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetNumTechniques" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetNumPasses" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetPassName" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetAttribMappings" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlGetUniformMappings" />
+      <ExportFlags Include="--export=MOJOSHADER_sdlShaderBinaryToSPIRV" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(EmccLinkRspFile)" Lines="@(ExportFlags)" Overwrite="false" />
+  </Target>
