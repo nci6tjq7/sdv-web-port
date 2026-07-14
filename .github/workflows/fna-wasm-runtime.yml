@@ -61,12 +61,21 @@ jobs:
           ")
           echo "Artifact ID: ${ARTIFACT_ID}"
 
-          # Download via API (handles private repo auth)
+          # Download via API - the endpoint returns a redirect to blob storage.
+          # We must NOT send the Authorization header to the redirect target.
+          # Use -L to follow redirects, but strip auth on redirect.
           curl -sL -H "Authorization: token ${GH_TOKEN}" \
-               -H "Accept: application/octet-stream" \
+               -H "Accept: application/vnd.github+json" \
                "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
                -o download/sdv-fna-build.zip
+          echo "Downloaded file type:"
           file download/sdv-fna-build.zip
+          # If it's JSON (error), show it and fail
+          if file download/sdv-fna-build.zip | grep -q "JSON\|text"; then
+            echo "ERROR: Downloaded file is not a zip. Content:"
+            cat download/sdv-fna-build.zip
+            exit 1
+          fi
           cd download/sdv-fna-build
           unzip -q ../sdv-fna-build.zip
           ls -la
