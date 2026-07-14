@@ -1,0 +1,75 @@
+name: FNA WASM Runtime Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/SdvWebPort.FnaRuntime/**'
+      - '.github/workflows/fna-wasm-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.303'
+
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Download SDV+FNA build artifact
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: fna-wasm-build.yml
+          workflow_conclusion: success
+          name: sdv-fna-build
+          path: download/sdv-fna-build
+
+      - name: Verify artifact contents
+        run: |
+          ls -la download/sdv-fna-build/
+          ls -la download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/ | head -5
+          ls -la download/sdv-fna-build/fnalibs/
+          test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/Stardew\ Valley.dll
+          test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll
+          test -f download/sdv-fna-build/fnalibs/SDL3.a
+
+      - name: Copy native libs to runtime project
+        run: |
+          mkdir -p src/SdvWebPort.FnaRuntime/native
+          cp download/sdv-fna-build/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
+          ls -la src/SdvWebPort.FnaRuntime/native/
+
+      - name: Build WASM runtime
+        run: |
+          cd src/SdvWebPort.FnaRuntime
+          dotnet publish -c Release -o /tmp/wasm-publish
+          ls -la /tmp/wasm-publish/
+          ls -la /tmp/wasm-publish/wwwroot/ | head -20
+          echo "=== WASM bundle size ==="
+          du -sh /tmp/wasm-publish/wwwroot/
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdv-fna-wasm
+          path: /tmp/wasm-publish/wwwroot/
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-build-logs
+          path: src/SdvWebPort.FnaRuntime/
+          retention-days: 7

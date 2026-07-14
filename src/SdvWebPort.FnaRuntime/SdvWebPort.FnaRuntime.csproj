@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>SdvWebPort.FnaRuntime</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier>wasm</RuntimeIdentifier>
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmMainJSPath>main.js</WasmMainJSPath>
+    <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference the pre-built SDV, FNA, and dependency DLLs -->
+    <Reference Include="Stardew Valley">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Stardew Valley.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="FNA">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\FNA.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\MonoGame.Framework.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="xTile">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\xTile.dll</HintPath>
+    </Reference>
+    <Reference Include="StardewValley.GameData">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\StardewValley.GameData.dll</HintPath>
+    </Reference>
+    <Reference Include="Lidgren.Network">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Lidgren.Network.dll</HintPath>
+    </Reference>
+    <Reference Include="BmFont">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\BmFont.dll</HintPath>
+    </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Steamworks.NET.dll</HintPath>
+    </Reference>
+    <Reference Include="GalaxyCSharp">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\GalaxyCSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="SkiaSharp">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\SkiaSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="TextCopy">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\TextCopy.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.HashFunction.Interfaces">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\System.Data.HashFunction.Interfaces.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.HashFunction.Core">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\System.Data.HashFunction.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.HashFunction.xxHash">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\System.Data.HashFunction.xxHash.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Native WASM static libraries for FNA -->
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a" />
+  </ItemGroup>
+
+</Project>

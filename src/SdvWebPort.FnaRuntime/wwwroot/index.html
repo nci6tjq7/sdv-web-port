@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Stardew Valley - Web</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            color: #eee;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #header {
+            padding: 10px;
+            text-align: center;
+            background: #16213e;
+            width: 100%;
+        }
+        #header h1 { font-size: 18px; }
+        #status {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+        #canvas-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex: 1;
+            width: 100%;
+        }
+        #canvas {
+            border: 2px solid #0f3460;
+            background: #000;
+            max-width: 100%;
+            max-height: calc(100vh - 80px);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            outline: none;
+            cursor: pointer;
+            touch-action: none;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.2);
+            border-top: 4px solid #e94560;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #error {
+            color: #e94560;
+            font-size: 14px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            display: none;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>Stardew Valley - Web Port (FNA)</h1>
+        <div id="status">Loading runtime...</div>
+    </div>
+    <div id="canvas-container">
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="status-text">Initializing...</div>
+        </div>
+        <canvas id="canvas" width="1280" height="720"></canvas>
+        <div id="error"></div>
+    </div>
+    <script type="module" src="main.js"></script>
+</body>
+</html>

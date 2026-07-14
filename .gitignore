@@ -40,3 +40,4 @@ skills/
 scripts/extracted/
 tool-results/
 upload/
+src/SdvWebPort.FnaRuntime/native/*.a
