@@ -1,0 +1,82 @@
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["FNA WASM Runtime Build"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download WASM artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the run ID of the FNA WASM Runtime Build that triggered us
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          echo "Source run ID: ${RUN_ID}"
+
+          # Get artifact ID
+          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
+          ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for a in d.get('artifacts',[]):
+              if a['name']=='sdv-fna-wasm':
+                  print(a['id']); break
+          ")
+          echo "Artifact ID: ${ARTIFACT_ID}"
+
+          # Download via redirect (blob storage doesn't need auth)
+          REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               -o /dev/null -w '%{redirect_url}' \
+               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
+          curl -sL "$REDIRECT" -o wasm.zip
+          file wasm.zip
+          mkdir -p site
+          cd site
+          unzip -q ../wasm.zip
+          ls -la
+
+      - name: Add COOP/COEP headers for SharedArrayBuffer
+        run: |
+          cat > site/.nojekyll << 'EOF'
+          EOF
+          # Create _headers for SharedArrayBuffer support (needed for threading)
+          cat > site/_headers << 'EOF'
+          /*
+            Cross-Origin-Opener-Policy: same-origin
+            Cross-Origin-Embedder-Policy: require-corp
+          EOF
+          cat site/_headers
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

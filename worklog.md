@@ -1450,3 +1450,42 @@ Next Steps:
 - Create Microsoft.NET.Sdk.WebAssembly project that loads SDV+FNA+fnalibs
 - Add Content/ game resources
 - Browser test: title screen rendering and basic interaction
+
+---
+Task ID: phase5-wasm-runtime-success
+Agent: main
+Task: Create WASM runtime project and build playable web bundle
+
+Work Log:
+- Created SdvWebPort.FnaRuntime project (Microsoft.NET.Sdk.BlazorWebAssembly, net8.0)
+- References pre-built SDV.dll, FNA.dll, and all dependency DLLs
+- Links native WASM static libs (SDL3.a, FNA3D.a, FAudio.a, libmojoshader.a)
+- Excludes GalaxyCSharp/Steamworks.NET (non-blittable P/Invoke callbacks)
+- Provides JS interop for canvas + keyboard/mouse/touch input
+- Boots SDV via StardewValley.Program.Main()
+- Created fna-wasm-runtime.yml workflow:
+  - Downloads sdv-fna-build artifact via GitHub API
+  - Copies fnalibs to runtime project
+  - Runs dotnet publish to produce WASM bundle
+  - Uploads sdv-fna-wasm artifact
+
+Stage Summary:
+- ✅ WASM runtime builds successfully (31.7 MB artifact)
+- ✅ Contains: dotnet.js, dotnet.native.wasm (2.8 MB), Stardew Valley.wasm (5.96 MB),
+  FNA.wasm (1.16 MB), index.html, main.js
+- ✅ All .NET runtime + SDV + FNA compiled to WASM
+
+Issues fixed during build:
+1. dawidd6/action-download-artifact → GitHub API (permission error)
+2. Missing actions: read permission
+3. Accept header for artifact download
+4. net9.0 → net8.0 (SDK only supports 8.0)
+5. Microsoft.NET.Sdk.WebAssembly → BlazorWebAssembly (.NET 8 compatible)
+6. wasm → browser-wasm RID
+7. Exclude GalaxyCSharp/Steamworks.NET (non-blittable P/Invoke)
+
+Next Steps:
+- Test in browser: does SDV boot and render title screen?
+- Add Content/ game resources (XNB files)
+- Fix runtime errors (likely FNA native lib loading, file system, etc.)
+- Implement mobile virtual input
