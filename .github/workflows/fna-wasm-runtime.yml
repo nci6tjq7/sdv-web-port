@@ -122,6 +122,19 @@ jobs:
           cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
 
+      - name: Compile MojoShader export stub
+        run: |
+          # Compile the C stub that forces MojoShader symbols to be linked
+          EMCC=/usr/share/dotnet/packs/Microsoft.NET.Runtime.Emscripten.3.1.56.Sdk.linux-x64/9.0.18/tools/bin/emcc
+          if [ ! -f "$EMCC" ]; then
+            echo "emcc not found at expected path, searching..."
+            EMCC=$(find /usr/share/dotnet/packs -name emcc -type f | head -1)
+          fi
+          echo "Using emcc: $EMCC"
+          cd src/SdvWebPort.FnaRuntime/native
+          "$EMCC" -c mojoshader_exports.c -o mojoshader_exports.o -O2
+          ls -la mojoshader_exports.o
+
       - name: Build WASM runtime
         run: |
           cd src/SdvWebPort.FnaRuntime
