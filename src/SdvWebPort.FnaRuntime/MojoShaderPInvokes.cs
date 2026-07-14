@@ -2,8 +2,8 @@
 // DllImport for them. The SDK scans for DllImport attributes and
 // automatically exports the referenced native symbols from WASM.
 
+using System;
 using System.Runtime.InteropServices;
-using System.Security;
 
 namespace SdvWebPort.FnaRuntime;
 
