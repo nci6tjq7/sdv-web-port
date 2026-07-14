@@ -110,26 +110,13 @@ namespace Microsoft.Xna.Framework
     }
 
     // FNA's Rectangle doesn't have MaxCorner or Size properties (xTile's does).
-    // SDV code uses both interchangeably; add extension methods.
-    public static class FnaRectangleExtensions
-    {
-        public static Point get_MaxCorner(this Rectangle r) => new Point(r.Right, r.Bottom);
-        public static Point MaxCorner(this Rectangle r) => new Point(r.Right, r.Bottom);
-        public static Point get_Size(this Rectangle r) => new Point(r.Width, r.Height);
-        public static Point Size(this Rectangle r) => new Point(r.Width, r.Height);
-    }
+    // Handled via direct expression replacement in patch-sdv-fna.sh, not extension methods.
 }
 
 namespace Microsoft.Xna.Framework.Graphics
 {
     // FNA's Viewport doesn't have MaxCorner/Size either.
-    public static class FnaViewportExtensions
-    {
-        public static Point get_MaxCorner(this Viewport v) => new Point(v.X + v.Width, v.Y + v.Height);
-        public static Point MaxCorner(this Viewport v) => new Point(v.X + v.Width, v.Y + v.Height);
-        public static Point get_Size(this Viewport v) => new Point(v.Width, v.Height);
-        public static Point Size(this Viewport v) => new Point(v.Width, v.Height);
-    }
+    // Handled via direct expression replacement in patch-sdv-fna.sh.
 }
 
 // xTile.Dimensions.Location ↔ Microsoft.Xna.Framework.Point conversion

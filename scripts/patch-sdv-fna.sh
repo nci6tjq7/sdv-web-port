@@ -580,10 +580,13 @@ if [ -f "StardewValley/Utility.cs" ]; then
   sed -i 's/b - 1 <= 1/(int)b - 1 <= 1/g' StardewValley/Utility.cs
 fi
 
-# Fix CS0119: MaxCorner and Size used as properties (extension methods need ())
-# viewport.MaxCorner.X → viewport.MaxCorner().X
-# viewport.Size → viewport.Size()
-echo "[+] Fixing MaxCorner/Size property→method calls..."
+# Fix CS0119: MaxCorner and Size used as properties on Viewport/Rectangle.
+# Don't use extension methods (too fragile with .Size on other types).
+# Instead, directly replace the expressions:
+#   viewport.MaxCorner.X → (viewport.X + viewport.Width)
+#   viewport.MaxCorner.Y → (viewport.Y + viewport.Height)
+#   viewport.Size (as arg) → new xTile.Dimensions.Size(viewport.Width, viewport.Height)
+echo "[+] Fixing MaxCorner/Size via direct expression replacement..."
 python3 << 'PYEOF'
 import os, re
 fixed = 0
@@ -593,13 +596,16 @@ for root, dirs, files in os.walk('.'):
         p = os.path.join(root, fn)
         with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
         orig = c
-        # .MaxCorner. → .MaxCorner().  (but not .MaxCorner(). which is already fixed)
-        c = re.sub(r'\.MaxCorner\.(?!\))', '.MaxCorner().', c)
-        # .MaxCorner; → .MaxCorner();
-        c = re.sub(r'\.MaxCorner;', '.MaxCorner();', c)
-        # viewport.Size (but not viewport.Size() which is already correct)
-        # Also handle .Size when it's used as an argument (method group → should be Size())
-        c = re.sub(r'\.Size(?!\()', '.Size()', c)
+        # viewport.MaxCorner.X → (viewport.X + viewport.Width)
+        c = re.sub(r'(\w+\.viewport)\.MaxCorner\.X', r'(\1.X + \1.Width)', c)
+        c = re.sub(r'(\bviewport)\.MaxCorner\.X', r'(\1.X + \1.Width)', c)
+        # viewport.MaxCorner.Y → (viewport.Y + viewport.Height)
+        c = re.sub(r'(\w+\.viewport)\.MaxCorner\.Y', r'(\1.Y + \1.Height)', c)
+        c = re.sub(r'(\bviewport)\.MaxCorner\.Y', r'(\1.Y + \1.Height)', c)
+        # viewport.Size (standalone, not .Size. or .Size() → new xTile.Dimensions.Size(w, h)
+        # Only when used as an argument (followed by ) or ,)
+        c = re.sub(r'(\w+\.viewport)\.Size(?!\s*[.(])', r'new xTile.Dimensions.Size(\1.Width, \1.Height)', c)
+        c = re.sub(r'(\bviewport)\.Size(?!\s*[.(])', r'new xTile.Dimensions.Size(\1.Width, \1.Height)', c)
         if c != orig:
             with open(p, 'w', encoding='utf-8') as f: f.write(c)
             fixed += 1
@@ -645,9 +651,14 @@ for p in target_files:
     with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
     orig = c
     # Pattern: .Draw (mapDisplayDevice, viewport, ...) → .Draw (mapDisplayDevice, new xTile.Dimensions.Rectangle(viewport.X, viewport.Y, viewport.Width, viewport.Height), ...)
-    # This is too specific. Instead, look for patterns where 'viewport' is the 2nd arg to .Draw(
     c = re.sub(
         r'(\.Draw\s*\(\s*mapDisplayDevice\s*,\s*)viewport(\s*,)',
+        r'\1new xTile.Dimensions.Rectangle (viewport.X, viewport.Y, viewport.Width, viewport.Height)\2',
+        c
+    )
+    # Also handle .Draw(mapDisplayDevice, viewport) without trailing comma
+    c = re.sub(
+        r'(\.Draw\s*\(\s*mapDisplayDevice\s*,\s*)viewport(\s*\))',
         r'\1new xTile.Dimensions.Rectangle (viewport.X, viewport.Y, viewport.Width, viewport.Height)\2',
         c
     )
@@ -655,6 +666,25 @@ for p in target_files:
         with open(p, 'w', encoding='utf-8') as f: f.write(c)
         fixed += 1
 print(f"  Rectangle→xTile.Rectangle: fixed {fixed} files")
+PYEOF
+
+# Fix CS0149: NetClock.cs and NetVersion.cs - .Size()() double parens
+# from previous .Size → .Size() replacement. Fix: .Size()() → .Size()
+echo "[+] Fixing .Size()() double parens..."
+python3 << 'PYEOF'
+import os, re
+fixed = 0
+for root, dirs, files in os.walk('.'):
+    for fn in files:
+        if not fn.endswith('.cs'): continue
+        p = os.path.join(root, fn)
+        with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+        if '.Size()()' in c or '.MaxCorner()()' in c:
+            new_c = c.replace('.Size()()', '.Size()')
+            new_c = new_c.replace('.MaxCorner()()', '.MaxCorner()')
+            with open(p, 'w', encoding='utf-8') as f: f.write(new_c)
+            fixed += 1
+print(f"  .Size()() → .Size(): fixed {fixed} files")
 PYEOF
 
 # Fix CS1503: (Matrix?)value → value (FNA's SpriteBatch.Begin takes Matrix, not Matrix?)
@@ -694,8 +724,41 @@ if [ -f "StardewValley/Menus/PurchaseAnimalsMenu.cs" ]; then
   sed -i 's/b - 1 <= 1/(int)b - 1 <= 1/g' StardewValley/Menus/PurchaseAnimalsMenu.cs
 fi
 if [ -f "StardewValley/Menus/NamingMenu.cs" ]; then
-  sed -i 's/b > 0/(int)b > 0/g' StardewValley/Menus/NamingMenu.cs
+  sed -i 's/button - 1 > 1/(int)button - 1 > 1/g' StardewValley/Menus/NamingMenu.cs
 fi
+
+# Fix CS0266: AbigailGame.cs GameKeys returns int, Add expects Buttons
+if [ -f "StardewValley/Minigames/AbigailGame.cs" ]; then
+  sed -i 's/_buttonHeldState\.Add (GameKeys\./_buttonHeldState.Add ((Buttons)GameKeys./g' StardewValley/Minigames/AbigailGame.cs
+fi
+
+# Fix CS0029: Location ↔ Point in CarpenterMenu and PurchaseAnimalsMenu
+# Game1.viewport.Location returns Point in FNA, but code assigns to xTile Location and vice versa
+python3 << 'PYEOF'
+import os, re
+files = [
+    'StardewValley/Menus/CarpenterMenu.cs',
+    'StardewValley/Menus/PurchaseAnimalsMenu.cs',
+]
+for p in files:
+    if not os.path.exists(p): continue
+    with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
+    orig = c
+    # Game1.viewport.Location (Point in FNA) assigned to Location var:
+    #   Location VAR = Game1.viewport.Location; → Location VAR = new Location(Game1.viewport.Location.X, Game1.viewport.Location.Y);
+    # But actually, just wrap the Point with new Location(p.X, p.Y) when assigning Point→Location
+    # And wrap Location with new Point(loc.X, loc.Y) when assigning Location→Point
+    # This is complex. Let's use specific patterns:
+    # Pattern: BuilderViewport = Game1.viewport.Location; where BuilderViewport is Point → OK (Point=Point)
+    # Pattern: Game1.viewport.Location = BuilderViewport; where BuilderViewport is Point → OK
+    # Pattern: Game1.viewport.Location = new Location(...) → Game1.viewport.Location = new Point(...)
+    # Already handled by new Location → new Point replacement above.
+    # But some Location vars are assigned from viewport.Location (Point):
+    #   Location VAR = some_point_expr; → Location VAR = new Location(expr.X, expr.Y);
+    # Can't easily detect. Skip.
+    pass
+print("  Location↔Point in CarpenterMenu: needs manual fix (skipped)")
+PYEOF
 
 # Fix CS0030: (SpriteEffects)((int)val2 == 0) → (SpriteEffects)(((int)val2 == 0) ? 1 : 0)
 # and (SpriteEffects)(getLastFarmerToUse ().FacingDirection == 1) → same pattern
