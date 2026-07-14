@@ -59,11 +59,11 @@ jobs:
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
           git submodule update --init --recursive
-          # Remove mojoshader_sdlgpu.c - it has a compile error (SpirvPatchTable
-          # undeclared) and we don't need SDL GPU driver (only OpenGL)
-          rm -f MojoShader/mojoshader_sdlgpu.c
-          # Also remove it from CMakeLists.txt
-          sed -i 's/mojoshader_sdlgpu.c//g' CMakeLists.txt
+          # Fix SpirvPatchTable undeclared error in mojoshader_sdlgpu.c
+          # The file references SpirvPatchTable unconditionally but it's only
+          # defined when SPIRV profile is enabled. Add a dummy typedef.
+          sed -i '1i typedef struct { char _dummy[1]; } SpirvPatchTable;' \
+            MojoShader/mojoshader_sdlgpu.c
           mkdir emscripten-build && cd emscripten-build
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
