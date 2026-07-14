@@ -496,8 +496,31 @@ if [ -f "StardewValley/Menus/CarpenterMenu.cs" ]; then
 fi
 
 # Fix CS0103: 'objectData' not in context in ItemContextTagManager.cs
+# The earlier goto-removal left a broken 'if (true) if (!objectData.CanBeGivenAsGift) { ... }' block.
+# Remove the inner if entirely, keeping just the body and break.
 if [ -f "StardewValley/ItemContextTagManager.cs" ]; then
-  sed -i 's/if (!objectData\.CanBeGivenAsGift)/if (true) \/\/ objectData.CanBeGivenAsGift stubbed/g' StardewValley/ItemContextTagManager.cs
+  python3 << 'PYEOF'
+p = 'StardewValley/ItemContextTagManager.cs'
+with open(p) as f: c = f.read()
+# The broken pattern is:
+#   if (true)\n\t\t\t\tif (!objectData.CanBeGivenAsGift) {\n\t\t\t\t\tvalue.Add ("not_giftable");\n\t\t\t\t}\n\t\t\t\tbreak
+# Replace with:
+#   value.Add ("not_giftable");\n\t\t\t\tbreak
+import re
+c = re.sub(
+    r'if \(true\)\s*\n\s*if \(!objectData\.CanBeGivenAsGift\)\s*\{\s*\n\s*value\.Add \("not_giftable"\);\s*\n\s*\}\s*\n\s*break',
+    'value.Add ("not_giftable");\n\t\t\t\tbreak',
+    c
+)
+# Also handle the already-sed'd version where the if was replaced but left malformed
+c = re.sub(
+    r'if \(true\)\s*\n\s*if \(true\) // objectData\.CanBeGivenAsGift stubbed \{\s*\n\s*value\.Add \("not_giftable"\);\s*\n\s*\}\s*\n\s*break',
+    'value.Add ("not_giftable");\n\t\t\t\tbreak',
+    c
+)
+with open(p, 'w') as f: f.write(c)
+print("  ItemContextTagManager.cs: fixed broken if block")
+PYEOF
 fi
 
 # Fix CS0023: BedFurniture.BedType not nullable (it's a struct)
