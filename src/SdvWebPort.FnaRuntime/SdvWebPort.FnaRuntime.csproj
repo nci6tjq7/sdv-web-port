@@ -12,10 +12,10 @@
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <!-- SDL3.a references POSIX threading functions (sched_get_priority_min/max,
-         sem_getvalue) that don't exist in WASM. Allow undefined symbols -
-         these code paths won't be hit at runtime since WASM is single-threaded. -->
+         sem_getvalue) that don't exist in WASM. Allow undefined symbols.
+         These code paths won't be hit at runtime since WASM is single-threaded. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <!-- SDL3.a uses atomic operations which require --enable-threads.
+    <!-- SDL3.a uses atomic operations which require threads enabled.
          Enable WASM threads (SharedArrayBuffer) to support this. -->
     <WasmEnableThreads>true</WasmEnableThreads>
   </PropertyGroup>
