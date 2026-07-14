@@ -11,15 +11,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
-    <!-- SDL3.a references POSIX threading functions that don't exist in WASM.
-         Allow undefined symbols - these code paths won't be hit at runtime. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <WasmLinkerFlags>--whole-archive native/FNA3D.a --no-whole-archive</WasmLinkerFlags>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Reference the pre-built SDV, FNA, and dependency DLLs -->
-    <!-- Note: SDV/FNA are built for net8.0 but net9.0 runtime is backward compatible -->
     <Reference Include="Stardew Valley">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Stardew Valley.dll</HintPath>
       <Private>true</Private>
@@ -44,7 +39,6 @@
     <Reference Include="BmFont">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\BmFont.dll</HintPath>
     </Reference>
-    <!-- GalaxyCSharp and Steamworks.NET excluded: non-blittable P/Invoke callbacks -->
     <Reference Include="SkiaSharp">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\SkiaSharp.dll</HintPath>
     </Reference>
@@ -63,85 +57,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Native WASM static libraries for FNA -->
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\mojoshader_exports.o" />
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- Export MojoShader P/Invoke targets from the WASM module.
-         The .NET runtime uses cwrap to call these, which requires them
-         to be in the WASM export table. -->
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetShaderFormats" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlCompileShader" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetShaderProfile" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlDestroyShader" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlBindShaders" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetBoundShaderProgram" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlBindProgram" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlMapUniformBuffer" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlUnmapUniformBuffer" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetUniformData" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetVertexData" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetPixelData" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlDestroyEffect" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlCreateEffect" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlCreateEffectRaw" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectBeginPass" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectEndPass" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectCommitChanges" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectEnd" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectSetTechnique" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetCurrentTechnique" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetTechnique" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetTechniqueName" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetNumTechniques" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetNumPasses" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlEffectGetPassName" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetAttribMappings" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlGetUniformMappings" />
-    <WasmLDLinkerArg Include="--export=MOJOSHADER_sdlShaderBinaryToSPIRV" />
-  </ItemGroup>
-
-  <Target Name="ExportMojoShaderSymbols" AfterTargets="WasmBuild">
-    <PropertyGroup>
-      <EmccLinkRspFile>$(WasmAssetDir)\emcc-link.rsp</EmccLinkRspFile>
-    </PropertyGroup>
-    <Message Text="Patching emcc-link.rsp to export MojoShader symbols" Importance="high" />
-    <ItemGroup>
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetShaderFormats" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlCompileShader" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetShaderProfile" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlDestroyShader" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlBindShaders" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetBoundShaderProgram" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlBindProgram" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlMapUniformBuffer" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlUnmapUniformBuffer" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetUniformData" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetVertexData" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetPixelData" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlDestroyEffect" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlCreateEffect" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlCreateEffectRaw" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectBeginPass" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectEndPass" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectCommitChanges" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectEnd" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectSetTechnique" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetCurrentTechnique" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetTechnique" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetTechniqueName" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetNumTechniques" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetNumPasses" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlEffectGetPassName" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetAttribMappings" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlGetUniformMappings" />
-      <ExportFlags Include="--export=MOJOSHADER_sdlShaderBinaryToSPIRV" />
-    </ItemGroup>
-    <WriteLinesToFile File="$(EmccLinkRspFile)" Lines="@(ExportFlags)" Overwrite="false" />
-  </Target>
 
 </Project>
