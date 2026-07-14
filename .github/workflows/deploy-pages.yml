@@ -20,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -29,8 +29,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the run ID of the FNA WASM Runtime Build that triggered us
-          RUN_ID="${{ github.event.workflow_run.id }}"
+          # Get the run ID: use workflow_run.id if triggered by workflow_run,
+          # otherwise find the latest successful FNA WASM Runtime Build
+          if [ -n "${{ github.event.workflow_run.id }}" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/fna-wasm-runtime.yml/runs?status=completed&conclusion=success&per_page=1"
+            RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
+            RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
+          fi
           echo "Source run ID: ${RUN_ID}"
 
           # Get artifact ID
