@@ -65,15 +65,20 @@
             margin: 10px auto;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        #error {
+        #error-log {
             color: #e94560;
-            font-size: 14px;
+            font-size: 12px;
             margin-top: 10px;
             white-space: pre-wrap;
-            display: none;
             max-width: 600px;
+            max-height: 300px;
+            overflow: auto;
+            font-family: monospace;
         }
     </style>
+    <!-- BlazorWebAssembly SDK injects the importmap here at publish time -->
+    <link rel="preload" id="webassembly" />
+    <script type="importmap"></script>
 </head>
 <body>
     <div id="header">
@@ -83,11 +88,12 @@
     <div id="canvas-container">
         <div id="loading">
             <div class="spinner"></div>
-            <div id="status-text">Initializing...</div>
+            <div>Initializing Stardew Valley...</div>
         </div>
         <canvas id="canvas" width="1280" height="720"></canvas>
-        <div id="error"></div>
+        <div id="error-log"></div>
     </div>
-    <script type="module" src="main.js"></script>
+    <!-- main.js is fingerprinted by SDK; importmap rewrites the reference -->
+    <script type="module" src="main#[.{fingerprint}].js"></script>
 </body>
 </html>

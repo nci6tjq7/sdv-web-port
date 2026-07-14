@@ -28,23 +28,37 @@ const SDV = {
         SDV.ctx = ctx;
         console.log("[SDV] Canvas ready:", canvas.width, "x", canvas.height);
 
-        // Set up input handlers
+        // Set up input handlers (passive where possible to avoid violations)
         SDV.setupInput();
 
         // Load .NET WASM runtime
         console.log("[SDV] Loading .NET runtime...");
-        const { dotnet } = await import('./_framework/dotnet.js');
-        dotnetInstance = await dotnet.create();
-        console.log("[SDV] .NET runtime loaded");
-
-        // Call managed Main
         try {
-            const main = dotnetInstance.getAssemblyExports("SdvWebPort.FnaRuntime").SdvWebPort.FnaRuntime.Program.Main;
-            console.log("[SDV] Calling Program.Main...");
-            // Run in background - Main blocks (Thread.Sleep(Infinite))
-            main([]);
+            const { dotnet } = await import('./_framework/dotnet.js');
+            console.log("[SDV] dotnet.js loaded, creating instance...");
+            dotnetInstance = await dotnet.create();
+            console.log("[SDV] .NET runtime loaded");
+            console.log("[SDV] dotnetInstance keys:", Object.keys(dotnetInstance));
+            if (dotnetInstance.getAssemblyExports) {
+                console.log("[SDV] getAssemblyExports available");
+            } else {
+                console.log("[SDV] getAssemblyExports NOT available - using Blazor boot mode");
+            }
         } catch (e) {
-            console.error("[SDV] Error calling Main:", e);
+            console.error("[SDV] Failed to load .NET runtime:", e);
+            return;
+        }
+
+        // Call managed Main - BlazorWebAssembly auto-boots via Program.Main
+        // We don't need to call it manually; the runtime invokes it.
+        // But we need to set up the JS interop first.
+        try {
+            // For BlazorWebAssembly, the runtime auto-invokes Program.Main
+            // We just need to make sure our JS interop is ready
+            console.log("[SDV] .NET runtime booted. Waiting for SDV to start...");
+            // The runtime will call SDV.init() from C# via JSImport
+        } catch (e) {
+            console.error("[SDV] Error:", e);
         }
     },
 
@@ -74,27 +88,45 @@ const SDV = {
             SDV.mouseX = Math.round((e.clientX - rect.left) * (canvas.width / rect.width));
             SDV.mouseY = Math.round((e.clientY - rect.top) * (canvas.height / rect.height));
         });
-        // Touch (mobile)
+        // Touch (mobile) - use passive: true to avoid violation warnings
         canvas.addEventListener('touchstart', (e) => {
             const t = e.touches[0];
             const rect = canvas.getBoundingClientRect();
             SDV.mouseX = Math.round((t.clientX - rect.left) * (canvas.width / rect.width));
             SDV.mouseY = Math.round((t.clientY - rect.top) * (canvas.height / rect.height));
             SDV.input['mouse0'] = true;
-            e.preventDefault();
-        });
+        }, { passive: true });
         canvas.addEventListener('touchmove', (e) => {
             const t = e.touches[0];
             const rect = canvas.getBoundingClientRect();
             SDV.mouseX = Math.round((t.clientX - rect.left) * (canvas.width / rect.width));
             SDV.mouseY = Math.round((t.clientY - rect.top) * (canvas.height / rect.height));
-            e.preventDefault();
-        });
-        canvas.addEventListener('touchend', (e) => {
+        }, { passive: true });
+        canvas.addEventListener('touchend', () => {
             SDV.input['mouse0'] = false;
-            e.preventDefault();
-        });
+        }, { passive: true });
         console.log("[SDV] Input handlers attached");
+    },
+
+    // Called from C# via JSImport to signal that runtime is ready
+    onReady() {
+        console.log("[SDV] C# runtime signaled ready");
+        document.getElementById('loading').style.display = 'none';
+    },
+
+    // Log from C# (for debugging)
+    log(msg) {
+        console.log("[C#]", msg);
+    },
+
+    // Error from C#
+    error(msg) {
+        console.error("[C#]", msg);
+    },
+
+    // Get canvas element for FNA
+    getCanvas() {
+        return canvas;
     }
 };
 
