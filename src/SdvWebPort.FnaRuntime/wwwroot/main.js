@@ -60,15 +60,17 @@ const SDV = {
         SDV.setupInput();
 
         // Load .NET WASM runtime via dotnet.js
-        // The SDK auto-invokes Program.Main on create()
         console.log("[SDV] Loading .NET runtime...");
         try {
             const { dotnet } = await import('./_framework/dotnet.js');
             console.log("[SDV] dotnet.js loaded, creating instance...");
-            // dotnet.create() starts the runtime and calls Program.Main automatically
+            // Create the runtime instance
             dotnetInstance = await dotnet.create();
-            console.log("[SDV] .NET runtime loaded and Main invoked");
-            // Program.Main runs SDV and calls OnReady() via JSImport
+            console.log("[SDV] .NET runtime loaded");
+            // Explicitly run Program.Main with the assembly name
+            console.log("[SDV] Invoking runMain...");
+            const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
+            console.log("[SDV] runMain returned:", exitCode);
         } catch (e) {
             console.error("[SDV] Failed to load .NET runtime:", e);
             SDV.error("Failed to start: " + e.message + "\n" + e.stack);
