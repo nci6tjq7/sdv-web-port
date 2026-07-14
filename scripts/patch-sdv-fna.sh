@@ -837,21 +837,17 @@ if [ -f "StardewValley/Audio/AudioCueModificationManager.cs" ]; then
 fi
 
 # Fix CS1061: FarmHouse.cs BedFurniture.BedType.GetBedSpot doesn't exist
-# Replace the entire return statement with a stub.
+# Replace the entire return statement with a stub using line-based replacement.
 if [ -f "StardewValley/Locations/FarmHouse.cs" ]; then
   python3 << 'PYEOF'
-import re
 p = 'StardewValley/Locations/FarmHouse.cs'
-with open(p) as f: c = f.read()
-# Replace: return (Point)(GetBed (bed_type.GetBedSpot ()) ?? new Point (-1000, -1000));
-# With:    return new Point (-1000, -1000); // WASM: GetBed stubbed
-c = re.sub(
-    r'return \(Point\)\(GetBed\s*\([^)]*\)\s*\?\?\s*new Point\s*\(-1000,\s*-1000\)\);',
-    'return new Point (-1000, -1000); // WASM: GetBed stubbed',
-    c
-)
-with open(p, 'w') as f: f.write(c)
-print("  FarmHouse.cs: GetBed stubbed")
+with open(p) as f: lines = f.readlines()
+for i, line in enumerate(lines):
+    if 'GetBed' in line and 'GetBedSpot' in line and 'return' in line:
+        lines[i] = '\t\treturn new Point (-1000, -1000); // WASM: GetBed stubbed\n'
+        print(f"  FarmHouse.cs line {i+1}: replaced GetBed statement")
+        break
+with open(p, 'w') as f: f.writelines(lines)
 PYEOF
 fi
 
@@ -869,11 +865,10 @@ for p in files:
     with open(p, 'r', encoding='utf-8', errors='replace') as f: c = f.read()
     orig = c
     # Change method signatures: 'Location MethodName(' → 'Point MethodName('
-    # Only for methods that return Location (not parameters that take Location)
+    # Handle both 'public Location' and 'static Location' return types
     c = re.sub(r'public Location (\w+)\s*\(', r'public Point \1 (', c)
-    # Now fix return new Location → return new Point (since we changed the return type)
-    # But only within methods we just changed. Actually, just change all 'return new Location ('
-    # back to 'return new Point (' since the method now returns Point.
+    c = re.sub(r'static Location (\w+)\s*\(', r'static Point \1 (', c)
+    # Fix return new Location → return new Point (since return type is now Point)
     c = c.replace('return new Location (', 'return new Point (')
     if c != orig:
         with open(p, 'w', encoding='utf-8') as f: f.write(c)
