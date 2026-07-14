@@ -14,8 +14,6 @@
     <!-- SDL3.a references POSIX threading functions that don't exist in WASM.
          Allow undefined symbols - these code paths won't be hit at runtime. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <!-- Single-threaded mode: no SharedArrayBuffer needed, no worker thread. -->
-    <!-- Use --whole-archive for FNA3D.a to prevent stripping P/Invoke targets -->
     <WasmLinkerFlags>--whole-archive native/FNA3D.a --no-whole-archive</WasmLinkerFlags>
   </PropertyGroup>
 
