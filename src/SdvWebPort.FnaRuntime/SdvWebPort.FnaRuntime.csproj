@@ -14,8 +14,9 @@
     <!-- SDL3.a references POSIX threading functions that don't exist in WASM.
          Allow undefined symbols - these code paths won't be hit at runtime. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <!-- Single-threaded mode: no SharedArrayBuffer needed, no worker thread.
-         This avoids "function signature mismatch" in worker initialization. -->
+    <!-- Single-threaded mode: no SharedArrayBuffer needed, no worker thread. -->
+    <!-- Use --whole-archive for FNA3D.a to prevent stripping P/Invoke targets -->
+    <WasmLinkerFlags>--whole-archive native/FNA3D.a --no-whole-archive</WasmLinkerFlags>
   </PropertyGroup>
 
   <ItemGroup>
@@ -73,42 +74,6 @@
       <ForceLoad>true</ForceLoad>
     </NativeLibrary>
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
-    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a">
-      <ForceLoad>true</ForceLoad>
-    </NativeLibrary>
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Export symbols that C# P/Invokes but C code doesn't reference -->
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetShaderFormats" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlCompileShader" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlShaderBinaryToSPIRV" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetShaderProfile" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlDestroyShader" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetAttribMappings" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetUniformMappings" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetBoundShaderProgram" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlBindProgram" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlBindShaders" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlMapUniformBuffer" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlUnmapUniformBuffer" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetUniformData" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetVertexData" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlGetPixelData" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlDestroyEffect" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlCreateEffect" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlCreateEffectRaw" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectBeginPass" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectEndPass" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectCommitChanges" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectEnd" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectSetTechnique" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetCurrentTechnique" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetTechnique" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetTechniqueName" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetNumTechniques" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetNumPasses" />
-    <WasmLinkerArg Include="--export=MOJOSHADER_sdlEffectGetPassName" />
   </ItemGroup>
 
 </Project>
