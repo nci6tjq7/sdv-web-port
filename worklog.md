@@ -1489,3 +1489,30 @@ Next Steps:
 - Add Content/ game resources (XNB files)
 - Fix runtime errors (likely FNA native lib loading, file system, etc.)
 - Implement mobile virtual input
+
+---
+Task ID: phase5-deploy-success
+Agent: main
+Task: Deploy WASM bundle to GitHub Pages
+
+Work Log:
+- Created deploy-pages.yml workflow
+- Enabled GitHub Pages with Actions source via API
+- Fixed if condition to allow manual workflow_dispatch trigger
+- Added COOP/COEP headers for SharedArrayBuffer support
+- Successfully deployed WASM bundle to GitHub Pages
+
+Stage Summary:
+- ✅ Site live at: https://nci6tjq7.github.io/sdv-web-port/
+- ✅ HTTP 200, serving index.html (2685 bytes)
+- ✅ dotnet.js served (35871 bytes)
+- ✅ All WASM files deployed
+
+Next Steps:
+- Test in browser: open the URL and check if SDV boots
+- Debug runtime errors (likely FNA native lib loading, file system, etc.)
+- Add Content/ game resources
+- The game will likely fail at runtime because:
+  1. No Content/ directory with XNB files
+  2. FNA's native libs (SDL3/FNA3D) need to be loaded
+  3. File system access needs to be shimmed for browser
