@@ -39,12 +39,9 @@
     <Reference Include="BmFont">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\BmFont.dll</HintPath>
     </Reference>
-    <Reference Include="Steamworks.NET">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Steamworks.NET.dll</HintPath>
-    </Reference>
-    <Reference Include="GalaxyCSharp">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\GalaxyCSharp.dll</HintPath>
-    </Reference>
+    <!-- GalaxyCSharp and Steamworks.NET excluded: their P/Invoke callbacks
+         use non-blittable types that WASM AOT cannot compile.
+         SDV already uses NullSDKHelper at runtime, so these are not needed. -->
     <Reference Include="SkiaSharp">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\SkiaSharp.dll</HintPath>
     </Reference>
