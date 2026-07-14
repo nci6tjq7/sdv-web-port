@@ -743,9 +743,9 @@ fi
 
 # Fix CS1061: FarmHouse.cs BedFurniture.BedType.GetBedSpot doesn't exist
 # bed_type is BedType (enum), GetBedSpot is on BedFurniture (not BedType)
-# The original code was probably: GetBed(bed_type?.GetBedSpot()) → just use a default spot
+# Replace just bed_type.GetBedSpot() with a default Point (no comment to avoid eating ??)
 if [ -f "StardewValley/Locations/FarmHouse.cs" ]; then
-  sed -i 's/GetBed (bed_type\.GetBedSpot ())/GetBed (new Point(-1000, -1000)) \/\/ WASM: BedType.GetBedSpot stub/g' StardewValley/Locations/FarmHouse.cs
+  sed -i 's/bed_type\.GetBedSpot ()/new Point (-1000, -1000)/g' StardewValley/Locations/FarmHouse.cs
 fi
 
 # Fix CS1503: Rectangle XNA → xTile.Dimensions.Rectangle
