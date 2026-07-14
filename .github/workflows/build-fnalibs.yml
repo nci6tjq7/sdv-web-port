@@ -1,0 +1,108 @@
+name: Build fnalibs from source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-fnalibs.yml'
+
+permissions:
+  contents: read
+
+env:
+  EMSDK_VERSION: 3.1.56
+  SDL_VERSION: release-3.4.4
+  FNA3D_VERSION: 26.04
+  FAUDIO_VERSION: 26.04
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        pthread: [false]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt -y update
+          sudo apt install -y ninja-build cmake llvm lld clang build-essential python-is-python3 curl git
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+
+      - name: Verify emcc
+        run: emcc -v
+
+      - name: Build SDL3
+        run: |
+          PTHREAD_FLAG="${{ matrix.pthread && '-pthread' || '' }}"
+          PTHREAD_ENABLED="${{ matrix.pthread && 'ON' || 'OFF' }}"
+          
+          git clone -b ${{ env.SDL_VERSION }} --depth 1 https://github.com/libsdl-org/SDL
+          cd SDL
+          mkdir emscripten-build && cd emscripten-build
+          CFLAGS="$PTHREAD_FLAG" emcmake cmake -S .. \
+            -DSDL_WERROR=OFF \
+            -DSDL_TESTS=OFF \
+            -DSDL_INSTALL_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_PTHREADS=$PTHREAD_ENABLED \
+            -DSDL_PTHREADS_SEM=$PTHREAD_ENABLED \
+            -GNinja
+          ninja
+          cp libSDL3.a /tmp/SDL3.a
+
+      - name: Build FNA3D
+        run: |
+          PTHREAD_FLAG="${{ matrix.pthread && '-pthread' || '' }}"
+          
+          git clone -b ${{ env.FNA3D_VERSION }} --depth 1 https://github.com/FNA-XNA/FNA3D
+          cd FNA3D
+          mkdir emscripten-build && cd emscripten-build
+          CFLAGS="$PTHREAD_FLAG" emcmake cmake -S .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -GNinja
+          ninja
+          cp libFNA3D.a /tmp/FNA3D.a
+
+      - name: Build FAudio
+        run: |
+          PTHREAD_FLAG="${{ matrix.pthread && '-pthread' || '' }}"
+          
+          git clone -b ${{ env.FAUDIO_VERSION }} --depth 1 https://github.com/FNA-XNA/FAudio
+          cd FAudio
+          mkdir emscripten-build && cd emscripten-build
+          CFLAGS="$PTHREAD_FLAG" emcmake cmake -S .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -GNinja
+          ninja
+          cp libFAudio.a /tmp/FAudio.a
+
+      - name: Build MojoShader
+        run: |
+          git clone --depth 1 https://github.com/icculus/MojoShader
+          cd MojoShader
+          mkdir build && cd build
+          emcmake cmake -S .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSPIRV_CROSS=ON \
+            -GNinja
+          ninja
+          cp libmojoshader.a /tmp/libmojoshader.a || cp libmojoshader_wasm.a /tmp/libmojoshader.a
+
+      - name: Upload fnalibs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fnalibs-${{ matrix.pthread && 'threaded' || 'single' }}
+          path: |
+            /tmp/SDL3.a
+            /tmp/FNA3D.a
+            /tmp/FAudio.a
+            /tmp/libmojoshader.a
+          retention-days: 30

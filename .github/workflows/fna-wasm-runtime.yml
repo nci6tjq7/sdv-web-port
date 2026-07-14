@@ -84,15 +84,42 @@ jobs:
         run: |
           ls -la download/sdv-fna-build/
           ls -la download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/ | head -5
-          ls -la download/sdv-fna-build/fnalibs/
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/Stardew\ Valley.dll
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll
-          test -f download/sdv-fna-build/fnalibs/SDL3.a
+
+      - name: Download freshly compiled fnalibs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p download/fnalibs
+          # Find the latest successful fnalibs build run
+          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-fnalibs.yml/runs?status=completed&conclusion=success&per_page=1"
+          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
+          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
+          echo "fnalibs build run ID: ${RUN_ID}"
+
+          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
+          ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for a in d.get('artifacts',[]):
+              if 'single' in a['name']:
+                  print(a['id']); break
+          ")
+          echo "Artifact ID: ${ARTIFACT_ID}"
+
+          REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /dev/null -w '%{redirect_url}' \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
+          curl -sL "$REDIRECT" -o download/fnalibs.zip
+          cd download/fnalibs
+          unzip -q ../fnalibs.zip
+          ls -la
 
       - name: Copy native libs to runtime project
         run: |
           mkdir -p src/SdvWebPort.FnaRuntime/native
-          cp download/sdv-fna-build/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
+          cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
 
       - name: Build WASM runtime

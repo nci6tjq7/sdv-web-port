@@ -11,16 +11,11 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
-    <!-- SDL3.a references POSIX threading functions (sched_get_priority_min/max,
-         sem_getvalue) that don't exist in WASM. Allow undefined symbols.
-         These code paths won't be hit at runtime since WASM is single-threaded. -->
+    <!-- SDL3.a references POSIX threading functions that don't exist in WASM.
+         Allow undefined symbols - these code paths won't be hit at runtime. -->
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <!-- SDL3.a uses atomic operations which require threads enabled.
-         Enable WASM threads (SharedArrayBuffer) to support this.
-         Requires COOP/COEP headers (provided via service worker). -->
-    <WasmEnableThreads>true</WasmEnableThreads>
-    <!-- Skip wasm-opt optimization which validates and may reject atomic ops -->
-    <WasmStripOptimization>true</WasmStripOptimization>
+    <!-- Single-threaded mode: no SharedArrayBuffer needed, no worker thread.
+         This avoids "function signature mismatch" in worker initialization. -->
   </PropertyGroup>
 
   <ItemGroup>

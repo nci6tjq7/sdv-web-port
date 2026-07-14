@@ -1,31 +1,9 @@
 // SDV WASM Runtime - main.js
 // Uses Microsoft.NET.Sdk.WebAssembly pattern
-// The SDK auto-invokes Program.Main on dotnet.create()
+// Single-threaded mode: no SharedArrayBuffer or service worker needed
 
 let canvas = null;
 let dotnetInstance = null;
-
-// Register COOP/COEP service worker for SharedArrayBuffer support
-async function registerSW() {
-    if (!('serviceWorker' in navigator)) return false;
-    try {
-        const reg = await navigator.serviceWorker.register('./coop-coep-sw.js');
-        console.log("[SDV] COOP/COEP service worker registered");
-        // Wait for the service worker to be active
-        if (!navigator.serviceWorker.controller) {
-            console.log("[SDV] Waiting for service worker to activate...");
-            // Force activation
-            await navigator.serviceWorker.ready;
-            console.log("[SDV] Service worker ready, reloading...");
-            window.location.reload();
-            return false; // Will reload
-        }
-        return true;
-    } catch(e) {
-        console.error("[SDV] Service worker registration failed:", e);
-        return false;
-    }
-}
 
 const SDV = {
     canvas: null,
@@ -33,20 +11,7 @@ const SDV = {
 
     async init() {
         console.log("[SDV] Initializing runtime...");
-        
-        // Check if cross-origin isolated (needed for SharedArrayBuffer)
-        if (!window.crossOriginIsolated) {
-            console.log("[SDV] Not cross-origin isolated, registering service worker...");
-            const ok = await registerSW();
-            if (!ok) return;
-            if (!window.crossOriginIsolated) {
-                console.log("[SDV] Still not isolated after SW, reloading...");
-                window.location.reload();
-                return;
-            }
-        }
-        console.log("[SDV] Cross-origin isolated:", window.crossOriginIsolated);
-        
+
         canvas = document.getElementById('canvas');
         if (!canvas) {
             console.error("[SDV] Canvas element not found!");
@@ -64,10 +29,8 @@ const SDV = {
         try {
             const { dotnet } = await import('./_framework/dotnet.js');
             console.log("[SDV] dotnet.js loaded, creating instance...");
-            // Create the runtime instance
             dotnetInstance = await dotnet.create();
             console.log("[SDV] .NET runtime loaded");
-            // Explicitly run Program.Main with the assembly name
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
             console.log("[SDV] runMain returned:", exitCode);
