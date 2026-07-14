@@ -50,20 +50,25 @@ jobs:
             -DSDL_PTHREADS_SEM=OFF \
             -GNinja
           ninja
+          # Install SDL3 headers and lib to a prefix for FNA3D/FAudio to find
+          ninja install
           cp libSDL3.a /tmp/SDL3.a
+          # Save the install prefix path for later steps
+          echo "SDL3_PREFIX=$(pwd)/prefix" >> $GITHUB_ENV
+          ls prefix/include/SDL3/ | head -5
 
       - name: Build FNA3D
         run: |
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
-          # FNA3D's CMake expects mojoshader source in a specific location
-          # Initialize the submodule explicitly
           git submodule update --init --recursive
-          ls -la mojoshader/ 2>/dev/null || echo "no mojoshader dir"
           mkdir emscripten-build && cd emscripten-build
+          # Point to SDL3 install prefix for headers
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
+            -DSDL3_DIR=${SDL3_PREFIX}/cmake \
             -GNinja
           ninja
           cp libFNA3D.a /tmp/FNA3D.a
@@ -76,22 +81,11 @@ jobs:
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
+            -DSDL3_DIR=${SDL3_PREFIX}/cmake \
             -GNinja
           ninja
           cp libFAudio.a /tmp/FAudio.a
-
-      - name: Build MojoShader (standalone)
-        run: |
-          git clone --depth 1 https://github.com/icculus/MojoShader
-          cd MojoShader
-          mkdir build && cd build
-          emcmake cmake -S .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DSPIRV_CROSS=ON \
-            -GNinja
-          ninja
-          cp libmojoshader.a /tmp/libmojoshader.a 2>/dev/null || find . -name "*.a" -exec cp {} /tmp/libmojoshader.a \;
 
       - name: Upload fnalibs
         uses: actions/upload-artifact@v4
@@ -101,5 +95,4 @@ jobs:
             /tmp/SDL3.a
             /tmp/FNA3D.a
             /tmp/FAudio.a
-            /tmp/libmojoshader.a
           retention-days: 30
