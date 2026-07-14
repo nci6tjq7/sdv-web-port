@@ -1578,3 +1578,44 @@ Next Steps:
 - Debug "function signature mismatch" error
 - May need to recompile fnalibs with matching Emscripten version
 - Or disable threading (if the worker is causing the signature mismatch)
+
+---
+Task ID: phase6-mojoshader-export-issue
+Agent: main
+Task: Resolve "missing function: MOJOSHADER_sdlGetShaderFormats" runtime error
+
+Work Log:
+- Compiled fnalibs from source (SDL3, FNA3D, FAudio) with Emscripten 3.1.56
+- Fixed FNA3D build: SpirvPatchTable undeclared (added dummy typedef)
+- Switched to single-threaded mode (no worker thread, no SharedArrayBuffer)
+- Removed service worker (not needed without threads)
+- .NET 9 WASM runtime boots successfully, C# Program.Main executes
+- SDV boots past .NET init, calls OnReady() via JSImport
+- SDV.Program.Main crashes calling FNA3D which P/Invokes MOJOSHADER_sdlGetShaderFormats
+
+Attempted 9 approaches to export MojoShader symbols from WASM module:
+1. WasmLinkerArg item type - not recognized by SDK
+2. WasmLDLinkerArg item type - not recognized by SDK
+3. WasmLinkerFlags property - not forwarded to wasm-ld
+4. -p:WasmLinkerFlags - not forwarded
+5. LDFLAGS env var - not forwarded by SDK's emcc wrapper
+6. EMCC_LINKER_OPTS env var - not forwarded
+7. MSBuild Target to patch emcc-link.rsp - target didn't execute
+8. C stub (.o) with volatile references to symbols - linked but not exported
+9. C# DllImport stubs - doesn't trigger SDK auto-export
+
+Root cause: The .NET 9 Microsoft.NET.Sdk.WebAssembly completely controls
+the wasm-ld invocation and provides no documented way to add custom
+--export flags for P/Invoke targets in pre-compiled assemblies.
+
+Stage Summary:
+- .NET runtime boots ✅
+- C# code executes ✅
+- JS interop works ✅
+- SDV Program.Main starts ✅
+- FNA3D native P/Invoke fails ❌ (MOJOSHADER symbols not exported)
+
+Next Steps:
+- Need to find undocumented SDK property or mechanism to export symbols
+- Or: recompile FNA3D C# to use a different P/Invoke approach
+- Or: use a different FNA3D driver that doesn't need MojoShader
