@@ -125,7 +125,10 @@ jobs:
       - name: Build WASM runtime
         run: |
           cd src/SdvWebPort.FnaRuntime
-          dotnet publish -c Release -o /tmp/wasm-publish
+          # Pass linker flags to export MojoShader symbols that FNA3D P/Invokes
+          # but aren't referenced by C code (so linker strips them by default)
+          dotnet publish -c Release -o /tmp/wasm-publish \
+            -p:WasmLinkerFlags="--export=MOJOSHADER_sdlGetShaderFormats --export=MOJOSHADER_sdlCompileShader --export=MOJOSHADER_sdlGetShaderProfile --export=MOJOSHADER_sdlDestroyShader --export=MOJOSHADER_sdlBindShaders --export=MOJOSHADER_sdlGetBoundShaderProgram --export=MOJOSHADER_sdlMapUniformBuffer --export=MOJOSHADER_sdlUnmapUniformBuffer --export=MOJOSHADER_sdlGetUniformData --export=MOJOSHADER_sdlGetVertexData --export=MOJOSHADER_sdlGetPixelData --export=MOJOSHADER_sdlDestroyEffect --export=MOJOSHADER_sdlCreateEffect --export=MOJOSHADER_sdlCreateEffectRaw --export=MOJOSHADER_sdlEffectBeginPass --export=MOJOSHADER_sdlEffectEndPass --export=MOJOSHADER_sdlEffectCommitChanges --export=MOJOSHADER_sdlEffectEnd --export=MOJOSHADER_sdlEffectSetTechnique --export=MOJOSHADER_sdlEffectGetCurrentTechnique --export=MOJOSHADER_sdlEffectGetTechnique --export=MOJOSHADER_sdlEffectGetTechniqueName --export=MOJOSHADER_sdlEffectGetNumTechniques --export=MOJOSHADER_sdlEffectGetNumPasses --export=MOJOSHADER_sdlEffectGetPassName --export=MOJOSHADER_sdlGetAttribMappings --export=MOJOSHADER_sdlGetUniformMappings --export=MOJOSHADER_sdlBindProgram --export=MOJOSHADER_sdlShaderBinaryToSPIRV"
           ls -la /tmp/wasm-publish/
           ls -la /tmp/wasm-publish/wwwroot/ | head -20
           echo "=== WASM bundle size ==="
