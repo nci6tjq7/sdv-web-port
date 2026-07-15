@@ -12,6 +12,7 @@
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
+    <WasmImportUndefined>false</WasmImportUndefined>
   </PropertyGroup>
 
   <ItemGroup>
