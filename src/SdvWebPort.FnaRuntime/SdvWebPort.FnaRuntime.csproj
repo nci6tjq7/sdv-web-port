@@ -13,6 +13,7 @@
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
     <WasmImportUndefined>false</WasmImportUndefined>
+    <EmccLinkerFlags>--whole-archive native/FNA3D.a --no-whole-archive</EmccLinkerFlags>
   </PropertyGroup>
 
   <ItemGroup>
