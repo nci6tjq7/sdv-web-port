@@ -145,6 +145,8 @@ jobs:
           ar t FNA3D.a | grep mojoshader
 
       - name: Build WASM runtime
+        env:
+          EMCC_CFLAGS: "-Wl,--no-import-undefined -Wl,--export=MOJOSHADER_sdlGetShaderFormats -Wl,--export=MOJOSHADER_sdlCompileShader -Wl,--export=MOJOSHADER_sdlGetShaderProfile -Wl,--export=MOJOSHADER_sdlDestroyShader -Wl,--export=MOJOSHADER_sdlBindShaders -Wl,--export=MOJOSHADER_sdlGetBoundShaderProgram -Wl,--export=MOJOSHADER_sdlBindProgram -Wl,--export=MOJOSHADER_sdlMapUniformBuffer -Wl,--export=MOJOSHADER_sdlUnmapUniformBuffer -Wl,--export=MOJOSHADER_sdlGetUniformData -Wl,--export=MOJOSHADER_sdlGetVertexData -Wl,--export=MOJOSHADER_sdlGetPixelData -Wl,--export=MOJOSHADER_sdlDestroyEffect -Wl,--export=MOJOSHADER_sdlCreateEffect -Wl,--export=MOJOSHADER_sdlCreateEffectRaw -Wl,--export=MOJOSHADER_sdlEffectBeginPass -Wl,--export=MOJOSHADER_sdlEffectEndPass -Wl,--export=MOJOSHADER_sdlEffectCommitChanges -Wl,--export=MOJOSHADER_sdlEffectEnd -Wl,--export=MOJOSHADER_sdlEffectSetTechnique -Wl,--export=MOJOSHADER_sdlEffectGetCurrentTechnique -Wl,--export=MOJOSHADER_sdlEffectGetTechnique -Wl,--export=MOJOSHADER_sdlEffectGetTechniqueName -Wl,--export=MOJOSHADER_sdlEffectGetNumTechniques -Wl,--export=MOJOSHADER_sdlEffectGetNumPasses -Wl,--export=MOJOSHADER_sdlEffectGetPassName -Wl,--export=MOJOSHADER_sdlGetAttribMappings -Wl,--export=MOJOSHADER_sdlGetUniformMappings -Wl,--export=MOJOSHADER_sdlShaderBinaryToSPIRV"
         run: |
           cd src/SdvWebPort.FnaRuntime
           dotnet publish -c Release -o /tmp/wasm-publish

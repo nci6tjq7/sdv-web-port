@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer-core');
 
 (async () => {
   const browser = await puppeteer.launch({
-    executablePath: '/home/z/.agent-browser/browsers/chrome-150.0.7871.124/chrome',
+    executablePath: '/home/z/.agent-browser/browsers/chrome-150.0.7871.49/chrome',
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
   });
