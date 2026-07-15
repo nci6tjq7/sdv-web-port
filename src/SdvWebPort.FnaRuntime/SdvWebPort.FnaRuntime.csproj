@@ -62,7 +62,6 @@
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
-    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\mojoshader_exports.o" />
   </ItemGroup>
 
 </Project>

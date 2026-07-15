@@ -127,11 +127,22 @@ jobs:
         with:
           version: '3.1.56'
 
-      - name: Compile MojoShader export stub
+      - name: Compile MojoShader export stub and merge into FNA3D.a
         run: |
           cd src/SdvWebPort.FnaRuntime/native
           emcc -c mojoshader_exports.c -o mojoshader_exports.o -O2
-          ls -la mojoshader_exports.o
+          # Extract all FNA3D object files, add our stub, re-archive.
+          # This forces the linker to include ALL FNA3D symbols because
+          # mojoshader_exports.o (which references them) is in the same archive.
+          mkdir fna3d_extract
+          cd fna3d_extract
+          ar x ../FNA3D.a
+          cp ../mojoshader_exports.o .
+          ar rcs ../FNA3D.a *.o
+          cd ..
+          rm -rf fna3d_extract
+          echo "FNA3D.a now contains mojoshader_exports.o:"
+          ar t FNA3D.a | grep mojoshader
 
       - name: Build WASM runtime
         run: |
