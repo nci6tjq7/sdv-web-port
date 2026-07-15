@@ -59,7 +59,6 @@ jobs:
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
           git submodule update --init --recursive
-            MojoShader/mojoshader_sdlgpu.c
           mkdir emscripten-build && cd emscripten-build
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
