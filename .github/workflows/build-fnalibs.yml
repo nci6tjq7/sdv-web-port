@@ -54,14 +54,12 @@ jobs:
           cp libSDL3.a /tmp/SDL3.a
           echo "SDL3_PREFIX=$(pwd)/prefix" >> $GITHUB_ENV
 
-      - name: Build FNA3D
+      - name: Build FNA3D with MojoShader
         run: |
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
           git submodule update --init --recursive
-          # Fix SpirvPatchTable undeclared error in mojoshader_sdlgpu.c
-          # The file references SpirvPatchTable unconditionally but it's only
-          # defined when SPIRV profile is enabled. Add a dummy typedef.
+          # Fix SpirvPatchTable undeclared error
           sed -i '1i typedef struct { char _dummy[1]; } SpirvPatchTable;' \
             MojoShader/mojoshader_sdlgpu.c
           mkdir emscripten-build && cd emscripten-build
@@ -72,6 +70,15 @@ jobs:
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
             -GNinja
           ninja
+          # FNA3D.a only contains FNA3D's own .o files.
+          # MojoShader is built as a separate target (CMakeFiles/mojoshader.dir/).
+          # Merge all mojoshader .o files into FNA3D.a.
+          echo "=== Merging MojoShader objects into FNA3D.a ==="
+          find CMakeFiles/mojoshader.dir -name "*.o" -exec ar rcs libFNA3D.a {} +
+          echo "=== FNA3D.a contents (MojoShader) ==="
+          ar t libFNA3D.a | grep mojoshader | head -10
+          echo "=== Checking for MOJOSHADER_sdlGetShaderFormats ==="
+          nm libFNA3D.a | grep "MOJOSHADER_sdlGetShaderFormats" | head -3
           cp libFNA3D.a /tmp/FNA3D.a
 
       - name: Build FAudio
