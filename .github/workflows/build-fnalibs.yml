@@ -72,13 +72,16 @@ jobs:
           ninja
           # FNA3D.a only contains FNA3D's own .o files.
           # MojoShader is built as a separate target (CMakeFiles/mojoshader.dir/).
-          # Merge all mojoshader .o files into FNA3D.a.
+          # Merge ALL mojoshader .o files into FNA3D.a using a for loop.
           echo "=== Merging MojoShader objects into FNA3D.a ==="
-          find CMakeFiles/mojoshader.dir -name "*.o" -exec ar rcs libFNA3D.a {} +
+          for f in $(find CMakeFiles/mojoshader.dir -name "*.o" | sort); do
+            echo "  Adding: $f"
+            ar rcs libFNA3D.a "$f"
+          done
           echo "=== FNA3D.a contents (MojoShader) ==="
-          ar t libFNA3D.a | grep mojoshader | head -10
+          ar t libFNA3D.a | grep mojoshader
           echo "=== Checking for MOJOSHADER_sdlGetShaderFormats ==="
-          nm libFNA3D.a | grep "MOJOSHADER_sdlGetShaderFormats" | head -3
+          $EMSDK/upstream/bin/llvm-nm libFNA3D.a 2>/dev/null | grep "MOJOSHADER_sdlGetShaderFormats" | head -3
           cp libFNA3D.a /tmp/FNA3D.a
 
       - name: Build FAudio
