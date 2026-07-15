@@ -13,7 +13,7 @@ permissions:
 env:
   EMSDK_VERSION: 3.1.56
   SDL_VERSION: release-3.4.4
-  FNA3D_VERSION: 26.04
+  FNA3D_VERSION: 26.07
   FAUDIO_VERSION: 26.04
 
 jobs:

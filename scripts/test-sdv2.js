@@ -1,43 +1,39 @@
 const puppeteer = require('puppeteer-core');
+const CHROME = '/home/z/.agent-browser/browsers/chrome-150.0.7871.115/chrome';
 
 (async () => {
   const browser = await puppeteer.launch({
-    executablePath: '/home/z/.agent-browser/browsers/chrome-150.0.7871.124/chrome',
+    executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-application-cache', '--disable-cache']
   });
   const page = await browser.newPage();
+  
+  // Disable cache
+  const client = await page.target().createCDPSession();
+  await client.send('Network.setCacheDisabled', { cacheDisabled: true });
   
   const logs = [];
   page.on('console', msg => logs.push(`[console.${msg.type()}] ${msg.text()}`));
   page.on('pageerror', err => logs.push(`[pageerror] ${err.message}`));
   
-  // First load + 2 reloads to activate SW
-  await page.goto('https://nci6tjq7.github.io/sdv-web-port/', { waitUntil: 'networkidle2', timeout: 30000 });
-  await new Promise(r => setTimeout(r, 2000));
-  await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
-  await new Promise(r => setTimeout(r, 2000));
-  await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+  // Use cache-busting query param
+  console.log('Loading page with cache disabled...');
+  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?t=' + Date.now(), { waitUntil: 'networkidle2', timeout: 30000 });
   
-  // Wait longer for .NET to boot
-  console.log('Waiting 15s for .NET runtime to boot...');
+  console.log('Waiting 15s for runtime...');
   await new Promise(r => setTimeout(r, 15000));
   
-  console.log('\n=== All Console Logs ===');
+  console.log('\n=== Console Logs ===');
   for (const log of logs) console.log(log);
   
-  // Check if there's a dotnet runtime error
-  const dotnetState = await page.evaluate(() => {
-    return {
-      crossOriginIsolated: window.crossOriginIsolated,
-      // Check if Mono runtime is loaded
-      monoLoaded: typeof globalThis.Module !== 'undefined' || typeof globalThis.mono !== 'undefined',
-      // Check for any global .NET objects
-      dotnetKeys: Object.keys(globalThis).filter(k => k.toLowerCase().includes('dotnet') || k.toLowerCase().includes('mono')).slice(0, 10)
-    };
-  });
-  console.log('\n=== .NET Runtime State ===');
-  console.log(JSON.stringify(dotnetState, null, 2));
+  const env = await page.evaluate(() => ({
+    title: document.title,
+    status: document.getElementById('status')?.textContent || '(none)',
+    errorLog: document.getElementById('error-log')?.textContent || '(none)'
+  }));
+  console.log('\n=== Page State ===');
+  console.log(JSON.stringify(env, null, 2));
   
   await browser.close();
 })();
