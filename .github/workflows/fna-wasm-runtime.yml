@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/SdvWebPort.FnaRuntime/**'
       - '.github/workflows/fna-wasm-runtime.yml'
+      - 'global.json'
 
 permissions:
   contents: read
@@ -33,23 +34,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p download/sdv-fna-build
-          # Find the latest successful FNA WASM Build run
           API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/fna-wasm-build.yml/runs?status=completed&conclusion=success&per_page=1"
-          echo "Fetching latest successful FNA WASM Build run..."
           RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
-          echo "API response (first 500 chars): ${RUN_DATA:0:500}"
-          RUN_ID=$(echo "$RUN_DATA" | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          runs = d.get('workflow_runs', [])
-          if not runs:
-              print('ERROR: no runs found', file=sys.stderr)
-              sys.exit(1)
-          print(runs[0]['id'])
-          ")
+          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; d=json.load(sys.stdin); runs = d.get('workflow_runs', []); print(runs[0]['id'] if runs else '')")
           echo "Found run ID: ${RUN_ID}"
-
-          # Get artifact ID
           ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
           ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
@@ -60,19 +48,12 @@ jobs:
                   print(a['id']); break
           ")
           echo "Artifact ID: ${ARTIFACT_ID}"
-
-          # Download via API - the endpoint returns a redirect to blob storage.
-          # We must NOT send the Authorization header to the redirect target.
-          # Use -L to follow redirects, but strip auth on redirect.
-          curl -sL -H "Authorization: token ${GH_TOKEN}" \
-               -H "Accept: application/vnd.github+json" \
-               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
-               -o download/sdv-fna-build.zip
-          echo "Downloaded file type:"
+          REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /dev/null -w '%{redirect_url}' \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
+          curl -sL "$REDIRECT" -o download/sdv-fna-build.zip
           file download/sdv-fna-build.zip
-          # If it's JSON (error), show it and fail
           if file download/sdv-fna-build.zip | grep -q "JSON\|text"; then
-            echo "ERROR: Downloaded file is not a zip. Content:"
+            echo "ERROR: Downloaded file is not a zip."
             cat download/sdv-fna-build.zip
             exit 1
           fi
@@ -92,12 +73,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p download/fnalibs
-          # Find the latest successful fnalibs build run
           API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-fnalibs.yml/runs?status=completed&conclusion=success&per_page=1"
           RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
           RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
           echo "fnalibs build run ID: ${RUN_ID}"
-
           ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
           ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
@@ -108,7 +87,6 @@ jobs:
                   print(a['id']); break
           ")
           echo "Artifact ID: ${ARTIFACT_ID}"
-
           REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /dev/null -w '%{redirect_url}' \
             "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
           curl -sL "$REDIRECT" -o download/fnalibs.zip
@@ -121,6 +99,16 @@ jobs:
           mkdir -p src/SdvWebPort.FnaRuntime/native
           cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
+
+      - name: Create wasm-ld wrapper to remove --import-undefined
+        run: |
+          WASM_LD=$(find /usr/share/dotnet/packs/Microsoft.NET.Runtime.Emscripten* -name wasm-ld -type f | head -1)
+          echo "Real wasm-ld: $WASM_LD"
+          cp "$WASM_LD" "${WASM_LD}.real"
+          printf '#!/bin/bash\nARGS=""\nfor arg in "$@"; do\n  if [ "$arg" != "--import-undefined" ]; then\n    ARGS="$ARGS $arg"\n  fi\ndone\nexec "%s.real" $ARGS\n' "$WASM_LD" > "$WASM_LD"
+          chmod +x "$WASM_LD"
+          echo "Wrapper installed (removes --import-undefined):"
+          cat "$WASM_LD"
 
       - name: Build WASM runtime
         run: |
