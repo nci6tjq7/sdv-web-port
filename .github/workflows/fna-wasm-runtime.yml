@@ -144,16 +144,6 @@ jobs:
           echo "FNA3D.a now contains mojoshader_exports.o:"
           ar t FNA3D.a | grep mojoshader
 
-      - name: Create wasm-ld wrapper to inject export flags
-        run: |
-          WASM_LD=$(find /usr/share/dotnet/packs/Microsoft.NET.Runtime.Emscripten* -name wasm-ld -type f | head -1)
-          echo "Real wasm-ld: $WASM_LD"
-          cp "$WASM_LD" "${WASM_LD}.real"
-          printf '#!/bin/bash\nexec "%s.real" "$@" --export=MOJOSHADER_sdlGetShaderFormats --export=MOJOSHADER_sdlCompileShader --export=MOJOSHADER_sdlGetShaderProfile --export=MOJOSHADER_sdlDestroyShader --export=MOJOSHADER_sdlBindShaders --export=MOJOSHADER_sdlGetBoundShaderProgram --export=MOJOSHADER_sdlBindProgram --export=MOJOSHADER_sdlMapUniformBuffer --export=MOJOSHADER_sdlUnmapUniformBuffer --export=MOJOSHADER_sdlGetUniformData --export=MOJOSHADER_sdlGetVertexData --export=MOJOSHADER_sdlGetPixelData --export=MOJOSHADER_sdlDestroyEffect --export=MOJOSHADER_sdlCreateEffect --export=MOJOSHADER_sdlCreateEffectRaw --export=MOJOSHADER_sdlEffectBeginPass --export=MOJOSHADER_sdlEffectEndPass --export=MOJOSHADER_sdlEffectCommitChanges --export=MOJOSHADER_sdlEffectEnd --export=MOJOSHADER_sdlEffectSetTechnique --export=MOJOSHADER_sdlEffectGetCurrentTechnique --export=MOJOSHADER_sdlEffectGetTechnique --export=MOJOSHADER_sdlEffectGetTechniqueName --export=MOJOSHADER_sdlEffectGetNumTechniques --export=MOJOSHADER_sdlEffectGetNumPasses --export=MOJOSHADER_sdlEffectGetPassName --export=MOJOSHADER_sdlGetAttribMappings --export=MOJOSHADER_sdlGetUniformMappings --export=MOJOSHADER_sdlShaderBinaryToSPIRV\n' "$WASM_LD" > "$WASM_LD"
-          chmod +x "$WASM_LD"
-          echo "Wrapper installed. Contents:"
-          cat "$WASM_LD"
-
       - name: Build WASM runtime
         run: |
           cd src/SdvWebPort.FnaRuntime
