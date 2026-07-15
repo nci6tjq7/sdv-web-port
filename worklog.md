@@ -1619,3 +1619,44 @@ Next Steps:
 - Need to find undocumented SDK property or mechanism to export symbols
 - Or: recompile FNA3D C# to use a different P/Invoke approach
 - Or: use a different FNA3D driver that doesn't need MojoShader
+
+---
+Task ID: phase6-signature-mismatch-deep-analysis
+Agent: main
+Task: Fix "function signature mismatch" in WASM runtime
+
+Work Log:
+- Fixed root cause #1: FNA3D.a didn't contain MojoShader .o files
+  → Fixed by merging CMakeFiles/mojoshader.dir/*.o into FNA3D.a
+  → MOJOSHADER_sdlGetShaderFormats error GONE!
+  
+- Fixed root cause #2: FNA3D version mismatch (26.04 vs 26.07)
+  → FNA's submodule uses FNA3D 26.07 but we built 26.04
+  → Changed FNA3D_VERSION to 26.07
+  → Removed SpirvPatchTable dummy typedef (26.07 has it built-in)
+
+- Remaining issue: "function signature mismatch" after SDL_GPU fallback
+  → Happens in FNA3D's OpenGL driver initialization
+  → NOT caused by --import-undefined (wrapper removes it, no undefined symbols)
+  → NOT caused by version mismatch (FNA3D 26.07 matches FNA's submodule)
+  → Root cause: .NET 9 WASM P/Invoke stub signature mismatch
+    - The .NET runtime generates indirect call table entries based on
+      C# DllImport signatures
+    - If the DllImport signature doesn't exactly match the C function
+      signature (parameter types, count, return type), WASM throws
+      "function signature mismatch"
+    - This is a fundamental .NET 9 WASM limitation
+
+Stage Summary:
+- .NET runtime boots ✅
+- C# Program.Main executes ✅
+- JS interop works ✅
+- SDV boots past .NET init ✅
+- FNA3D initializes (SDL_GPU check fails, falls back to OpenGL) ✅
+- OpenGL driver init fails with "function signature mismatch" ❌
+
+Next Steps:
+- Need to identify which specific P/Invoke has the mismatch
+- May need to modify FNA.cs DllImport declarations to match C signatures
+- Or use a different approach: register native callbacks via
+  NativeLibrary.SetDllImportResolver instead of DllImport
