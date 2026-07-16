@@ -88,20 +88,28 @@ jobs:
           cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
           dotnet restore 2>/dev/null || true
 
-          # 3. COMPLETELY replace ALL files in runtimes/browser-wasm/
-          # This includes .a files (patched mono), .c source, .h headers, .rsp files, .js files
-          # Everything must come from the patched runtime for ABI consistency.
-          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm" -type d 2>/dev/null | while read dir; do
-            echo "FULLY replacing: $dir"
+          # 3. Replace native/ and lib/ directories (NOT build/ which has manifest)
+          # The patched runtime has native/ and lib/ but not build/.
+          # Keep build/ from stock runtime for RuntimeComponentManifest.json.
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
+            echo "Replacing native: $dir"
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+          done
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
+            echo "Replacing lib: $dir"
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
           done
 
           # 4. Also replace SDK pack runtime
-          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm" -type d 2>/dev/null | while read dir; do
-            echo "FULLY replacing SDK: $dir"
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+          done
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
           done
 
           echo "=== Verify patched libmonosgen ==="
