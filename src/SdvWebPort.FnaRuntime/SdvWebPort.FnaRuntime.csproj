@@ -67,18 +67,6 @@
     <Reference Include="TextCopy">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\TextCopy.dll</HintPath>
     </Reference>
-    <!-- GalaxyCSharp and Steamworks.NET: needed because SDV's LocalMultiplayer.GetStaticFieldsAndDefaults()
-         uses reflection to scan ALL types in ALL loaded assemblies. Without these DLLs, it throws
-         ReflectionTypeLoadException. The P/Invokes inside won't actually work (native libs not included),
-         but the types need to exist for the reflection scan to succeed. -->
-    <Reference Include="GalaxyCSharp">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\GalaxyCSharp.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-    <Reference Include="Steamworks.NET">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\Steamworks.NET.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
     <Reference Include="System.Data.HashFunction.Interfaces">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\System.Data.HashFunction.Interfaces.dll</HintPath>
     </Reference>
