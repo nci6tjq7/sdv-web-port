@@ -197,37 +197,48 @@ jobs:
           assert files, 'No dotnet.native.*.js found!'
           for f in files:
               with open(f, 'r') as fh: content = fh.read()
-              # Inject offscreen canvas transfer logic right after the offscreenCanvases declaration
-              inject = ('offscreenCanvases:{},'
-                        'if(globalThis.window&&!window.TRANSFERRED_CANVAS){'
-                        'window.TRANSFERRED_CANVAS=true;'
-                        'var _canvases=document.getElementsByClassName("canvas");'
-                        'for(var _i=0;_i<_canvases.length;_i++){'
-                        'var _c=_canvases[_i];'
-                        'try{var _off=_c.transferControlToOffscreen();'
-                        'GL.offscreenCanvases[_c.id||"canvas"]=_off;}catch(e){console.warn("canvas transfer failed:",e);}'
-                        '}'
-                        '}')
               if 'TRANSFERRED_CANVAS' in content:
                   print(f'  [SKIP] {f}: already patched')
                   continue
-              # Try multiple patterns
-              patterns = [
-                  r'offscreenCanvases\s*:\s*\{\s*\},',  # object property: offscreenCanvases: {},
-                  r'offscreenCanvases\s*=\s*\{\s*\};',  # var assignment: offscreenCanvases = {};
-                  r'var\s+offscreenCanvases\s*=\s*\{\s*\};',
-              ]
-              patched = False
-              for pat in patterns:
-                  new_content, n = re.subn(pat, inject, content, count=1)
-                  if n > 0:
-                      print(f'  [OK] {f}: matched pattern {pat!r}, replaced {n} occurrence(s)')
-                      content = new_content
-                      patched = True
-                      break
-              if not patched:
-                  print(f'  [WARN] {f}: no pattern matched, leaving unmodified')
-                  continue
+              # The offscreenCanvases property lives INSIDE a GL={} object literal.
+              # We can't inject statements there. Instead, we add a self-executing
+              # function expression AT THE END of the file that populates
+              # GL.offscreenCanvases by transferring the canvas.
+              #
+              # The function runs on the DOM thread (where document exists) before
+              # any worker is spawned. The transferred canvas is then accessible
+              # via GL.offscreenCanvases['canvas'] in the worker.
+              inject = """
+;(function(){
+  if(typeof globalThis==='undefined'||!globalThis.window)return;
+  if(window.TRANSFERRED_CANVAS)return;
+  window.TRANSFERRED_CANVAS=true;
+  function transferCanvases(){
+    if(typeof GL==='undefined'||!GL)return false;
+    var canvases=document.getElementsByClassName('canvas');
+    for(var i=0;i<canvases.length;i++){
+      var c=canvases[i];
+      try{
+        var off=c.transferControlToOffscreen();
+        GL.offscreenCanvases[c.id||'canvas']=off;
+        console.log('[canvas-patch] Transferred canvas "'+(c.id||'canvas')+'" to offscreen');
+      }catch(e){
+        console.warn('[canvas-patch] Failed to transfer canvas "'+c.id+'":',e);
+      }
+    }
+    return canvases.length>0;
+  }
+  // Try immediately (in case GL is already defined)
+  if(!transferCanvases()){
+    // GL not ready yet — retry on next tick (after Module is set up)
+    setTimeout(transferCanvases,0);
+    setTimeout(transferCanvases,100);
+    setTimeout(transferCanvases,500);
+  }
+})();
+"""
+              content = content + inject
+              print(f'  [OK] {f}: appended canvas transfer patch ({len(inject)} bytes)')
               with open(f, 'w') as fh: fh.write(content)
           PYEOF
           echo "=== Verify patch applied ==="
