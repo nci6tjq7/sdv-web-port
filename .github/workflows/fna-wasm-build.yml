@@ -39,6 +39,26 @@ jobs:
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
           cd /tmp/FNA && git submodule update --init --recursive
 
+      - name: Patch SDL3-CS DllImports for WASM (fix function signature mismatch)
+        run: |
+          # .NET WASM P/Invoke has a bug (dotnet/runtime#112262) where functions
+          # with i64 (long/ulong) parameters cause "function signature mismatch"
+          # because the pinvoke stub generator creates wrong WASM type signatures.
+          # SDL3 changed many functions to use Uint64 (e.g., SDL_GetTicks).
+          # Fix: replace ulong/long with uint/int in SDL3-CS DllImport declarations.
+          # WASM is 32-bit so Uint64 values are truncated (acceptable for timers).
+          find /tmp/FNA/lib/SDL3-CS -name "*.cs" -exec sed -i \
+            -e 's/public static extern ulong/public static extern uint/g' \
+            -e 's/public static extern long/public static extern int/g' \
+            -e 's/extern ulong/extern uint/g' \
+            -e 's/extern long/extern int/g' \
+            -e 's/static extern ulong/static extern uint/g' \
+            -e 's/static extern long/static extern int/g' \
+            {} +
+          echo "Patched SDL3-CS DllImports"
+          # Also check FNA's own source for ulong/long DllImports
+          find /tmp/FNA/src -name "*.cs" -exec grep -l "extern.*ulong\|extern.*long " {} \; 2>/dev/null | head -5
+
       - name: Build FNA
         run: dotnet build /tmp/FNA/FNA.Core.csproj -c Release
 
