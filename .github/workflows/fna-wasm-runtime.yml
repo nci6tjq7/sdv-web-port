@@ -125,6 +125,20 @@ jobs:
           cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
 
+      - name: Build strip-pinvokes tool and stub GalaxyCSharp/Steamworks.NET
+        run: |
+          # SDV's LocalMultiplayer.GetStaticFieldsAndDefaults() uses reflection to scan
+          # ALL types in ALL loaded assemblies. Without GalaxyCSharp/Steamworks.NET,
+          # it throws ReflectionTypeLoadException.
+          # But the original DLLs have [MonoPInvokeCallback] methods with non-blittable
+          # enum parameters (e.g. Galaxy.Api.IError+Type) which cause WASM build to fail.
+          # Fix: use Mono.Cecil to strip all P/Invoke info, keeping type definitions.
+          dotnet build scripts/strip-pinvokes/strip-pinvokes.csproj -c Release -o /tmp/strip-pinvokes
+          cd "download/sdv-fna-build/sdv-extract/Stardew Valley"
+          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll GalaxyCSharp.dll GalaxyCSharp.stub.dll
+          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll Steamworks.NET.dll Steamworks.NET.stub.dll
+          ls -la GalaxyCSharp.stub.dll Steamworks.NET.stub.dll
+
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime

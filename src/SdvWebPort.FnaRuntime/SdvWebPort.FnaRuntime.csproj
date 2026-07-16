@@ -67,6 +67,21 @@
     <Reference Include="TextCopy">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\TextCopy.dll</HintPath>
     </Reference>
+    <!-- GalaxyCSharp and Steamworks.NET: needed because SDV's LocalMultiplayer.GetStaticFieldsAndDefaults()
+         uses reflection to scan ALL types in ALL loaded assemblies. Without these DLLs, it throws
+         ReflectionTypeLoadException. The original DLLs have [MonoPInvokeCallback] methods with non-blittable
+         enum parameters (e.g. Galaxy.Api.IError+Type) which cause WASM build to fail with
+         'Parameter types of pinvoke callback method needs to be blittable'.
+         Fix: workflow runs scripts/strip-pinvokes to create stub versions with no P/Invoke info,
+         keeping all type definitions for the reflection scan. -->
+    <Reference Include="GalaxyCSharp">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\GalaxyCSharp.stub.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Steamworks.NET">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\Steamworks.NET.stub.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <Reference Include="System.Data.HashFunction.Interfaces">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\System.Data.HashFunction.Interfaces.dll</HintPath>
     </Reference>
