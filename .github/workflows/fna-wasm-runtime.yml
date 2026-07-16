@@ -91,7 +91,9 @@ jobs:
           
           # 2. Restore NuGet packages FIRST so we can patch them
           cd src/SdvWebPort.FnaRuntime
-          dotnet restore
+          dotnet restore --runtime browser-wasm 2>/dev/null || true
+          # Also force-restore the runtime NuGet package
+          dotnet restore 2>/dev/null || true
           
           # 3. Replace the NuGet runtime package's runtimes/browser-wasm/
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
