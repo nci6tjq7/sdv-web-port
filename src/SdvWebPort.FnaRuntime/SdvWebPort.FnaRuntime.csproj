@@ -12,7 +12,6 @@
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <WasmEnableThreads>false</WasmEnableThreads>
   </PropertyGroup>
 
   <ItemGroup>
