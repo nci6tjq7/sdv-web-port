@@ -125,11 +125,11 @@ jobs:
           cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
 
-      - name: Build WASM runtime
+      - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime
           rm -rf bin obj
-          dotnet publish -c Release -o /tmp/wasm-publish --no-cache
+          dotnet publish -c Release -o /tmp/wasm-publish --no-restore
           ls -la /tmp/wasm-publish/
           ls -la /tmp/wasm-publish/wwwroot/ | head -20
           echo "=== WASM bundle size ==="
