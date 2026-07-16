@@ -12,7 +12,7 @@
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmEnableThreads>false</WasmEnableThreads>
   </PropertyGroup>
 
   <ItemGroup>
@@ -61,7 +61,6 @@
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
-    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a" />
   </ItemGroup>
 
 </Project>
