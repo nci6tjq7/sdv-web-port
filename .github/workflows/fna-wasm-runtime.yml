@@ -133,11 +133,18 @@ jobs:
           # But the original DLLs have [MonoPInvokeCallback] methods with non-blittable
           # enum parameters (e.g. Galaxy.Api.IError+Type) which cause WASM build to fail.
           # Fix: use Mono.Cecil to strip all P/Invoke info, keeping type definitions.
+          #
+          # CRITICAL: output filename MUST match original (GalaxyCSharp.dll, not .stub.dll).
+          # The .NET WASM SDK uses filename (without extension) as the logical assembly name.
+          # SDV's reflection scan looks for assembly named "GalaxyCSharp" — the [AssemblyName]
+          # attribute inside is preserved by Mono.Cecil, but the SDK uses the filename.
           dotnet build scripts/strip-pinvokes/strip-pinvokes.csproj -c Release -o /tmp/strip-pinvokes
           cd "download/sdv-fna-build/sdv-extract/Stardew Valley"
-          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll GalaxyCSharp.dll GalaxyCSharp.stub.dll
-          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll Steamworks.NET.dll Steamworks.NET.stub.dll
-          ls -la GalaxyCSharp.stub.dll Steamworks.NET.stub.dll
+          cp GalaxyCSharp.dll GalaxyCSharp.orig.dll
+          cp Steamworks.NET.dll Steamworks.NET.orig.dll
+          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll GalaxyCSharp.orig.dll GalaxyCSharp.dll
+          dotnet /tmp/strip-pinvokes/strip-pinvokes.dll Steamworks.NET.orig.dll Steamworks.NET.dll
+          ls -la GalaxyCSharp.dll Steamworks.NET.dll
 
       - name: Build WASM runtime (no restore - use patched packages)
         run: |

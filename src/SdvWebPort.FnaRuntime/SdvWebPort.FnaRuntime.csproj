@@ -73,13 +73,15 @@
          enum parameters (e.g. Galaxy.Api.IError+Type) which cause WASM build to fail with
          'Parameter types of pinvoke callback method needs to be blittable'.
          Fix: workflow runs scripts/strip-pinvokes to create stub versions with no P/Invoke info,
-         keeping all type definitions for the reflection scan. -->
+         keeping all type definitions for the reflection scan.
+         CRITICAL: stub overwrites the original filename (GalaxyCSharp.dll) because the .NET WASM SDK
+         uses filename (without extension) as the logical assembly name. -->
     <Reference Include="GalaxyCSharp">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\GalaxyCSharp.stub.dll</HintPath>
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\GalaxyCSharp.dll</HintPath>
       <Private>true</Private>
     </Reference>
     <Reference Include="Steamworks.NET">
-      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\Steamworks.NET.stub.dll</HintPath>
+      <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-extract\Stardew Valley\Steamworks.NET.dll</HintPath>
       <Private>true</Private>
     </Reference>
     <Reference Include="System.Data.HashFunction.Interfaces">
