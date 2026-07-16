@@ -1660,3 +1660,138 @@ Next Steps:
 - May need to modify FNA.cs DllImport declarations to match C signatures
 - Or use a different approach: register native callbacks via
   NativeLibrary.SetDllImportResolver instead of DllImport
+
+---
+Task ID: research-1
+Agent: general-purpose-subagent
+Task: Research PInvoke "function signature mismatch" solutions for .NET 10 WASM + FNA3D
+
+Work Log:
+- Read prior worklog entry `phase6-signature-mismatch-deep-analysis` (line 1624) for context.
+- Fetched dotnet/runtime issue #112262 via GitHub REST API.
+  - State: OPEN. Milestone: 11.0.0 (moved from 10.0.0 on 2025-08-05 by lewing).
+  - Re-assigned to pavelsavara on 2026-07-15 (active triage starting, no fix PR yet).
+  - Maintainer (kg) confirmed workaround: cast C# enums with ulong/long underlying type
+    to ulong/long directly in the DllImport signature.
+  - Searched PRs referencing #112262: 0 results. No fix PR exists.
+- Verified .NET 10 Wasm64 support by downloading both
+  `microsoft.net.runtime.webassembly.sdk` 10.0.10 and 11.0.0-preview.6 nupkgs
+  and grepping every Sdk/*.targets and Sdk/*.props:
+  - Both hardcode `<TargetArchitecture>wasm</TargetArchitecture>` and
+    `<RuntimeIdentifier>browser-wasm</RuntimeIdentifier>`.
+  - NO matches for `wasm64`, `memory64`, `WasmArch`, or `browser-wasm64`.
+  - Conclusion: Wasm64 is NOT in any released SDK. Internal CoreCLR wasm64
+    port exists per issue #130285, but is not shipped. Active foundational
+    work in Wasm-RyuJIT PR series (#121341, #121563, #123515, etc.) and
+    #121221 "treat 4GB ptrs as unsigned" merged 2025-11-26.
+- Enumerated r58Playz's dotnet-runtime fork (`wasm-10.0.3` branch). 22 commits
+  authored by r58Playz. Only ONE touches PInvokeTableGenerator.cs:
+  - Commit 0865e8c8 "mono/aot: optimize native to managed transitions" —
+    adds WASM_N2M_AOT_DIRECT_ARG sentinel for MonoPInvokeCallback fast path.
+    This is a performance optimization, NOT a signature-mismatch fix.
+  - Other patches are all MonoMod/SRE/AOT/jiterpreter stability work.
+- Confirmed MercuryWorkshop/celeste-wasm (threads-v2) and terraria-wasm both
+  run FNA3D OpenGL successfully on .NET 9 with r58Playz's runtime. Their
+  FNA.patch does NOT modify any FNA3D DllImport signatures — only SDL3
+  symbol renames and minor FNA C# patches. So the signature mismatch we
+  see on .NET 10 is configuration-specific, not inherent to FNA3D.
+- Inspected `src/tasks/WasmAppBuilder/mono/SignatureMapper.cs` and
+  `PInvokeTableGenerator.cs` from dotnet/runtime main branch:
+  - IntPtr/UIntPtr → 'I' (i32); long/ulong → 'L' (i64).
+  - Multi-field blittable structs → 'I' (i32) regardless of size —
+    KNOWN BUG for structs > 4 bytes. FIXME comment confirms wasm32-only.
+  - The .NET 11 coreclr version uses 'S<N>' struct tokens and a
+    s_knownStructSizes dictionary (still incomplete but better).
+- Confirmed no MSBuild property disables PInvoke table generation:
+  - `_GenerateManagedToNative` target in WasmApp.Common.targets line ~762
+    has NO Condition. Always runs.
+  - `WasmGeneratePInvokeTable=false` (user previously tried) is silently
+    ignored — no such property is consulted.
+  - `%(NativeFileReference.ScanForPInvokes)='false'` only excludes a native
+    lib's entry points from being scanned; doesn't skip table generation
+    for C# DllImports.
+- Confirmed `WasmAppBuilderTasksAssemblyPath` MSBuild property
+  (defined in Sdk/Sdk.targets line 7) is the supported way to inject a
+  patched WasmAppBuilder.dll — exactly what r58Playz's build-dotnet.sh does.
+- Confirmed `NativeLibrary.SetDllImportResolver` does NOT bypass the table
+  (it only resolves which library to load, not the WASM indirect-call
+  signature computed at build time).
+- Wrote deliverable: `/home/z/my-project/download/research-pinvoke-solutions.md`
+  (~10KB). Contains: issue status, wasm64 viability analysis with exact
+  MSBuild property syntax (and why it doesn't work today), r58Playz patch
+  inventory + consumer wiring, alternative-approach analysis, PInvokeTableGenerator
+  internals with file paths and the smoking-gun FIXME comment, top 3
+  recommended directions with concrete steps and code snippets.
+
+Stage Summary:
+- dotnet/runtime#112262 is OPEN, milestone .NET 11, no fix PR.
+- Wasm64 not viable today (no SDK support).
+- r58Playz's runtime works for Celeste/Terraria on .NET 9, but their
+  patches do NOT fix signature mismatch — they fix MonoMod. So using
+  their runtime is NOT guaranteed to fix our .NET 10 issue.
+- Best path forward: trace the exact mismatched pinvoke via pinvoke-table.h
+  + wasm-objdump on FNA3D.a, then fix the specific C# binding OR patch
+  SignatureMapper.cs and rebuild only WasmAppBuilder.dll.
+
+Next Steps (for implementer):
+- (Direction A) Set WasmNativeDebugSymbols=true; locate obj/**/pinvoke-table.h;
+  cross-reference each `extern` declaration against FNA3D.a function signatures
+  via wasm-objdump. Identify the first mismatch.
+- If the mismatch is a C# binding bug (long vs int), fix it in FNA3D.cs (1-line change).
+- If the mismatch is a SignatureMapper struct-size bug, clone dotnet/runtime
+  release/10.0, patch mono/SignatureMapper.cs to handle multi-field struct
+  sizes per BasicCABI.md, rebuild src/tasks/WasmAppBuilder/WasmAppBuilder.csproj,
+  override WasmAppBuilderTasksAssemblyPath in Directory.Build.targets.
+- Reference MercuryWorkshop/celeste-wasm (threads-v2 branch) Directory.Build.targets
+  for the exact MSBuild wiring pattern (proven to work for FNA3D OpenGL).
+
+Files:
+- /home/z/my-project/download/research-pinvoke-solutions.md (new)
+
+Concerns flagged:
+- The user's hypothesis that "IntPtr/long/ulong treated as i64 but WASM 32-bit
+  requires i32" is INCORRECT per SignatureMapper.cs — IntPtr is actually 'I' (i32)
+  and long/ulong are 'L' (i64). The actual mismatch cause is most likely
+  (a) a C# DllImport using `long` where C uses `int`/`size_t` (i32 on wasm32),
+  or (b) a multi-field struct passed by value where mono SignatureMapper
+  incorrectly emits 'I' (i32) for a struct that the WASM C-ABI passes as i64.
+  Direction A will identify which.
+- r58Playz's `dotnet.zip` is based on .NET 10.0.3, missing 7 months of
+  security/bug fixes from 10.0.4-10.0.10. Using it long-term is a maintenance
+  risk. Prefer Direction A (targeted binding fix) or Direction C (local
+  WasmAppBuilder.dll patch) over Direction B (fork runtime).
+
+---
+Task ID: research-2
+Agent: research-subagent
+Task: Find mismatched FNA3D P/Invoke signature causing WASM "function signature mismatch"
+
+Work Log:
+- Read worklog.md (phase6-* entries) to understand prior attempts.
+- Cloned FNA3D 26.07 (commit c2d8153) and FNA HEAD (commit 64b7798) for inspection.
+- Found FNA3D.cs is at /tmp/FNA/src/Graphics/FNA3D.cs (1101 lines, 86 DllImports).
+- Found FNA3D.h at /tmp/FNA3D-research/include/FNA3D.h (version 26.07).
+- Verified FNA3D.cs and FNA3D.h have IDENTICAL WASM32 ABI signatures for all 86 DllImports. NO mismatch in FNA3D.cs itself.
+- Inspected FNA3D's OpenGL driver init code (FNA3D_Driver_OpenGL.c lines 5796-6277). The C#→C P/Invoke path during OpenGL init is ONLY FNA3D_PrepareWindowAttributes + FNA3D_CreateDevice — both verified matching.
+- Discovered fna-wasm-build.yml already contains a sed patch (lines 42-58) that converts `extern long/ulong` → `extern int/uint` in SDL3.Legacy.cs to work around .NET WASM PInvokeTableGenerator bug (dotnet/runtime#112262).
+- Verified FNA.Core.csproj line 362 ONLY compiles SDL3.Legacy.cs (NOT SDL3.Core.cs). The sed patch is hitting the correct file.
+- Found the sed patch is INCOMPLETE: it rewrites return types too, but the C functions (SDL_GetTicks, SDL_GetPerformanceCounter, SDL_GetPerformanceFrequency, SDL_GetCurrentThreadID, SDL_SeekIO, SDL_GetNumberProperty, etc.) still return Uint64/Sint64. This creates NEW return-type mismatches: patched C# stub expects `() -> i32` but C function has `() -> i64`.
+- Found FNA3D's glClearDepth/glDepthRange declared with GLdouble (f64) in FNA3D_Driver_OpenGL_glfuncs.h. Emscripten's WebGL-only glClearDepth takes GLfloat (f32). If Emscripten exports glClearDepth with f32 signature, FNA3D's call_indirect (f64)->void against (f32)->void traps. This is a C-level indirect call, NOT a C# P/Invoke.
+- Found FNA3D_CreateEffect uses `byte[] effectCode` (only FNA3D DllImport using array marshalling). Could trip a related PInvokeTableGenerator bug.
+
+Deliverable: /home/z/my-project/download/research-pinvoke-mismatch.md
+- Full table of all 86 FNA3D DllImports with WASM-ABI match status
+- Top 5 most suspicious functions (SDL_GetTicks, SDL_GetPerformanceCounter/Frequency, SDL_SeekIO, FNA3D_CreateEffect, FNA3D_HookLogFunctions)
+- Bonus hypothesis: glClearDepth f64-vs-f32 mismatch (C-level, not C#)
+- Specific recommendations: revert the sed patch for return types; or narrow it; or replace byte[] with IntPtr; or patch FNA3D glfuncs.h
+
+Stage Summary:
+- FNA3D.cs DllImports are NOT the source of the mismatch (all match FNA3D.h)
+- The most likely cause is the sed-patched SDL3 i64-returning functions (SDL_GetTicks etc.) creating NEW return-type mismatches with the unmodified C functions
+- A secondary likely cause is FNA3D's glClearDepth(GLdouble) being called against Emscripten's glClearDepth(GLfloat), causing a C-level indirect-call trap (not a C# P/Invoke)
+- Next step: add Console.WriteLine instrumentation around FNA3D_CreateDevice to determine whether the trap is in the C#→C P/Invoke or in C-level GL indirect calls
+
+Next Steps:
+- Implement hypothesis A: add Console.WriteLine before/after FNA3D_CreateDevice call in GraphicsDevice.cs to pinpoint fault domain
+- If C# P/Invoke: revert the sed patch for return types (rely on r58Playz's patched WasmAppBuilder.dll)
+- If C-level GL: patch FNA3D_Driver_OpenGL_glfuncs.h to remove DoublePrecisionDepth extension, force glClearDepthf/glDepthRangef

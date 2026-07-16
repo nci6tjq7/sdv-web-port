@@ -39,25 +39,25 @@ jobs:
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
           cd /tmp/FNA && git submodule update --init --recursive
 
-      - name: Patch SDL3-CS DllImports for WASM (fix function signature mismatch)
+      - name: Verify SDL3-CS DllImports (do NOT patch — root cause of signature mismatch)
         run: |
-          # .NET WASM P/Invoke has a bug (dotnet/runtime#112262) where functions
-          # with i64 (long/ulong) parameters cause "function signature mismatch"
-          # because the pinvoke stub generator creates wrong WASM type signatures.
-          # SDL3 changed many functions to use Uint64 (e.g., SDL_GetTicks).
-          # Fix: replace ulong/long with uint/int in SDL3-CS DllImport declarations.
-          # WASM is 32-bit so Uint64 values are truncated (acceptable for timers).
-          find /tmp/FNA/lib/SDL3-CS -name "*.cs" -exec sed -i \
-            -e 's/public static extern ulong/public static extern uint/g' \
-            -e 's/public static extern long/public static extern int/g' \
-            -e 's/extern ulong/extern uint/g' \
-            -e 's/extern long/extern int/g' \
-            -e 's/static extern ulong/static extern uint/g' \
-            -e 's/static extern long/static extern int/g' \
-            {} +
-          echo "Patched SDL3-CS DllImports"
-          # Also check FNA's own source for ulong/long DllImports
-          find /tmp/FNA/src -name "*.cs" -exec grep -l "extern.*ulong\|extern.*long " {} \; 2>/dev/null | head -5
+          # PREVIOUS APPROACH (REVERTED): we sed-patched all `extern long/ulong`
+          # to `extern int/uint` thinking it would fix dotnet/runtime#112262.
+          # WRONG: that bug only affects `enum:long/enum:ulong` and multi-field
+          # blittable structs >4 bytes. Plain scalar `long`/`ulong` map to i64
+          # correctly via SignatureMapper.cs. Patching them to int/uint created
+          # a C#/C ABI mismatch (C returns Uint64=i64, C# stub expects i32) →
+          # "function signature mismatch" trap on every call_indirect.
+          # Solution: use r58Playz's patched runtime (handles enums correctly)
+          # and leave SDL3-CS DllImports unmodified.
+          echo "=== SDL3-CS DllImports using long/ulong (must stay unpatched) ==="
+          grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" | head -30
+          echo ""
+          echo "=== Checking for enum:long / enum:ulong (the REAL #112262 trigger) ==="
+          grep -rEn "enum\s+\w+\s*:\s*(long|ulong)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" || echo "None found (good)"
+          echo ""
+          echo "=== FNA source long/ulong DllImports (also must stay unpatched) ==="
+          grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/src --include="*.cs" | head -20
 
       - name: Build FNA
         run: dotnet build /tmp/FNA/FNA.Core.csproj -c Release
