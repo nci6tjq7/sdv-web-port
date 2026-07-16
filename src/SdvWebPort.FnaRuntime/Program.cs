@@ -14,12 +14,14 @@ public static partial class Program
         // .NET WASM doesn't support System.Reflection.Emit (browsers don't allow JIT),
         // but Mono WASM still reports IsDynamicCodeSupported=true. This causes
         // XmlSerializer to try Reflection.Emit and crash with MissingMethodException.
-        // Setting this switch forces XmlSerializer into ReflectionOnly mode.
+        // Setting these switches forces XmlSerializer into ReflectionOnly mode.
         // Must happen before SDV's static constructors run (SerializableDictionary..cctor
         // creates an XmlSerializer in its static init).
         AppContext.SetSwitch("System.Runtime.RuntimeFeature.IsDynamicCodeSupported", false);
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false");
-        Console.WriteLine($"[SdvWebPort.FnaRuntime] IsDynamicCodeSupported = {System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported}");
+        // Also try the direct XmlSerializer reflection-only switch
+        AppContext.SetSwitch("System.Xml.Serialization.XmlSerializer.IsReflectionOnly", true);
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false + IsReflectionOnly=true");
+        Console.WriteLine($"[SdvWebPort.FnaRuntime] RuntimeInformation.IsDynamicCodeSupported = {System.Runtime.InteropServices.RuntimeInformation.IsDynamicCodeSupported}");
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
