@@ -66,7 +66,7 @@ jobs:
           sed -i '/add_definitions(-DFNA3D_DRIVER_SDL)/d' CMakeLists.txt
           sed -i '/FNA3D_Driver_SDL\.c/d' CMakeLists.txt
           sed -i '/mojoshader_sdlgpu\.c/d' CMakeLists.txt
-          sed -i '/FNA3D_DRIVER_SDL/,/SDLGPUDriver/d' src/FNA3D.c
+          sed -i '/#if FNA3D_DRIVER_SDL/{N;N;d;}' src/FNA3D.c
           
           echo "=== Patched CMakeLists.txt (SDL references) ==="
           grep -n "SDL\|sdlgpu" CMakeLists.txt | head -10
