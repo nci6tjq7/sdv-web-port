@@ -1795,3 +1795,60 @@ Next Steps:
 - Implement hypothesis A: add Console.WriteLine before/after FNA3D_CreateDevice call in GraphicsDevice.cs to pinpoint fault domain
 - If C# P/Invoke: revert the sed patch for return types (rely on r58Playz's patched WasmAppBuilder.dll)
 - If C-level GL: patch FNA3D_Driver_OpenGL_glfuncs.h to remove DoublePrecisionDepth extension, force glClearDepthf/glDepthRangef
+
+---
+Task ID: phase7-signature-mismatch-root-cause
+Agent: main
+Task: Find and fix the real root cause of "function signature mismatch" trap
+
+Work Log:
+- Launched 2 parallel research subagents (research-1, research-2):
+  * research-1: investigated dotnet/runtime#112262, .NET 10 Wasm64, r58Playz patches, PInvokeTableGenerator source
+  * research-2: compared FNA3D.cs DllImports to FNA3D.h C declarations to find signature mismatches
+- Key findings:
+  1. dotnet/runtime#112262 is OPEN, milestone moved to .NET 11 (no fix yet)
+  2. The bug specifically affects:
+     - enum:long / enum:ulong underlying types in DllImport
+     - Multi-field blittable structs >4 bytes in DllImport
+     - NOT plain scalar long/ulong (those map to i64 correctly)
+  3. Our PREVIOUS sed patch (rewriting `extern long/ulong → extern int/uint` in SDL3-CS) was WRONG:
+     - It created mismatches: C returns Uint64 (i64) but patched C# stub expects i32
+     - This alone caused "function signature mismatch" on every SDL_GetTicks/SDL_SeekIO call
+  4. The REAL #112262 trigger in SDL3-CS: `enum SDL_WindowFlags : ulong` used in 4 DllImports:
+     - INTERNAL_SDL_CreateWindow(byte*, int, int, SDL_WindowFlags)
+     - SDL_CreatePopupWindow(IntPtr, int, int, int, int, SDL_WindowFlags)
+     - SDL_GetWindowFlags(IntPtr) -> SDL_WindowFlags
+     - INTERNAL_SDL_CreateWindowAndRenderer(byte*, int, int, SDL_WindowFlags, ...)
+     All 4 are called during SDL_CreateWindow in FNA3D_PrepareWindowAttributes,
+     exactly matching the worklog symptom "happens during OpenGL driver init"
+
+Fix applied (2 commits):
+- c04e2f3: reverted the wrong sed patches (removed `extern long/ulong → extern int/uint`)
+- 0848577: added scripts/patch-sdl3-windowflags.py + workflow step
+  * Changes SDL_WindowFlags → ulong in all 4 DllImports
+  * Casts (ulong)flags at call sites for private DllImports
+  * Adds public wrappers for SDL_CreatePopupWindow and SDL_GetWindowFlags
+  * Maintainer's suggested workaround from dotnet/runtime#112262
+
+Verification:
+- Patch script tested locally on /tmp/FNA clone: 4/4 patches apply cleanly
+- Verified no remaining SDL_WindowFlags DllImports after patching
+- c04e2f3 FNA WASM Build succeeded (just the sed revert) — FNA builds without wrong patches
+- 0848577 FNA WASM Build in progress (adds SDL_WindowFlags patch)
+
+Stage Summary:
+- ✅ Found the REAL root cause: enum:ulong in DllImport (not the long/ulong scalars)
+- ✅ Identified why our previous fix made things WORSE (sed patches created i32/i64 mismatch)
+- ✅ Applied maintainer-recommended workaround from dotnet/runtime#112262
+- ✅ FNA builds successfully (c04e2f3 verified)
+- ⏳ Waiting for 0848577 build to verify SDL_WindowFlags patch doesn't break FNA build
+- ⏳ Next: trigger fna-wasm-runtime workflow, then test in browser
+
+Next Steps:
+- Wait for FNA WASM Build (0848577) to complete
+- Trigger fna-wasm-runtime workflow to build WASM bundle
+- Deploy to GitHub Pages
+- Test in browser: should now get past FNA3D_PrepareWindowAttributes
+- If still failing: investigate multi-field structs in DllImports (rare in SDL3-CS)
+- If still failing: investigate C-level glClearDepth signature mismatch (research-2 bonus)
+
