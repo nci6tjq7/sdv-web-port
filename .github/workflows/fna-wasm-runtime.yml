@@ -92,29 +92,30 @@ jobs:
           find . -name "*.dll" -path "*mono*" | head -5
           find . -name "WasmAppBuilder*" | head -5
 
-      - name: Install patched runtime
+      - name: Install patched runtime (WasmAppBuilder + native + managed)
         run: |
-          # The patched dotnet runtime needs to be installed to the SDK's pack location
-          # so that dotnet publish uses it instead of the stock runtime
-          DOTNET_PACKS=$(dirname $(find /usr/share/dotnet/packs -name "BrowserWasmApp.targets" | head -1))
-          echo "SDK packs dir: $DOTNET_PACKS"
+          # 1. Replace WasmAppBuilder.dll (contains patched PInvokeTableGenerator)
+          echo "Installing patched WasmAppBuilder.dll..."
+          find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp download/dotnet-patched/tasks/net10.0/WasmAppBuilder.dll {} \;
           
-          # Backup original runtime
-          # Copy patched runtime files over the SDK's runtime
-          PATCHED=$(find download/dotnet-patched -name "Microsoft.NETCore.App.Runtime.browser-wasm" -type d | head -1)
-          if [ -z "$PATCHED" ]; then
-            echo "WARNING: Could not find patched runtime directory"
-            echo "Contents of download/dotnet-patched:"
-            find download/dotnet-patched -maxdepth 3 -type d | head -20
-          else
-            echo "Patched runtime at: $PATCHED"
-            # Find the SDK runtime path
-            SDK_RUNTIME=$(find /usr/share/dotnet/packs -name "Microsoft.NETCore.App.Runtime.browser-wasm" -type d | head -1)
-            echo "SDK runtime at: $SDK_RUNTIME"
-            # Copy patched files over SDK files
-            cp -r "$PATCHED"/* "$SDK_RUNTIME/" 2>/dev/null || true
-            echo "Patched runtime installed"
-          fi
+          # 2. Replace native runtime (patched mono with fixed pinvoke dispatch)
+          echo "Installing patched native runtime..."
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d | while read dir; do
+            cp -r download/dotnet-patched/runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
+            echo "  Copied to: $dir"
+          done
+          
+          # 3. Replace managed runtime DLLs
+          echo "Installing patched managed runtime..."
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d | while read dir; do
+            cp -r download/dotnet-patched/runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
+            echo "  Copied to: $dir"
+          done
+          
+          echo "=== Verify WasmAppBuilder.dll ==="
+          find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec md5sum {} \; 2>/dev/null | head -3
+          echo "=== Verify native libmonosgen ==="
+          find /usr/share/dotnet/packs -name "libmonosgen-2.0.a" -exec ls -la {} \; 2>/dev/null | head -3
 
       - name: Copy native libs to runtime project
         run: |
