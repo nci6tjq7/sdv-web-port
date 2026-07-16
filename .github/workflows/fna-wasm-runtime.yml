@@ -128,7 +128,8 @@ jobs:
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime
-          rm -rf bin obj
+          # Don't rm obj/ - it has project.assets.json from dotnet restore
+          rm -rf bin
           dotnet publish -c Release -o /tmp/wasm-publish --no-restore
           ls -la /tmp/wasm-publish/
           ls -la /tmp/wasm-publish/wwwroot/ | head -20
