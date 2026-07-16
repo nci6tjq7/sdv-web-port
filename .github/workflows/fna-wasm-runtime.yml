@@ -78,6 +78,41 @@ jobs:
           curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
           ls -la download/fnalibs/
 
+      - name: Download and install patched .NET runtime from r58Playz
+        run: |
+          # Download patched runtime
+          mkdir -p download/dotnet-patched
+          RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
+          curl -sL "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}/dotnet.zip" -o download/dotnet-patched/dotnet.zip
+          cd download/dotnet-patched && unzip -q dotnet.zip
+          
+          # 1. Replace WasmAppBuilder.dll in SDK (patched PInvokeTableGenerator)
+          find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp tasks/net10.0/WasmAppBuilder.dll {} \;
+          
+          # 2. Replace the ENTIRE NuGet runtime package with patched version
+          # The NuGet package is at ~/.nuget/packages/microsoft.netcore.app.runtime.mono.multithread.browser-wasm/
+          NUGET_PKG=$(find /home/runner/.nuget/packages -name "microsoft.netcore.app.runtime.mono.multithread.browser-wasm" -type d 2>/dev/null | head -1)
+          if [ -n "$NUGET_PKG" ]; then
+            echo "Replacing NuGet runtime at: $NUGET_PKG"
+            cp -r runtimes/browser-wasm/* "$NUGET_PKG/runtimes/browser-wasm/" 2>/dev/null || true
+            echo "Done"
+          else
+            echo "WARNING: NuGet package not found"
+          fi
+          
+          # 3. Also replace SDK pack runtime
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d | while read dir; do
+            cp -r runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
+          done
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d | while read dir; do
+            cp -r runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
+          done
+          
+          echo "=== Verify patched headers ==="
+          find /home/runner/.nuget -name "pinvoke.h" -path "*/native/src/*" -exec head -5 {} \; 2>/dev/null | head -5
+          echo "=== Verify WASM_N2M_AOT_DIRECT_ARG defined ==="
+          grep -r "WASM_N2M_AOT_DIRECT_ARG" /home/runner/.nuget/packages/microsoft.netcore.app.runtime.mono.multithread.browser-wasm/*/runtimes/browser-wasm/native/include/ 2>/dev/null | head -3
+
       - name: Copy native libs to runtime project
         run: |
           mkdir -p src/SdvWebPort.FnaRuntime/native
