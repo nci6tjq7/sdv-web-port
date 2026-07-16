@@ -146,6 +146,19 @@ jobs:
           dotnet /tmp/strip-pinvokes/strip-pinvokes.dll Steamworks.NET.orig.dll Steamworks.NET.dll
           ls -la GalaxyCSharp.dll Steamworks.NET.dll
 
+      - name: Patch SDV to NOP Reflection.Emit usage
+        run: |
+          # SDV's LocalMultiplayer.GenerateDynamicMethodsForStatics() uses Reflection.Emit
+          # (DynamicMethod, ILGenerator) to generate static field accessors at runtime.
+          # This throws PlatformNotSupportedException in WASM (no JIT).
+          # Patch to NOP — the generated methods are only used for save serialization
+          # (not needed for the title screen demo).
+          dotnet build scripts/patch-sdv-noemit/patch-sdv-noemit.csproj -c Release -o /tmp/patch-sdv-noemit
+          cd "download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0"
+          cp "Stardew Valley.dll" "Stardew Valley.orig.dll"
+          dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
+          ls -la "Stardew Valley.dll"
+
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime
