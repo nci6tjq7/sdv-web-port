@@ -71,20 +71,26 @@ const SDV = {
             window.Worker = function(url, opts) {
                 console.log('[SDV] Worker created:', url, opts);
                 const worker = new origWorker(url, opts);
-                // Transfer the canvas as soon as the worker is created
+                // Transfer the canvas to the FIRST worker created (the deputy worker).
+                // We transfer via postMessage with an OffscreenCanvas transferable.
+                // The patch-canvas-transfer.py-injected IIFE in dotnet.native.*.js
+                // listens for this message and intercepts GL.createContext.
                 if (!canvasTransferred) {
-                    try {
-                        const offscreen = canvas.transferControlToOffscreen();
-                        // postMessage with transferable array
-                        worker.postMessage(
-                            { __type: 'sdv_canvas_transfer', id: 'canvas', canvas: offscreen },
-                            [offscreen]
-                        );
-                        canvasTransferred = true;
-                        console.log('[SDV] Canvas transferred to worker');
-                    } catch (e) {
-                        console.warn('[SDV] Canvas transfer failed:', e);
-                    }
+                    // Defer the transfer to the next microtask so the worker's message
+                    // handler can be set up first.
+                    setTimeout(() => {
+                        try {
+                            const offscreen = canvas.transferControlToOffscreen();
+                            worker.postMessage(
+                                { __type: 'sdv_canvas_transfer', id: 'canvas', canvas: offscreen },
+                                [offscreen]
+                            );
+                            canvasTransferred = true;
+                            console.log('[SDV] Canvas transferred to worker');
+                        } catch (e) {
+                            console.warn('[SDV] Canvas transfer failed:', e);
+                        }
+                    }, 0);
                 }
                 return worker;
             };
