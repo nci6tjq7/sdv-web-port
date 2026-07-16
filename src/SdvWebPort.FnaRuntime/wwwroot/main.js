@@ -1,8 +1,22 @@
 // SDV WASM Runtime - main.js
-// Single-threaded mode with patched .NET 10 runtime (PInvokeTableGenerator fix)
+// Threaded mode with patched .NET 10 runtime + r58Playz fnalibs
+// Requires COOP/COEP headers (service worker on GitHub Pages)
 
 let canvas = null;
 let dotnetInstance = null;
+
+async function registerSW() {
+    if (!('serviceWorker' in navigator)) return true;
+    try {
+        await navigator.serviceWorker.register('./coop-coep-sw.js');
+        if (!navigator.serviceWorker.controller) {
+            await navigator.serviceWorker.ready;
+            window.location.reload();
+            return false;
+        }
+    } catch(e) { console.error("[SDV] SW failed:", e); }
+    return true;
+}
 
 const SDV = {
     canvas: null,
@@ -10,6 +24,11 @@ const SDV = {
 
     async init() {
         console.log("[SDV] Initializing runtime...");
+        if (!window.crossOriginIsolated) {
+            console.log("[SDV] Registering COOP/COEP service worker...");
+            await registerSW();
+            if (!window.crossOriginIsolated) return;
+        }
 
         canvas = document.getElementById('canvas');
         if (!canvas) {
