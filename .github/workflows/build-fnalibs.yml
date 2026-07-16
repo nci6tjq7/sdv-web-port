@@ -54,11 +54,25 @@ jobs:
           cp libSDL3.a /tmp/SDL3.a
           echo "SDL3_PREFIX=$(pwd)/prefix" >> $GITHUB_ENV
 
-      - name: Build FNA3D with MojoShader
+      - name: Build FNA3D with MojoShader (SDL GPU driver removed)
         run: |
           git clone -b ${{ env.FNA3D_VERSION }} --depth 1 --recurse-submodules https://github.com/FNA-XNA/FNA3D
           cd FNA3D
           git submodule update --init --recursive
+          
+          # Remove SDL GPU driver from FNA3D (from r58Playz/FNA-WASM-Build patch).
+          # SDL GPU calls functions that don't exist in WASM, causing
+          # "function signature mismatch". FNA3D will use OpenGL directly.
+          sed -i '/add_definitions(-DFNA3D_DRIVER_SDL)/d' CMakeLists.txt
+          sed -i '/FNA3D_Driver_SDL\.c/d' CMakeLists.txt
+          sed -i '/mojoshader_sdlgpu\.c/d' CMakeLists.txt
+          sed -i '/FNA3D_DRIVER_SDL/,/SDLGPUDriver/d' src/FNA3D.c
+          
+          echo "=== Patched CMakeLists.txt (SDL references) ==="
+          grep -n "SDL\|sdlgpu" CMakeLists.txt | head -10
+          echo "=== Patched FNA3D.c (drivers) ==="
+          grep -n "Driver\|driver" src/FNA3D.c | head -10
+          
           mkdir emscripten-build && cd emscripten-build
           emcmake cmake -S .. \
             -DCMAKE_BUILD_TYPE=Release \
@@ -67,9 +81,8 @@ jobs:
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
             -GNinja
           ninja
-          # FNA3D.a only contains FNA3D's own .o files.
-          # MojoShader is built as a separate target (CMakeFiles/mojoshader.dir/).
-          # Merge ALL mojoshader .o files into FNA3D.a using a for loop.
+          
+          # Merge MojoShader .o files into FNA3D.a
           echo "=== Merging MojoShader objects into FNA3D.a ==="
           for f in $(find CMakeFiles/mojoshader.dir -name "*.o" | sort); do
             echo "  Adding: $f"
@@ -77,8 +90,6 @@ jobs:
           done
           echo "=== FNA3D.a contents (MojoShader) ==="
           ar t libFNA3D.a | grep mojoshader
-          echo "=== Checking for MOJOSHADER_sdlGetShaderFormats ==="
-          $EMSDK/upstream/bin/llvm-nm libFNA3D.a 2>/dev/null | grep "MOJOSHADER_sdlGetShaderFormats" | head -3
           cp libFNA3D.a /tmp/FNA3D.a
 
       - name: Build FAudio

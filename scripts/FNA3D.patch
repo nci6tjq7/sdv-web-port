@@ -1,0 +1,39 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -51,9 +51,6 @@
+ add_definitions(
+ 	-DFNA3D_DRIVER_OPENGL
+ )
+-if(BUILD_SDL3)
+-	add_definitions(-DFNA3D_DRIVER_SDL)
+-endif()
+ add_definitions(
+ 	-DMOJOSHADER_NO_VERSION_INCLUDE
+@@ -113,7 +110,6 @@
+ 	src/FNA3D.c
+ 	src/FNA3D_Driver_D3D11.c
+ 	src/FNA3D_Driver_OpenGL.c
+-	src/FNA3D_Driver_SDL.c
+ 	src/FNA3D_Image.c
+ 	src/FNA3D_PipelineCache.c
+ 	src/FNA3D_Tracing.c
+@@ -124,7 +120,6 @@
+ 	MojoShader/mojoshader_common.c
+ 	MojoShader/mojoshader_d3d11.c
+ 	MojoShader/mojoshader_opengl.c
+-	MojoShader/mojoshader_sdlgpu.c
+ 	MojoShader/profiles/mojoshader_profile_common.c
+ 	MojoShader/profiles/mojoshader_profile_glsl.c
+ 	MojoShader/profiles/mojoshader_profile_hlsl.c
+diff --git a/src/FNA3D.c b/src/FNA3D.c
+--- a/src/FNA3D.c
++++ b/src/FNA3D.c
+@@ -40,9 +40,6 @@
+ static const FNA3D_Driver *drivers[] = {
+-#if FNA3D_DRIVER_SDL
+-	&SDLGPUDriver,
+-#endif
+ #if FNA3D_DRIVER_D3D11
+ 	&D3D11Driver,
+ #endif
