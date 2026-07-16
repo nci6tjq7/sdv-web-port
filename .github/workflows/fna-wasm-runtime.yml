@@ -128,7 +128,8 @@ jobs:
       - name: Build WASM runtime
         run: |
           cd src/SdvWebPort.FnaRuntime
-          dotnet publish -c Release -o /tmp/wasm-publish
+          rm -rf bin obj
+          dotnet publish -c Release -o /tmp/wasm-publish --no-cache
           ls -la /tmp/wasm-publish/
           ls -la /tmp/wasm-publish/wwwroot/ | head -20
           echo "=== WASM bundle size ==="
