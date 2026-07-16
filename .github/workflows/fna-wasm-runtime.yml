@@ -180,69 +180,14 @@ jobs:
           # FNA3D then calls a non-null JS stub which hits GLctx.getParameter with
           # GLctx===undefined → 'Cannot read properties of undefined (reading getParameter)'.
           #
-          # Fix: celeste-wasm pattern — patch dotnet.native.*.js to pre-populate
-          # offscreenCanvases by transferring the canvas element (matched by CSS class
-          # 'canvas') to the worker via canvas.transferControlToOffscreen().
+          # Fix: celeste-wasm pattern — append a self-executing function expression
+          # to dotnet.native.*.js that pre-populates GL.offscreenCanvases by transferring
+          # the canvas element (matched by CSS class 'canvas') via transferControlToOffscreen().
           # Combined with class="canvas" on the <canvas> element (added in index.html),
           # this makes SDL3 find the canvas and create a real WebGL context.
-          #
-          # Note: the actual pattern in .NET 10 WASM SDK is `offscreenCanvases: {},` (object
-          # property with colon), not `var offscreenCanvases = {};`. We use a Python script
-          # for robust replacement instead of sed.
-          cd /tmp/wasm-publish/wwwroot/_framework
-          ls dotnet.native.*.js | head -3
-          python3 << 'PYEOF'
-          import glob, re
-          files = glob.glob('dotnet.native.*.js')
-          assert files, 'No dotnet.native.*.js found!'
-          for f in files:
-              with open(f, 'r') as fh: content = fh.read()
-              if 'TRANSFERRED_CANVAS' in content:
-                  print(f'  [SKIP] {f}: already patched')
-                  continue
-              # The offscreenCanvases property lives INSIDE a GL={} object literal.
-              # We can't inject statements there. Instead, we add a self-executing
-              # function expression AT THE END of the file that populates
-              # GL.offscreenCanvases by transferring the canvas.
-              #
-              # The function runs on the DOM thread (where document exists) before
-              # any worker is spawned. The transferred canvas is then accessible
-              # via GL.offscreenCanvases['canvas'] in the worker.
-              inject = """
-;(function(){
-  if(typeof globalThis==='undefined'||!globalThis.window)return;
-  if(window.TRANSFERRED_CANVAS)return;
-  window.TRANSFERRED_CANVAS=true;
-  function transferCanvases(){
-    if(typeof GL==='undefined'||!GL)return false;
-    var canvases=document.getElementsByClassName('canvas');
-    for(var i=0;i<canvases.length;i++){
-      var c=canvases[i];
-      try{
-        var off=c.transferControlToOffscreen();
-        GL.offscreenCanvases[c.id||'canvas']=off;
-        console.log('[canvas-patch] Transferred canvas "'+(c.id||'canvas')+'" to offscreen');
-      }catch(e){
-        console.warn('[canvas-patch] Failed to transfer canvas "'+c.id+'":',e);
-      }
-    }
-    return canvases.length>0;
-  }
-  // Try immediately (in case GL is already defined)
-  if(!transferCanvases()){
-    // GL not ready yet — retry on next tick (after Module is set up)
-    setTimeout(transferCanvases,0);
-    setTimeout(transferCanvases,100);
-    setTimeout(transferCanvases,500);
-  }
-})();
-"""
-              content = content + inject
-              print(f'  [OK] {f}: appended canvas transfer patch ({len(inject)} bytes)')
-              with open(f, 'w') as fh: fh.write(content)
-          PYEOF
+          python3 ${{ github.workspace }}/scripts/patch-canvas-transfer.py /tmp/wasm-publish/wwwroot/_framework/
           echo "=== Verify patch applied ==="
-          grep -c "TRANSFERRED_CANVAS" dotnet.native.*.js || echo "(no matches found)"
+          grep -c "TRANSFERRED_CANVAS" /tmp/wasm-publish/wwwroot/_framework/dotnet.native.*.js || echo "(no matches found)"
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
