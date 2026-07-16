@@ -49,20 +49,51 @@ const SDV = {
 
             // Transfer the canvas to the WASM worker thread BEFORE creating the runtime.
             // .NET 10 threaded WASM runs all C# in the deputy worker, but <canvas> lives
-            // on the DOM thread. SDL3's emscripten video driver hardcodes '#canvas' as
-            // the selector and looks up GL.offscreenCanvases["canvas"] which is empty
-            // unless we transfer the canvas via transferControlToOffscreen().
+            // on the DOM thread. SDL3's emscripten video driver calls
+            // emscripten_webgl_create_context('#canvas', ...) which calls
+            // findCanvasEventTarget('#canvas') → document.querySelector('#canvas')
+            // — but `document` doesn't exist in workers, so it returns undefined.
             //
-            // The .NET WASM SDK supports `transferredCanvasNames` in the runtime config.
-            // Each named canvas will be transferred to the worker automatically.
-            // We pass the canvas id ("canvas") which matches our <canvas id="canvas">.
+            // Fix: transfer the canvas via canvas.transferControlToOffscreen() and post
+            // the resulting OffscreenCanvas to the worker via a 'message' event.
+            // The patch-canvas-transfer.py-injected IIFE in dotnet.native.*.js listens
+            // for this message and intercepts GL.createContext to substitute the
+            // transferred OffscreenCanvas when the selector is '#canvas' or 'canvas'.
             //
-            // Reference: celeste-wasm pattern (MercuryWorkshop/celeste-wasm)
-            const canvasConfig = {
-                transferredCanvasNames: ['canvas']
+            // We can't transfer the canvas BEFORE creating the runtime because we don't
+            // have access to the worker. Instead, we register a callback to run as soon
+            // as the worker is created. We do this by wrapping the Worker constructor.
+            //
+            // Reference: celeste-wasm pattern (adapted to .NET 10 SDK that doesn't
+            // support transferredCanvasNames config option)
+            let canvasTransferred = false;
+            const origWorker = window.Worker;
+            window.Worker = function(url, opts) {
+                console.log('[SDV] Worker created:', url, opts);
+                const worker = new origWorker(url, opts);
+                // Transfer the canvas as soon as the worker is created
+                if (!canvasTransferred) {
+                    try {
+                        const offscreen = canvas.transferControlToOffscreen();
+                        // postMessage with transferable array
+                        worker.postMessage(
+                            { __type: 'sdv_canvas_transfer', id: 'canvas', canvas: offscreen },
+                            [offscreen]
+                        );
+                        canvasTransferred = true;
+                        console.log('[SDV] Canvas transferred to worker');
+                    } catch (e) {
+                        console.warn('[SDV] Canvas transfer failed:', e);
+                    }
+                }
+                return worker;
             };
-            console.log("[SDV] Config with transferredCanvasNames:", canvasConfig);
-            dotnetInstance = await dotnet.withConfig(canvasConfig).create();
+            // Copy prototype and static properties
+            window.Worker.prototype = origWorker.prototype;
+            window.Worker.PROTOTYPE = origWorker.prototype;
+
+            console.log("[SDV] Creating .NET runtime instance...");
+            dotnetInstance = await dotnet.create();
             console.log("[SDV] .NET runtime loaded");
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
