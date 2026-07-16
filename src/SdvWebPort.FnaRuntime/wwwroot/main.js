@@ -1,22 +1,11 @@
 // SDV WASM Runtime - main.js
 // Threaded mode with FULLY patched .NET 10 runtime + r58Playz fnalibs
 // Requires COOP/COEP headers (service worker on GitHub Pages)
+// SW registration is done inline in index.html (before this module loads)
+// to avoid race conditions with ES module loading.
 
 let canvas = null;
 let dotnetInstance = null;
-
-async function registerSW() {
-    if (!('serviceWorker' in navigator)) return true;
-    try {
-        await navigator.serviceWorker.register('./coop-coep-sw.js');
-        if (!navigator.serviceWorker.controller) {
-            await navigator.serviceWorker.ready;
-            window.location.reload();
-            return false;
-        }
-    } catch(e) { console.error("[SDV] SW failed:", e); }
-    return true;
-}
 
 const SDV = {
     canvas: null,
@@ -25,9 +14,20 @@ const SDV = {
     async init() {
         console.log("[SDV] Initializing runtime...");
         if (!window.crossOriginIsolated) {
-            console.log("[SDV] Registering COOP/COEP service worker...");
-            await registerSW();
-            if (!window.crossOriginIsolated) return;
+            // SW should be registered by inline script in index.html.
+            // If crossOriginIsolated is still false, the SW is still activating
+            // — wait briefly and reload.
+            console.log("[SDV] crossOriginIsolated=false, waiting for SW...");
+            if (navigator.serviceWorker.controller) {
+                // SW is controlling but COOP/COEP not set — reload to re-fetch through SW
+                window.location.reload();
+                return;
+            }
+            // Wait for SW to be ready, then reload
+            navigator.serviceWorker.ready.then(() => {
+                window.location.reload();
+            });
+            return;
         }
 
         canvas = document.getElementById('canvas');

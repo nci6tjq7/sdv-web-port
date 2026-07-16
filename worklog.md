@@ -1852,3 +1852,46 @@ Next Steps:
 - If still failing: investigate multi-field structs in DllImports (rare in SDL3-CS)
 - If still failing: investigate C-level glClearDepth signature mismatch (research-2 bonus)
 
+
+## Task ID: research-3
+- **Agent:** research-3 subagent
+- **Task:** Research COOP/COEP service-worker patterns for SharedArrayBuffer support (.NET WASM, Stardew Valley web port)
+- **Scope:** Research only — no code changes
+- **Status:** DONE
+
+### Summary
+Investigated how r58Playz/celeste-wasm and other .NET WASM projects handle COOP/COEP headers when hosting on static hosts like GitHub Pages. Compared 4 reference implementations against our current `src/SdvWebPort.FnaRuntime/wwwroot/coop-coep-sw.js`.
+
+### Key findings
+1. **celeste-wasm does NOT use a service worker** — they host at `celeste.r58playz.dev` on their own infra and set COOP/COEP headers via the vite dev server (`vite.config.ts: server.headers`) + a real reverse proxy in prod. They set only COOP `same-origin` + COEP `require-corp`. They do NOT set CORP at all (everything is same-origin).
+2. **The .NET `WasmAppHost` dev server sets COOP/COEP automatically** when `WasmEnableThreads=true` (dotnet/runtime#109937) — that's why `dotnet run` works locally. GitHub Pages does not (and won't) support custom headers.
+3. **`coi-serviceworker` (gzuidhof, 567★) is the de-facto standard** for static hosting. Key differences from our SW:
+   - Has the `if (r.cache === "only-if-cached" && r.mode !== "same-origin") return;` guard — **our SW is missing this and it likely crashes the fetch handler on .NET runtime module-preload requests**
+   - Uses `Cross-Origin-Resource-Policy: cross-origin` (not `same-origin`)
+   - Passes through opaque (`status === 0`) responses unchanged
+   - Tries `credentialless` first, degrades to `require-corp` via sessionStorage flag
+   - Registers from an inline `<script>` in `<head>`, not from a late-loaded ES module
+4. **Blazor-Multithreaded-PWA** (JacobPersi, .NET 10) uses a similar pattern: SW only header-injects navigations + `_framework/` requests, skips `_framework/debug` and `_framework/blazor-hotreload`, has the `only-if-cached` guard, no CORP header at all.
+5. **`credentialless` vs `require-corp`**: credentialless is more compatible (no opt-in needed for cross-origin resources) and supported in Chrome/Edge/Safari 16+. Firefox does NOT support `credentialless`. For our all-same-origin setup, `require-corp` is fine.
+6. **No official Microsoft sample** exists for SW-based COOP/COEP on static hosting. aspnetcore#42114 is the closest (still open).
+7. **Bypassing threads**: `<WasmEnableThreads>false</WasmEnableThreads>` removes the SAB requirement entirely. r58Playz's runtime requires threads (deputy thread model is core). FNA3D/SDL3 mostly work without threads, but SDV uses `Thread` for audio, saves, async loading, and Lidgren networking. Viable fallback for a tech demo, not for production.
+
+### Most likely fix for `crossOriginIsolated: false`
+In rough order of probability:
+1. **Missing `only-if-cached` guard** — the .NET runtime's `<link rel="modulepreload">` requests trigger this and crash our fetch handler, leaving `index.html` re-served without headers on reload.
+2. **CORP `same-origin` is too strict** — should be `cross-origin` (or omitted entirely like Blazor-MT-PWA).
+3. **SW registration races** — `main.js` (ES module, loaded late) registers SW; reload happens but navigation may bypass SW if scope/timing is off. Should register from inline `<script>` in `<head>`.
+4. **Opaque responses being re-wrapped** — breaks module preloads from cross-origin CDNs (we don't have any, but good to know).
+
+### Files
+- `download/research-coop-coep.md` — full findings (research-only, no code changes)
+
+### Next steps (for a future implementer task, not this research)
+1. Add `only-if-cached` guard to `coop-coep-sw.js`
+2. Change CORP from `same-origin` → `cross-origin` (or drop it)
+3. Pass through `status === 0` opaque responses unchanged
+4. Move SW registration from `main.js` to inline `<script>` in `<head>` of `index.html`
+5. Add `console.log` in fetch handler for debugging
+6. Verify with DevTools (Application → SW activated; Network → HTML response headers) before assuming success
+7. If still broken after the above: try `WasmEnableThreads=false` as a fallback to unblock the PoC
+
