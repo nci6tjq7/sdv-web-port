@@ -39,7 +39,7 @@ jobs:
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
           cd /tmp/FNA && git submodule update --init --recursive
 
-      - name: Verify SDL3-CS DllImports (do NOT patch — root cause of signature mismatch)
+      - name: Scan SDL3-CS for problematic DllImports (diagnostic)
         run: |
           # PREVIOUS APPROACH (REVERTED): we sed-patched all `extern long/ulong`
           # to `extern int/uint` thinking it would fix dotnet/runtime#112262.
@@ -48,16 +48,28 @@ jobs:
           # correctly via SignatureMapper.cs. Patching them to int/uint created
           # a C#/C ABI mismatch (C returns Uint64=i64, C# stub expects i32) →
           # "function signature mismatch" trap on every call_indirect.
-          # Solution: use r58Playz's patched runtime (handles enums correctly)
-          # and leave SDL3-CS DllImports unmodified.
-          echo "=== SDL3-CS DllImports using long/ulong (must stay unpatched) ==="
+          echo "=== SDL3-CS DllImports using long/ulong (OK — plain scalar maps to i64) ==="
           grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" | head -30
           echo ""
-          echo "=== Checking for enum:long / enum:ulong (the REAL #112262 trigger) ==="
-          grep -rEn "enum\s+\w+\s*:\s*(long|ulong)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" || echo "None found (good)"
+          echo "=== enum:long / enum:ulong used in DllImports (REAL #112262 trigger) ==="
+          grep -rEn "enum\s+\w+\s*:\s*(long|ulong)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" || echo "None found"
           echo ""
-          echo "=== FNA source long/ulong DllImports (also must stay unpatched) ==="
+          echo "=== FNA source long/ulong DllImports (OK — plain scalar) ==="
           grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/src --include="*.cs" | head -20
+
+      - name: Patch SDL3-CS to work around dotnet/runtime#112262 (enum:ulong in DllImport)
+        run: |
+          # The real #112262 trigger: `enum SDL_WindowFlags : ulong` is used in 4 DllImports.
+          # SignatureMapper.cs maps enum:ulong incorrectly (i32 instead of i64) → trap.
+          # Maintainer's workaround: cast enum:ulong → ulong directly in DllImport signatures.
+          # This script:
+          #   1. Changes SDL_WindowFlags → ulong in 4 DllImports
+          #   2. Casts at call sites for the 2 private DllImports
+          #   3. Adds public wrappers for the 2 public DllImports (SDL_CreatePopupWindow,
+          #      SDL_GetWindowFlags) so FNA-side callers using SDL_WindowFlags still work
+          python3 ${{ github.workspace }}/scripts/patch-sdl3-windowflags.py /tmp/FNA/lib/SDL3-CS/SDL3/SDL3.Legacy.cs
+          # Verify the patch applied
+          grep -c "INTERNAL_SDL_GetWindowFlags\|INTERNAL_SDL_CreatePopupWindow" /tmp/FNA/lib/SDL3-CS/SDL3/SDL3.Legacy.cs
 
       - name: Build FNA
         run: dotnet build /tmp/FNA/FNA.Core.csproj -c Release
