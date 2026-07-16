@@ -66,18 +66,33 @@ jobs:
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/Stardew\ Valley.dll
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll
 
-      - name: Download pre-built fnalibs from r58Playz (threaded)
+      - name: Download freshly compiled fnalibs (single-threaded)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p download/fnalibs
-          RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
-          BASE="https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}"
-          curl -sL "${BASE}/SDL3.a" -o download/fnalibs/SDL3.a
-          curl -sL "${BASE}/FNA3D.a" -o download/fnalibs/FNA3D.a
-          curl -sL "${BASE}/FAudio.a" -o download/fnalibs/FAudio.a
-          curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
-          ls -la download/fnalibs/
+          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-fnalibs.yml/runs?status=completed&conclusion=success&per_page=1"
+          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
+          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflow_runs'][0]['id'])")
+          echo "fnalibs build run ID: ${RUN_ID}"
+          ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
+          ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          for a in d.get('artifacts',[]):
+              if 'single' in a['name']:
+                  print(a['id']); break
+          ")
+          echo "Artifact ID: ${ARTIFACT_ID}"
+          REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /dev/null -w '%{redirect_url}' \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
+          curl -sL "$REDIRECT" -o download/fnalibs.zip
+          cd download/fnalibs
+          unzip -q ../fnalibs.zip
+          ls -la
 
-      - name: Download and install patched .NET runtime from r58Playz
+      - name: Install patched WasmAppBuilder + headers (not native runtime)
         run: |
           # Download patched runtime
           mkdir -p download/dotnet-patched
@@ -85,30 +100,24 @@ jobs:
           curl -sL "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}/dotnet.zip" -o download/dotnet-patched/dotnet.zip
           cd download/dotnet-patched && unzip -q dotnet.zip
           
-          # 1. Replace WasmAppBuilder.dll in SDK (patched PInvokeTableGenerator)
+          # 1. Replace WasmAppBuilder.dll (patched PInvokeTableGenerator)
           find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp tasks/net10.0/WasmAppBuilder.dll {} \;
           
-          # 2. Restore NuGet packages FIRST so we can patch them
+          # 2. Restore NuGet packages
           cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
-          dotnet restore --runtime browser-wasm 2>/dev/null || true
           dotnet restore 2>/dev/null || true
           
-          # 3. Replace the NuGet runtime package's runtimes/browser-wasm/
-          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
-            echo "Patching NuGet: $dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
+          # 3. ONLY copy the patched HEADERS (not native .a files)
+          # The patched headers define WASM_N2M_AOT_DIRECT_ARG which the patched
+          # WasmAppBuilder needs. But we DON'T copy native .a files because
+          # the patched runtime requires --shared-memory (threads).
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native/include" -type d 2>/dev/null | while read dir; do
+            echo "Patching headers: $dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/include/* "$dir/" 2>/dev/null || true
           done
-          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
-            echo "Patching NuGet: $dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
-          done
-          
-          # 4. Also replace SDK pack runtime
-          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d | while read dir; do
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
-          done
-          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d | while read dir; do
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
+          # Also patch SDK pack headers
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native/include" -type d | while read dir; do
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/include/* "$dir/" 2>/dev/null || true
           done
           
           echo "=== Verify WASM_N2M_AOT_DIRECT_ARG in pinvoke.h ==="
