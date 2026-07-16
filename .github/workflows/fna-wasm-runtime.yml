@@ -107,17 +107,24 @@ jobs:
           cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
           dotnet restore 2>/dev/null || true
           
-          # 3. ONLY copy the patched HEADERS (not native .a files)
-          # The patched headers define WASM_N2M_AOT_DIRECT_ARG which the patched
-          # WasmAppBuilder needs. But we DON'T copy native .a files because
-          # the patched runtime requires --shared-memory (threads).
+          # 3. ONLY copy patched HEADERS + SOURCE files (not native .a files)
+          # The patched headers define WASM_N2M_AOT_DIRECT_ARG and patched
+          # source files (pinvoke.c, runtime.c) handle the new P/Invoke convention.
+          # We DON'T copy native .a files (they require --shared-memory).
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native/include" -type d 2>/dev/null | while read dir; do
             echo "Patching headers: $dir"
             cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/include/* "$dir/" 2>/dev/null || true
           done
-          # Also patch SDK pack headers
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native/src" -type d 2>/dev/null | while read dir; do
+            echo "Patching source: $dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/src/* "$dir/" 2>/dev/null || true
+          done
+          # Also patch SDK pack
           find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native/include" -type d | while read dir; do
             cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/include/* "$dir/" 2>/dev/null || true
+          done
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native/src" -type d | while read dir; do
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native/src/* "$dir/" 2>/dev/null || true
           done
           
           echo "=== Verify WASM_N2M_AOT_DIRECT_ARG in pinvoke.h ==="
