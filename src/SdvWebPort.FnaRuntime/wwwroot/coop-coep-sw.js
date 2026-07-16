@@ -3,11 +3,11 @@
 //
 // Critical features:
 // 1. only-if-cached guard — .NET runtime's modulepreload requests crash otherwise
-// 2. CORP: cross-origin (not same-origin) — more permissive, handles opaque responses
+// 2. CORP: cross-origin on ALL responses (including catch fallback) — COEP requires CORP
 // 3. Opaque responses (status === 0) passed through unchanged
 // 4. Bump CACHE_NAME to force SW update on existing clients
 
-const CACHE_NAME = 'sdv-coop-coep-v3';
+const CACHE_NAME = 'sdv-coop-coep-v4';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
@@ -16,6 +16,23 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil(self.clients.claim());
 });
+
+// Helper: create a new Response with COOP/COEP/CORP headers added
+function withCoopCoepHeaders(response) {
+    if (response.status === 0) {
+        // Opaque response — can't read body, pass through unchanged
+        return response;
+    }
+    const newHeaders = new Headers(response.headers);
+    newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
+    newHeaders.set('Cross-Origin-Embedder-Policy', 'require-corp');
+    newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+    });
+}
 
 self.addEventListener('fetch', (event) => {
     const req = event.request;
@@ -33,26 +50,10 @@ self.addEventListener('fetch', (event) => {
 
     event.respondWith(
         fetch(req)
-            .then((response) => {
-                // Pass through opaque responses unchanged (they have status 0)
-                if (response.status === 0) {
-                    return response;
-                }
-
-                // Clone the response and add COOP/COEP/CORP headers
-                const newHeaders = new Headers(response.headers);
-                newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
-                newHeaders.set('Cross-Origin-Embedder-Policy', 'require-corp');
-                newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
-
-                return new Response(response.body, {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: newHeaders,
-                });
-            })
+            .then((response) => withCoopCoepHeaders(response))
             .catch(() => {
-                return fetch(req);
+                // Fallback: re-fetch and STILL add CORP header (COEP requires it)
+                return fetch(req).then((response) => withCoopCoepHeaders(response));
             })
     );
 });
