@@ -11,17 +11,16 @@ public static partial class Program
     private static int Main(string[] args)
     {
         // CRITICAL: Disable dynamic code BEFORE any XmlSerializer is touched.
-        // .NET WASM doesn't support System.Reflection.Emit (browsers don't allow JIT),
-        // but Mono WASM still reports IsDynamicCodeSupported=true. This causes
-        // XmlSerializer to try Reflection.Emit and crash with MissingMethodException.
-        // Setting these switches forces XmlSerializer into ReflectionOnly mode.
-        // Must happen before SDV's static constructors run (SerializableDictionary..cctor
-        // creates an XmlSerializer in its static init).
-        AppContext.SetSwitch("System.Runtime.RuntimeFeature.IsDynamicCodeSupported", false);
-        // Also try the direct XmlSerializer reflection-only switch
-        AppContext.SetSwitch("System.Xml.Serialization.XmlSerializer.IsReflectionOnly", true);
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false + IsReflectionOnly=true");
-        Console.WriteLine($"[SdvWebPort.FnaRuntime] RuntimeInformation.IsDynamicCodeSupported = {System.Runtime.InteropServices.RuntimeInformation.IsDynamicCodeSupported}");
+        // .NET WASM doesn't support System.Reflection.Emit (browsers don't allow JIT).
+        // Mono WASM is also missing the RuntimeTypeBuilder.propagate_parent_native icall.
+        // Setting this switch forces XmlSerializer into ReflectionOnly mode.
+        // CORRECT switch name (verified from dotnet/runtime source):
+        //   "System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported"
+        //   (must include .CompilerServices segment — without it, the switch is silently ignored)
+        // This is a backup for the .csproj's <DynamicCodeSupport>false</DynamicCodeSupport>
+        // and <RuntimeHostConfigurationOption>, in case the WASM SDK doesn't process them.
+        AppContext.SetSwitch("System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", false);
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false (with .CompilerServices)");
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");

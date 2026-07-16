@@ -2001,3 +2001,50 @@ Next Steps:
 - If yes: identify next blocker (likely Content/ files)
 - If no: try fallback (pre-generate XmlSerializers, or patch SDV serialization)
 
+
+---
+Task ID: research-5
+Agent: general-purpose (research subagent)
+Task: Research exact source of XmlSerializer.Mode in .NET 10 to find correct way to force ReflectionOnly mode in WASM
+
+Work Log:
+- Fetched `XmlSerializer.cs` source from dotnet/runtime main, v10.0.0-preview.1, and v9.0.0 tags — all identical at lines 113-120:
+  `internal static SerializationMode Mode { get => RuntimeFeature.IsDynamicCodeSupported ? s_mode : SerializationMode.ReflectionOnly; set => s_mode = value; }`
+- Fetched `RuntimeFeature.NonNativeAot.cs` (defines `IsDynamicCodeSupported`):
+  Reads `AppContext.TryGetSwitch("System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", out bool v) ? v : true`.
+  Switch name REQUIRES `.CompilerServices` segment. Default = true.
+- Fetched `RuntimeInformation.cs` and all 4 partials (.Browser, .Unix, .Windows) via sparse-checkout: `RuntimeInformation` has NO `IsDynamicCodeSupported` property. Only `RuntimeIdentifier`, `IsOSPlatform`, `ProcessArchitecture`, `OSDescription`, `OSArchitecture`. The current `SdvWebPort.FnaRuntime/Program.cs:24` reference is a compile error.
+- Searched `LocalAppContextSwitches.cs` (CoreLib + tried Xml paths — Xml has no LocalAppContextSwitches file): no `IsReflectionOnly` or `XmlSerializerIsReflectionOnlyMode` switch exists. `XmlSerializer.Mode` reads ONLY `RuntimeFeature.IsDynamicCodeSupported`.
+- Confirmed the three previous attempts ALL used wrong switch names:
+  * `<RuntimeHostConfigurationOption Include="System.Runtime.RuntimeFeature.IsDynamicCodeSupported" ...>` — missing `.CompilerServices`
+  * `AppContext.SetSwitch("System.Runtime.RuntimeFeature.IsDynamicCodeSupported", false)` — missing `.CompilerServices`
+  * `AppContext.SetSwitch("System.Xml.Serialization.XmlSerializer.IsReflectionOnly", true)` — switch DOES NOT EXIST in source
+- Verified `docs/workflow/trimming/feature-switches.md` line 12: MSBuild property `DynamicCodeSupport` → AppContext switch `System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported`.
+- Downloaded and inspected `Microsoft.XmlSerializer.Generator` 10.0.0-preview.1.25080.5 NuGet package: targets file is well-formed, runs `GenerateSerializationAssembly` AfterTargets=Build, produces `{AssemblyName}.XmlSerializers.dll`.
+- Fetched dotnet/runtime#121440 (closed): maintainer confirmed pre-generated serializers ARE used at runtime; reporter's check (`serializer.GetType().Assembly`) was misleading because `XmlSerializer` is always the public type. Pre-generated `*.XmlSerializers.dll` is consumed internally by `TempAssembly.LoadGeneratedAssembly`.
+- Could not extract DeveloperCommunity#10980787 body (React SPA client-side render). Package itself is functional at the targets-file level.
+- Identified existing `PatchMethodToNop` template in `SdvAssemblyRefRewriter.cs:968-984` for the IL-rewrite fallback.
+- Saved comprehensive findings to `download/research-xmlserializer-mode.md`.
+
+### Key findings
+
+1. **Exact switch name** that controls `XmlSerializer.Mode`: `System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported` (NOT `System.Runtime.RuntimeFeature.IsDynamicCodeSupported`). Source: <https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Runtime/CompilerServices/RuntimeFeature.NonNativeAot.cs>. The `Mode` getter at <https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.Xml/src/System/Xml/Serialization/XmlSerializer.cs#L116-L120> reads ONLY this — no other switch.
+
+2. **`RuntimeInformation.IsDynamicCodeSupported` is non-existent.** `RuntimeInformation` (InteropServices namespace) has no such property. The property lives on `RuntimeFeature` (CompilerServices namespace). Current `Program.cs:24` won't compile.
+
+3. **`RuntimeFeature.IsDynamicCodeSupported` is NOT hardcoded in Mono WASM** — it reads `AppContext.TryGetSwitch(...)` with default `true`. The `[Intrinsic]` attribute on the MONO build only constant-folds for FullAOT (iOS-style); default interpreter-based WASM uses the AppContext switch.
+
+4. **TOP fix**: Use `<DynamicCodeSupport>false</DynamicCodeSupport>` MSBuild property in the csproj (replaces the broken `<RuntimeHostConfigurationOption>` item). SDK translates to the correct AppContext switch name automatically.
+
+5. **FALLBACK fix**: IL-rewrite `System.Private.Xml.dll` with Mono.Cecil to force `XmlSerializer::get_Mode` to always return `SerializationMode.ReflectionOnly` (2-instruction body: `ldc.i4.1; ret`). Project already has `PatchMethodToNop` template in `SdvAssemblyRefRewriter.cs`.
+
+### Files
+- `download/research-xmlserializer-mode.md` — comprehensive findings + specific code/MSBuild snippets for both fixes (research-only, no code changes made).
+
+### Next steps (for a future implementer task, not this research)
+1. Edit `SdvWebPort.FnaRuntime.csproj`: delete broken `<RuntimeHostConfigurationOption>` item, add `<DynamicCodeSupport>false</DynamicCodeSupport>` property.
+2. Edit `Program.cs`: delete the 3 broken lines (2× AppContext.SetSwitch + 1× RuntimeInformation reference).
+3. Build, verify runtimeconfig contains the switch name with `.CompilerServices`.
+4. Test in browser — `Game1..cctor()` should no longer crash.
+5. If still broken: implement the IL-rewrite fallback (`XmlSerializerModePatcher.cs`).
+6. If still broken: try pre-generation as a tertiary fix.

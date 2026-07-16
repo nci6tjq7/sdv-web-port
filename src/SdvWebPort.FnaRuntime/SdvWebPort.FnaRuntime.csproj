@@ -13,19 +13,26 @@
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
     <WasmEnableThreads>true</WasmEnableThreads>
+    <!--
+      Disable dynamic code (System.Reflection.Emit) support.
+      XmlSerializer uses Reflection.Emit to generate temp assemblies at runtime,
+      which fails in WASM (browsers don't allow JIT). Mono WASM is also missing
+      the RuntimeTypeBuilder.propagate_parent_native icall.
+      Setting IsDynamicCodeSupported=false makes XmlSerializer use
+      ReflectionOnly mode (official .NET AOT/iOS-safe code path, since .NET 6).
+      The SDK auto-translates this property to the correctly-named AppContext switch
+      in runtimeconfig.json.
+      This fixes: System.MissingMethodException at RuntimeTypeBuilder.SetParentCore
+                  at XmlSerializer..ctor at SDV SaveSerialization.SaveSerializer
+    -->
+    <DynamicCodeSupport>false</DynamicCodeSupport>
   </PropertyGroup>
 
-  <!--
-    Disable dynamic code (System.Reflection.Emit) support.
-    XmlSerializer uses Reflection.Emit to generate temp assemblies at runtime,
-    which fails in WASM (browsers don't allow JIT).
-    Setting IsDynamicCodeSupported=false makes XmlSerializer use
-    ReflectionOnly mode (official .NET AOT/iOS-safe code path, since .NET 6).
-    This fixes: System.MissingMethodException at RuntimeTypeBuilder.SetParentCore
-                at XmlSerializer..ctor at SDV SaveSerialization.SaveSerializer
-  -->
+  <!-- Backup: also set via RuntimeHostConfigurationOption with CORRECT switch name.
+       The switch name MUST include '.CompilerServices' segment — verified from
+       dotnet/runtime System.Private.CoreLib RuntimeFeature.NonNativeAot.cs -->
   <ItemGroup>
-    <RuntimeHostConfigurationOption Include="System.Runtime.RuntimeFeature.IsDynamicCodeSupported"
+    <RuntimeHostConfigurationOption Include="System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported"
                                      Value="false" />
   </ItemGroup>
 
