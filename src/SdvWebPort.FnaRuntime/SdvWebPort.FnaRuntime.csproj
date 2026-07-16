@@ -15,6 +15,20 @@
     <WasmEnableThreads>true</WasmEnableThreads>
   </PropertyGroup>
 
+  <!--
+    Disable dynamic code (System.Reflection.Emit) support.
+    XmlSerializer uses Reflection.Emit to generate temp assemblies at runtime,
+    which fails in WASM (browsers don't allow JIT).
+    Setting IsDynamicCodeSupported=false makes XmlSerializer use
+    ReflectionOnly mode (official .NET AOT/iOS-safe code path, since .NET 6).
+    This fixes: System.MissingMethodException at RuntimeTypeBuilder.SetParentCore
+                at XmlSerializer..ctor at SDV SaveSerialization.SaveSerializer
+  -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Runtime.RuntimeFeature.IsDynamicCodeSupported"
+                                     Value="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="Stardew Valley">
       <HintPath>$(MSBuildThisFileDirectory)..\..\download\sdv-fna-build\sdv-fna-src\bin\Debug\net8.0\Stardew Valley.dll</HintPath>

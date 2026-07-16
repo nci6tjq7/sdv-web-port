@@ -46,7 +46,7 @@ const os = require('os');
 
   console.log('=== Pass 1: register SW ===');
   try {
-    await page.goto('https://nci6tjq7.github.io/sdv-web-port/', {
+    await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784223074', {
       waitUntil: 'networkidle2',
       timeout: 60000
     });

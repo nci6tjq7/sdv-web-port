@@ -1895,3 +1895,63 @@ In rough order of probability:
 6. Verify with DevTools (Application → SW activated; Network → HTML response headers) before assuming success
 7. If still broken after the above: try `WasmEnableThreads=false` as a fallback to unblock the PoC
 
+
+## Task ID: research-4
+- **Agent:** research-4 subagent (general-purpose)
+- **Task:** Research how to fix `System.Reflection.Emit` not working in .NET 10 WebAssembly (XmlSerializer → TempAssembly.GenerateRefEmitAssembly → RuntimeTypeBuilder.SetParentCore crash)
+- **Scope:** Research only — no code changes
+- **Status:** DONE
+
+### Summary
+Investigated the `System.MissingMethodException at System.Reflection.Emit.RuntimeTypeBuilder.SetParentCore` crash triggered when `XmlSerializer..ctor(Type type)` is called inside `StardewValley.SerializableDictionary<long, Options>..cctor()` during `Game1..cctor()`. The crash blocks SDV startup entirely (cctor chain failure).
+
+### Key findings
+
+1. **Exact-match bug already filed & fixed:** [dotnet/runtime#59167](https://github.com/dotnet/runtime/issues/59167) — "XmlSerializer tries to use Reflection.Emit even if RuntimeFeature.IsDynamicCodeSupported is false." Fixed in .NET 6 by [PR #59386](https://github.com/dotnet/runtime/pull/59386). Fix: when `RuntimeFeature.IsDynamicCodeSupported=false`, `XmlSerializer.Mode` returns `SerializationMode.ReflectionOnly`, and the ctor early-returns at line 230 of `System.Private.Xml/.../XmlSerializer.cs` — no `GenerateTempAssembly`, no `GenerateRefEmitAssembly`, no Emit.
+
+2. **Mono WASM has SRE disabled at runtime** ([mono/mono#18473](https://github.com/mono/mono/issues/18473)) — the API surface is present (so `typeof(TypeBuilder)` resolves and our `<TrimmerRootAssembly>` keeps the assembly), but `RuntimeTypeBuilder.SetParentCore` throws `MissingMethodException` at runtime. This is why the trimmer roots aren't enough.
+
+3. **Mono WASM reports `IsDynamicCodeSupported=true` by default** (interpreter is present), so XmlSerializer's default `Mode = ReflectionAsBackup` triggers the Emit path. **The fix is to flip the switch.**
+
+4. **`<DynamicCodeSupport>false</DynamicCodeSupport>` MSBuild property** is the official way to set `RuntimeFeature.IsDynamicCodeSupported=false` (documented in `runtime/docs/workflow/trimming/feature-switches.md`). This is a one-line csproj change.
+
+5. **`sgen.exe` is .NET Framework only** — does NOT work for .NET Core / .NET 8 / .NET 10. The modern replacement is the `Microsoft.XmlSerializer.Generator` NuGet package.
+
+6. **`Microsoft.XmlSerializer.Generator` reliability issues:** [dotnet/runtime#121440](https://github.com/dotnet/runtime/issues/121440) reports that on .NET 9, pre-generated serializers may be loaded but not actually used (runtime falls back to reflection). [DeveloperCommunity#10980787](https://developercommunity.microsoft.com/t/MicrosoftXmlSerializerGenerator-broken/10980787) reports the package is broken on .NET 10 RC. The .NET 8 path is more reliable but still riskier than the feature-switch fix.
+
+7. **`[XmlSerializerAssembly]` attribute works** — `TempAssembly.LoadGeneratedAssembly` checks it on the type first, then falls back to auto-discovering `{AssemblyName}.XmlSerializers.dll` by naming convention. So no SDV patching is strictly needed if we pre-generate; we just need to ship the DLL with the right name.
+
+8. **No `UseReflectionEmit` switch exists** — the only relevant switch is `DynamicCodeSupport` (which controls `RuntimeFeature.IsDynamicCodeSupported` globally).
+
+9. **AOT does NOT fix this on its own.** `<RunAOTCompilation>true</RunAOTCompilation>` precompiles IL but doesn't flip `IsDynamicCodeSupported` (interpreter is still present). Must ALSO set `<DynamicCodeSupport>false</DynamicCodeSupport>`.
+
+10. **SDV-specific:** `SerializableDictionary<long, Options>..cctor()` is just creating a static `XmlSerializer` field — not serializing anything yet. The crash is at `new XmlSerializer(type)` ctor itself. `DynamicCodeSupport=false` will make the ctor early-return cleanly. Other SDV types also use XmlSerializer at startup (DescriptionElement, SaveMigrator_1_6.LegacyDescriptionElement) — all get fixed by the same switch.
+
+11. **Side-effect risk:** `Force.DeepCloner` (used by SDV) uses `Expression.Compile` in `ShallowObjectCloner.cs` and `DeepClonerExprGenerator.cs`. In Mono WASM, `Expression.Compile` goes through the interpreter regardless of `IsDynamicCodeSupported`, so it should keep working. Worth verifying at runtime. `System.Linq.Expressions.dll` may be trimmed ~4% (only matters if `<PublishTrimmed>true</PublishTrimmed>`, which is currently false).
+
+### Recommendation
+
+**Primary fix (simplest, lowest risk):** Add `<DynamicCodeSupport>false</DynamicCodeSupport>` to `src/SdvWebPort.PoC.SdvBlazor/SdvWebPort.PoC.SdvBlazor.csproj` (next to `<PublishTrimmed>false</PublishTrimmed>`). One-line change.
+
+**Fallback fix:** If `DynamicCodeSupport=false` breaks `Force.DeepCloner` or anything else:
+- Add `<PackageReference Include="Microsoft.XmlSerializer.Generator" Version="8.0.18" />`
+- Ship generated `StardewValley.XmlSerializers.dll` in `wwwroot/deps/`
+- Add to `SdvLoader._systemRefsToPreload`
+- Verify it's actually loaded at runtime (per #121440 caveats)
+
+**Deep fallback:** Cecil patch pass in `SdvAssemblyRefRewriter.cs` to either:
+- Add `[XmlSerializerAssembly]` to every serializable SDV type, OR
+- Replace `new XmlSerializer(type)` call sites with a custom shim
+
+### Files
+- `download/research-xmlserializer-wasm.md` — full findings (research-only, no code changes)
+
+### Next steps (for a future implementer task, not this research)
+1. Add `<DynamicCodeSupport>false</DynamicCodeSupport>` to `SdvWebPort.PoC.SdvBlazor.csproj`
+2. `dotnet build SdvWebPort.sln` — verify build still succeeds
+3. Run SDV in browser — verify `Game1..cctor()` no longer crashes at `SerializableDictionary..cctor()`
+4. Exercise any `Force.DeepCloner` code path (e.g. inventory clone, NetDictionary clone) to verify Expression.Compile still works through interpreter
+5. If a save file can be loaded, verify deserialize works (slower but functional via reflection-only mode)
+6. If `DynamicCodeSupport=false` causes other failures, escalate to Fix 2 (pre-generation) or Fix 3 (Cecil rewriting)
+7. Long-term follow-up: pre-generate serializers for performance (reflection-only is ~10× slower than pre-generated IL) — not a blocker
+
