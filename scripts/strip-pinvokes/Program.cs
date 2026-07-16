@@ -35,7 +35,8 @@ class Program
         Console.WriteLine($"[+] MonoPInvokeCallback attributes removed: {monoPInvokeCallbackAttrsRemoved}");
         Console.WriteLine($"[+] DllImport attributes removed: {dllImportAttrsRemoved}");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
+        var dir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         asm.Write(outputPath);
         Console.WriteLine($"[+] Written: {outputPath}");
         return 0;
