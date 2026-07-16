@@ -10,6 +10,17 @@ public static partial class Program
     // Microsoft.NET.Sdk.WebAssembly invokes this Main method.
     private static int Main(string[] args)
     {
+        // CRITICAL: Disable dynamic code BEFORE any XmlSerializer is touched.
+        // .NET WASM doesn't support System.Reflection.Emit (browsers don't allow JIT),
+        // but Mono WASM still reports IsDynamicCodeSupported=true. This causes
+        // XmlSerializer to try Reflection.Emit and crash with MissingMethodException.
+        // Setting this switch forces XmlSerializer into ReflectionOnly mode.
+        // Must happen before SDV's static constructors run (SerializableDictionary..cctor
+        // creates an XmlSerializer in its static init).
+        AppContext.SetSwitch("System.Runtime.RuntimeFeature.IsDynamicCodeSupported", false);
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false");
+        Console.WriteLine($"[SdvWebPort.FnaRuntime] IsDynamicCodeSupported = {System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported}");
+
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
 

@@ -1955,3 +1955,49 @@ Investigated the `System.MissingMethodException at System.Reflection.Emit.Runtim
 6. If `DynamicCodeSupport=false` causes other failures, escalate to Fix 2 (pre-generation) or Fix 3 (Cecil rewriting)
 7. Long-term follow-up: pre-generate serializers for performance (reflection-only is ~10× slower than pre-generated IL) — not a blocker
 
+
+---
+Task ID: phase8-signature-mismatch-FIXED
+Agent: main
+Task: Confirm signature mismatch is fixed, identify next blocker
+
+Work Log:
+- All 3 CI workflows succeeded for commit e8ec95d:
+  * FNA WASM Build ✅
+  * FNA WASM Runtime Build ✅
+  * Deploy to GitHub Pages ✅
+- Verified deployed FNA.wasm contains patched functions:
+  * INTERNAL_SDL_GetWindowFlags ✅
+  * INTERNAL_SDL_CreatePopupWindow ✅
+  * SDL_GetTicks / SDL_GetPerformanceCounter / SDL_SeekIO (plain ulong/long DllImports) ✅
+- Ran browser test (scripts/debug-sw.js):
+  * No "signature mismatch" errors ✅
+  * .NET WASM runtime boots ✅
+  * SDV Program.Main executes ✅
+  * SDV gets to Game1..cctor() (static constructor) ✅
+
+NEW BLOCKER identified:
+- System.MissingMethodException at System.Reflection.Emit.RuntimeTypeBuilder.SetParentCore
+- Stack: XmlSerializer..ctor -> SaveSerializer.GetSerializer -> SerializableDictionary<long,Options>..cctor -> Game1..cctor
+- Root cause: System.Reflection.Emit doesn't work in WASM (browsers don't allow JIT)
+- XmlSerializer uses Reflection.Emit to generate temp assemblies at runtime
+
+Fix applied (commit fc9ceb7):
+- Added <RuntimeHostConfigurationOption Include="System.Runtime.RuntimeFeature.IsDynamicCodeSupported" Value="false" />
+- This makes XmlSerializer use ReflectionOnly mode (official .NET AOT-safe path since .NET 6)
+- Reference: dotnet/runtime PR #59386 closing issue #59167
+
+Stage Summary:
+- ✅ "function signature mismatch" COMPLETELY FIXED
+- ✅ .NET WASM runtime boots in browser
+- ✅ SDV Program.Main executes
+- ✅ SDV reaches Game1 static constructor
+- ⏳ Waiting for fc9ceb7 build to test if XmlSerializer fix works
+- If fix works: next blocker is likely Content/ XNB files (game assets) not being deployed
+
+Next Steps:
+- Wait for fc9ceb7 CI build + deploy
+- Test in browser to see if SDV gets past Game1..cctor
+- If yes: identify next blocker (likely Content/ files)
+- If no: try fallback (pre-generate XmlSerializers, or patch SDV serialization)
+
