@@ -89,23 +89,26 @@ jobs:
           # 1. Replace WasmAppBuilder.dll in SDK (patched PInvokeTableGenerator)
           find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp tasks/net10.0/WasmAppBuilder.dll {} \;
           
-          # 2. Replace the NuGet runtime package's runtimes/browser-wasm/
-          # The NuGet path includes a version: ~/.nuget/packages/<pkg-id>/<version>/runtimes/browser-wasm/
+          # 2. Restore NuGet packages FIRST so we can patch them
+          cd src/SdvWebPort.FnaRuntime
+          dotnet restore
+          
+          # 3. Replace the NuGet runtime package's runtimes/browser-wasm/
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
-            echo "Patching: $dir"
-            cp -r runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
+            echo "Patching NuGet: $dir"
+            cp -r ../../download/dotnet-patched/runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
           done
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
-            echo "Patching: $dir"
-            cp -r runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
+            echo "Patching NuGet: $dir"
+            cp -r ../../download/dotnet-patched/runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
           done
           
-          # 3. Also replace SDK pack runtime
+          # 4. Also replace SDK pack runtime
           find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d | while read dir; do
-            cp -r runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
+            cp -r ../../download/dotnet-patched/runtimes/browser-wasm/native/* "$dir/" 2>/dev/null || true
           done
           find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d | while read dir; do
-            cp -r runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
+            cp -r ../../download/dotnet-patched/runtimes/browser-wasm/lib/* "$dir/" 2>/dev/null || true
           done
           
           echo "=== Verify WASM_N2M_AOT_DIRECT_ARG in pinvoke.h ==="
