@@ -2048,3 +2048,47 @@ Work Log:
 4. Test in browser — `Game1..cctor()` should no longer crash.
 5. If still broken: implement the IL-rewrite fallback (`XmlSerializerModePatcher.cs`).
 6. If still broken: try pre-generation as a tertiary fix.
+
+---
+
+## Task ID: research-6
+- **Agent:** research-subagent (general-purpose)
+- **Date:** 2026-07-16
+- **Task:** Research how r58Playz's celeste-wasm + FNA-WASM-Build set up the SDL3 canvas for WebGL rendering under .NET 10 WASM threaded mode, after SDV crashed with `Cannot read properties of undefined (reading 'getParameter')` during FNA3D OpenGL driver init.
+
+### Method
+- Cloned https://github.com/MercuryWorkshop/celeste-wasm (actual files under `frontend/`, not `wwwroot/`)
+- Cloned https://github.com/r58Playz/FNA-WASM-Build
+- Cloned https://github.com/libsdl-org/SDL.git (release-3.2.x) — read upstream SDL3 emscripten video driver
+- Cloned https://github.com/emscripten-core/emscripten.git — read `libpthread.js`, `libhtml5.js`, `libhtml5_webgl.js`, `libwebgl.js`
+- Cloned https://github.com/FNA-XNA/FNA3D.git — read `FNA3D_Driver_OpenGL.c` to find the exact `glGetString(GL_RENDERER)` call site
+- Verified SDV's current `index.html` / `main.js` / build scripts have no OffscreenCanvas transfer setup
+
+### Key findings
+
+1. **Root cause (definitive):** In .NET 10 WASM threaded mode, all C# code runs inside the deputy worker (`dotnet-worker-001`), not on the DOM main thread. The `<canvas>` only exists on the DOM thread. SDL3's emscripten video driver defaults to looking up `#canvas` via `findCanvasEventTarget`, which checks `GL.offscreenCanvases` (empty — no canvas was transferred) → `Module['canvas']` (not set) → `document.querySelector` (undefined inside a worker). `emscripten_webgl_create_context("#canvas", ...)` returns 0. FNA3D still calls `SDL_GL_GetProcAddress("glGetString")` (returns a non-null JS stub pointer), then calls it with `GL_RENDERER`. The stub executes `GLctx.getParameter(name_)` from `libwebgl.js:1314`, where `GLctx` is `undefined` because no context was ever created → exact error.
+
+2. **celeste-wasm fix is purely JS-side (no runtime rebuild):**
+   - HTML: `<canvas id="canvas" class="canvas ...">` — the literal CSS class `canvas` is what the selector matches
+   - Makefile:45 applies this sed patch to `dotnet.native.*.js` after `dotnet publish`:
+     ```sh
+     sed -i 's/var offscreenCanvases \?= \?{};/var offscreenCanvases={};if(globalThis.window\&\&!window.TRANSFERRED_CANVAS){transferredCanvasNames=[".canvas"];window.TRANSFERRED_CANVAS=true;}/' frontend/public/_framework/dotnet.native.*.js
+     ```
+   - The patch injects code into the `pthread_create` JS shim that, on the main thread only, sets `transferredCanvasNames=[".canvas"]`. emscripten then calls `document.querySelector(".canvas").transferControlToOffscreen()` and sends the resulting `OffscreenCanvas` to the new worker, keyed by DOM `id` in `GL.offscreenCanvases["canvas"]`.
+
+3. **`dotnet.create()` needs NO canvas config.** Verified in `dotnetdefs.d.ts` — `MonoConfig` has no `canvas`, `transferredCanvasNames`, or `offscreenCanvases` field. celeste-wasm just calls `dotnet.withConfig({pthreadPoolInitialSize:16}).withRuntimeOptions([...]).create()` and relies entirely on the sed patch + CSS class.
+
+4. **SDL3 hardcodes `#canvas` as the default selector** (`SDL_emscriptenvideo.c:295-300`). Override via `SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#myId")` if needed. No JS-side `SDL_RegisterApp` / `SDL_RegisterCanvas` API exists.
+
+5. **No `dotnet.gl.js` or extra JS imports** are required — the patched `dotnet.native.*.js` + `dotnet.js` contain everything.
+
+6. **SDV's current setup is missing both pieces:** `<canvas id="canvas" width="1280" height="720">` (no CSS class) and no sed patch in `scripts/build-sdv-fna.sh` / `patch-sdv-fna.sh`. Confirmed by grep — no `TRANSFERRED_CANVAS` / `transferredCanvasNames` / `offscreenCanvases` / `transferControlToOffscreen` references anywhere in `scripts/` or `src/`.
+
+### Deliverable
+- `download/research-fna-wasm-canvas.md` — comprehensive findings, exact sed patch, exact HTML change, alternative approaches (runtime rebuild / C-side `pthread_attr_settransferredcanvases` / `OFFSCREEN_FRAMEBUFFER` proxy — all inferior), full source file references.
+
+### Recommended next actions (for an implementer task, not this research)
+1. Edit `src/SdvWebPort.FnaRuntime/wwwroot/index.html:90` — change `<canvas id="canvas" width="1280" height="720">` to `<canvas id="canvas" class="canvas" width="1280" height="720">`.
+2. Edit `scripts/build-sdv-fna.sh` (or `scripts/patch-sdv-fna.sh`) — after `dotnet publish`, add the celeste-wasm sed patch targeting the published `_framework/dotnet.native.*.js`. Use the exact regex from celeste-wasm `Makefile:45`.
+3. Rebuild and test in browser — should see `pthread_create: canvas.transferControlToOffscreen()...` in console (with GL_DEBUG), then FNA3D's `OpenGL Renderer:WebKit WebGL` log, then SDV should advance past FNA3D init.
+4. If still failing: verify the patch landed in `dotnet.native.*.js` (grep for `TRANSFERRED_CANVAS`) and that `crossOriginIsolated` is true (required for OffscreenCanvas transfer).
