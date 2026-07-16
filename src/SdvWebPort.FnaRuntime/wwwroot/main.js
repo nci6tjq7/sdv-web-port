@@ -46,7 +46,23 @@ const SDV = {
         try {
             const { dotnet } = await import('./_framework/dotnet.js');
             console.log("[SDV] dotnet.js loaded, creating instance...");
-            dotnetInstance = await dotnet.create();
+
+            // Transfer the canvas to the WASM worker thread BEFORE creating the runtime.
+            // .NET 10 threaded WASM runs all C# in the deputy worker, but <canvas> lives
+            // on the DOM thread. SDL3's emscripten video driver hardcodes '#canvas' as
+            // the selector and looks up GL.offscreenCanvases["canvas"] which is empty
+            // unless we transfer the canvas via transferControlToOffscreen().
+            //
+            // The .NET WASM SDK supports `transferredCanvasNames` in the runtime config.
+            // Each named canvas will be transferred to the worker automatically.
+            // We pass the canvas id ("canvas") which matches our <canvas id="canvas">.
+            //
+            // Reference: celeste-wasm pattern (MercuryWorkshop/celeste-wasm)
+            const canvasConfig = {
+                transferredCanvasNames: ['canvas']
+            };
+            console.log("[SDV] Config with transferredCanvasNames:", canvasConfig);
+            dotnetInstance = await dotnet.withConfig(canvasConfig).create();
             console.log("[SDV] .NET runtime loaded");
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
