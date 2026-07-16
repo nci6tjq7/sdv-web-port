@@ -179,6 +179,28 @@ PYEOF
 # FnaCompat.cs
 cp "${SCRIPT_DIR}/FnaCompat.cs" "$SRC_DIR/FnaCompat.cs"
 
+# Create Properties/AssemblyInfo.cs with the original assembly attributes.
+# The custom decompiler (scripts/decompile-sdv) iterates over type definitions
+# only — it does NOT emit assembly-level attributes. Without this file, the
+# recompiled Stardew Valley.dll has no AssemblyInformationalVersion, and
+# Game1..cctor() throws "No game version found in assembly info."
+mkdir -p "$SRC_DIR/Properties"
+cat > "$SRC_DIR/Properties/AssemblyInfo.cs" << 'ASMINFOEOF'
+using System.Reflection;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("StardewModdingAPI")]
+[assembly: AssemblyCompany("ConcernedApe")]
+[assembly: AssemblyConfiguration("Release")]
+[assembly: AssemblyCopyright("Copyright © ConcernedApe 2013")]
+[assembly: AssemblyFileVersion("1.6.15.24356")]
+[assembly: AssemblyInformationalVersion("1.6.15, , 24356, ")]
+[assembly: AssemblyProduct("Stardew Valley")]
+[assembly: AssemblyTitle("Stardew Valley")]
+[assembly: AssemblyVersion("1.6.15.24356")]
+ASMINFOEOF
+echo "[+] Created Properties/AssemblyInfo.cs with version 1.6.15.24356"
+
 # Create csproj
 cat > "$SRC_DIR/StardewValley.csproj" << CSPROJ
 <Project Sdk="Microsoft.NET.Sdk">
