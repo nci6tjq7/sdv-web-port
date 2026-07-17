@@ -2190,3 +2190,44 @@ This single change (specifically `-sMIN_WEBGL_VERSION=2`) should fix the "OpenGL
 2. **If A:** create `SdvWebPort.KniRuntime` Blazor WASM project, port `KniCompatShim.cs` (Texture2D.FromStream, Audio, GameWindow adapters), delete FNA3D native pipeline, delete `SdvWebPort.FnaRuntime`.
 3. **If B:** bump `global.json` to .NET 10 RTM SDK (latest servicing); keep r58Playz runtime; apply canvas-transfer sed patch from research-6; apply `<DynamicCodeSupport>false</DynamicCodeSupport>` from research-5; audit FNA3D.cs/SDL3.cs PInvokes for `ulong`-enum #112262 workaround.
 4. **In parallel:** subscribe to dotnet/runtime#112262 and dotnet/runtime#130634 for fix notifications; subscribe to .NET 11 release notes for Browser CoreCLR native-toolchain availability; re-evaluate direction in Nov 2026 (.NET 11 RTM).
+
+---
+Task ID: phase9-strategic-pivot-success
+Agent: main
+Task: Strategic pivot based on research — fix root cause instead of patching symptoms
+
+Work Log:
+- Conducted 3 parallel research subagents (research-7, research-8, research-9, research-10):
+  * research-7: r58Playz FNA3D patches — found they only remove SDLGPU + add pthread, NO ES3 patches
+  * research-8: WASM alternatives — found KNI Blazor.GL as strategic alternative
+  * research-9: EmccExtraLDFlags — found WasmBuildNative=true is required for flags to take effect
+  * research-10: celeste-wasm canvas setup — found 1-line sed patch for transferredCanvasNames
+
+- Applied research findings:
+  1. Added <EmccExtraLDFlags> with -sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT (csproj)
+  2. Added <WasmBuildNative>true</WasmBuildNative> (required for EmccExtraLDFlags)
+  3. Applied celeste-wasm 1-line sed for transferredCanvasNames (replaced 250-line Python script)
+  4. Reverted to r58Playz pre-built fnalibs initially, then switched to our build-fnalibs with 4 patches
+  5. Removed all JS canvas transfer hacks (Worker constructor wrap, Object.defineProperty, etc.)
+  6. Removed SDL_SetHint/SDL_GetHintBoolean/SDL_GetPlatform P/Invokes from Program.cs
+
+- FNA3D source patches (scripts/patch-fna3d-es3.py, 4 patches):
+  1. forceES3 = 1 (hardcode, skip SDL_GetHintBoolean)
+  2. useES3 = 1 (THE KEY FIX — skip broken SDL_GL_GetAttribute)
+  3. Skip DoublePrecisionDepth check when useES3 (WebGL lacks glClearDepth/glDepthRange)
+  4. Skip BaseGL check when useES3 (WebGL GL proc lookup is finicky)
+
+Stage Summary:
+- ✅ WebGL 2.0 context created successfully (OpenGL ES 3.0)
+- ✅ FNA3D OpenGL driver initialized successfully
+- ✅ GraphicsDevice created
+- ✅ SDV reaches GameRunner.Initialize() → AddGameInstance()
+- ❌ New blocker: ArgumentNullException at GameRunner.AddGameInstance (type parameter is null)
+- This is an APPLICATION-LEVEL error, not a graphics/runtime error!
+- SDV has progressed from "signature mismatch" to "game logic initialization"!
+
+Next Steps:
+- Debug ArgumentNullException at GameRunner.AddGameInstance
+- Likely related to SDV's player initialization needing Content/ files or platform-specific code
+- The hardest part (FNA3D + WebGL 2.0 + ES3) is DONE
+
