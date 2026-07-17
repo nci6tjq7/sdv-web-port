@@ -41,13 +41,20 @@ jobs:
           git clone -b ${{ env.SDL_VERSION }} --depth 1 https://github.com/libsdl-org/SDL
           cd SDL
           mkdir emscripten-build && cd emscripten-build
+          # Enable pthreads + atomics for SharedArrayBuffer support.
+          # .NET 10 WASM uses threads (--shared-memory), which requires all
+          # linked libraries to be compiled with 'atomics' and 'bulk-memory' features.
+          # Without these, wasm-ld fails: '--shared-memory is disallowed by SDL_spinlock.c.o
+          # because it was not compiled with atomics or bulk-memory features'.
           emcmake cmake -S .. \
             -DSDL_WERROR=OFF \
             -DSDL_TESTS=OFF \
             -DSDL_INSTALL_TESTS=OFF \
             -DCMAKE_BUILD_TYPE=Release \
-            -DSDL_PTHREADS=OFF \
-            -DSDL_PTHREADS_SEM=OFF \
+            -DSDL_PTHREADS=ON \
+            -DSDL_PTHREADS_SEM=ON \
+            -DCMAKE_C_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
+            -DCMAKE_CXX_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
             -GNinja
           ninja
           ninja install
@@ -93,6 +100,8 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
+            -DCMAKE_C_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
+            -DCMAKE_CXX_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
             -GNinja
           ninja
           
@@ -116,6 +125,8 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_PREFIX_PATH=${SDL3_PREFIX} \
             -DSDL3_DIR=${SDL3_PREFIX}/cmake \
+            -DCMAKE_C_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
+            -DCMAKE_CXX_FLAGS="-pthread -msimd128 -mmutable-globals -msign-ext -mbulk-memory -matomics" \
             -GNinja
           ninja
           cp libFAudio.a /tmp/FAudio.a
