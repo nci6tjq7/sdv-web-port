@@ -56,6 +56,15 @@ class Program
         // keyboard events are captured by our main.js setupInput() handler.
         methodsNopped += NopMethod(asm, "StardewValley.KeyboardInput", "Initialize");
 
+        // Options.setToDefaults — calls GraphicsAdapter.SupportedDisplayModes.First()
+        // to pick a default display mode. In WASM/WebGL, SupportedDisplayModes is
+        // empty (no desktop display modes), causing InvalidOperationException: NoElements.
+        // 
+        // Fix: NOP setToDefaults — options will be set to default values by SDV's
+        // configuration loading later. The title screen doesn't need display mode
+        // selection (we hardcode 1280x720 in the canvas).
+        methodsNopped += NopMethod(asm, "StardewValley.Options", "setToDefaults");
+
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
         var dir = Path.GetDirectoryName(outputPath);
