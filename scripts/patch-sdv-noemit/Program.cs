@@ -70,8 +70,13 @@ class Program
         //   InvalidOperationException: Can't get TitleContainer.Location property from MonoGame
         // 
         // Fix: patch GetContentRoot to return "Content" directly.
-        // This is the directory where FNA's ContentManager looks for .xnb files.
         methodsNopped += PatchGetContentRoot(asm);
+
+        // LocalizedContentManager.DoesAssetExist — uses File.Exists to check if an
+        // asset exists before loading. In WASM, File.Exists always returns false.
+        // Fix: patch DoesAssetExist to always return true — let OpenStream handle
+        // the actual file loading via HTTP.
+        methodsNopped += PatchDoesAssetExist(asm);
 
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
@@ -106,7 +111,64 @@ class Program
     }
 
     /// <summary>
-    /// Patch LocalizedContentManager.GetContentRoot to return "Content" directly.
+    /// Patch LocalizedContentManager.DoesAssetExist to always return true.
+    /// In WASM, File.Exists always returns false, so DoesAssetExist would
+    /// report all assets as missing. By returning true, we let the actual
+    /// OpenStream/Load path handle file access (via HttpTitleContainer).
+    /// </summary>
+    static int PatchDoesAssetExist(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            TypeDefinition FindType(TypeDefinition parent, string name)
+            {
+                if (parent.FullName == name) return parent;
+                foreach (var nested in parent.NestedTypes)
+                {
+                    var found = FindType(nested, name);
+                    if (found != null) return found;
+                }
+                return null;
+            }
+
+            TypeDefinition targetType = null;
+            foreach (var topType in module.Types)
+            {
+                targetType = FindType(topType, "StardewValley.LocalizedContentManager");
+                if (targetType != null) break;
+            }
+
+            if (targetType == null)
+            {
+                Console.WriteLine("  [!] LocalizedContentManager type not found for DoesAssetExist");
+                return 0;
+            }
+
+            // DoesAssetExist is a generic method. Find all variants.
+            int patched = 0;
+            foreach (var method in targetType.Methods)
+            {
+                if (method.Name == "DoesAssetExist")
+                {
+                    var instrs = method.Body.Instructions;
+                    instrs.Clear();
+                    method.Body.ExceptionHandlers.Clear();
+                    instrs.Add(Instruction.Create(OpCodes.Ldc_I4_1)); // true
+                    instrs.Add(Instruction.Create(OpCodes.Ret));
+                    method.Body.InitLocals = true;
+                    Console.WriteLine($"  [-] Patched DoesAssetExist<{method.GenericParameters.Count} params> → return true");
+                    patched++;
+                }
+            }
+
+            if (patched == 0)
+            {
+                Console.WriteLine("  [!] DoesAssetExist method not found");
+            }
+            return patched;
+        }
+        return 0;
+    }
     /// 
     /// Original method accesses TitleContainer.Location (a MonoGame API not in FNA),
     /// causing: InvalidOperationException: Can't get TitleContainer.Location property
