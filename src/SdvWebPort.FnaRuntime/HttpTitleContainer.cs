@@ -35,6 +35,17 @@ namespace Microsoft.Xna.Framework
         }
 
         /// <summary>
+        /// The root directory for content files.
+        /// SDV's LocalizedContentManager.GetContentRoot() reads this property.
+        /// In FNA, TitleContainer doesn't have a Location property (it's MonoGame),
+        /// but SDV expects it. We return "Content" to match SDV's expectation.
+        /// </summary>
+        public static string Location
+        {
+            get { return "Content"; }
+        }
+
+        /// <summary>
         /// Open a stream to a Content file via HTTP fetch.
         /// This is a synchronous wrapper around HttpClient.GetAsync.
         /// </summary>

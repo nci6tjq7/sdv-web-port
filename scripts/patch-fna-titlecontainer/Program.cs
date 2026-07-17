@@ -70,6 +70,42 @@ class Program
 
         Console.WriteLine($"[+] Patched TitleContainer.OpenStream -> HttpTitleContainer.OpenStream");
 
+        // Also add a Location property to TitleContainer (SDV expects it from MonoGame)
+        // TitleContainer.Location returns "Content" via HttpTitleContainer.Location
+        var shimLocationProperty = shimType.Properties.FirstOrDefault(p => p.Name == "Location");
+        if (shimLocationProperty != null && shimLocationProperty.GetMethod != null)
+        {
+            var importedLocationGetter = fnaAsm.MainModule.ImportReference(shimLocationProperty.GetMethod);
+
+            // Check if TitleContainer already has a Location property
+            var existingLocationProp = titleContainerType.Properties.FirstOrDefault(p => p.Name == "Location");
+            if (existingLocationProp == null)
+            {
+                // Create a new property
+                var stringType = fnaAsm.MainModule.ImportReference(typeof(string));
+                var locationProperty = new PropertyDefinition("Location", PropertyAttributes.None, stringType);
+
+                // Create the getter method
+                var getter = new MethodDefinition("get_Location",
+                    MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig | MethodAttributes.SpecialName,
+                    stringType);
+                getter.Body = new MethodBody(getter);
+                getter.Body.Instructions.Add(Instruction.Create(OpCodes.Call, importedLocationGetter));
+                getter.Body.Instructions.Add(Instruction.Create(OpCodes.Ret));
+                getter.Body.InitLocals = true;
+
+                locationProperty.GetMethod = getter;
+                titleContainerType.Methods.Add(getter);
+                titleContainerType.Properties.Add(locationProperty);
+
+                Console.WriteLine($"[+] Added TitleContainer.Location property -> HttpTitleContainer.Location");
+            }
+            else
+            {
+                Console.WriteLine($"[SKIP] TitleContainer.Location already exists");
+            }
+        }
+
         // Write to a temp file first, then replace the original
         var tempPath = fnaPath + ".tmp";
         using (var fs = File.Create(tempPath))
