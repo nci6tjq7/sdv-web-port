@@ -46,6 +46,16 @@ class Program
         // The game will still boot; player defaults will be set later by Game1.
         methodsNopped += NopMethod(asm, "StardewValley.GameRunner", "SetInstanceDefaults");
 
+        // KeyboardInput.Initialize — uses SetWindowsHookEx-style callback (HookProc)
+        // which requires native-to-managed transition. In WASM, this throws:
+        //   PlatformNotSupportedException: No native to managed transition for method
+        //   'KeyboardInput.HookProc', missing [UnmanagedCallersOnly] attribute.
+        // 
+        // Fix: NOP KeyboardInput.Initialize — keyboard input is handled by SDL3
+        // directly via FNA's event loop, not by Windows hooks. The browser's
+        // keyboard events are captured by our main.js setupInput() handler.
+        methodsNopped += NopMethod(asm, "StardewValley.KeyboardInput", "Initialize");
+
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
         var dir = Path.GetDirectoryName(outputPath);
