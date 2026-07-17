@@ -115,26 +115,40 @@ def patch_file(path):
             return False
     print(f'  [OK] {path}: patched findEventTarget ({n} replacement(s))')
 
-    # Step 2: Force WebGL 2.0 context (OpenGL ES 3.0) by patching
-    # _emscripten_webgl_do_create_context to override majorVersion=2.
-    # FNA3D checks SDL_GetPlatform() which returns "Unknown" (not "Emscripten")
-    # in .NET WASM, so FNA3D_OPENGL_FORCE_ES3 env var is needed. But env vars
-    # may not propagate from .NET to C's getenv(). Directly patching the JS
-    # ensures WebGL 2.0 context is always requested.
+    # Step 2: Force WebGL 2.0 context (OpenGL ES 3.0) by patching TWO places:
     #
-    # The contextAttributes object in _emscripten_webgl_do_create_context has
-    # properties read from GROWABLE_HEAP_I32(). We match that specific object
-    # (not the one in Browser.createContext which has hardcoded values).
-    # The object ends with `};` — we add the override AFTER it.
-    pattern_gl = re.compile(
+    # A) _emscripten_webgl_do_create_context: override contextAttributes.majorVersion = 2
+    #    (FNA3D doesn't set ES3 because SDL_GetPlatform() returns "Unknown" not "Emscripten")
+    #
+    # B) GL.createContext: use "webgl2" instead of "webgl" when majorVersion >= 2
+    #    (emscripten's GL.createContext hardcodes "webgl", ignoring majorVersion)
+    #
+    # Both patches are needed — without (A), majorVersion defaults to 1.
+    # Without (B), even majorVersion=2 still creates a WebGL 1.0 context.
+
+    # Patch A: force majorVersion=2
+    pattern_major = re.compile(
         r'(var\s+contextAttributes\s*=\s*\{[^}]*majorVersion:\s*GROWABLE_HEAP_I32\(\)\[a\s*\+\s*\(32\s*>>\s*2\)\][^}]*\};)'
     )
-    replacement_gl = r'\1 contextAttributes.majorVersion = Math.max(contextAttributes.majorVersion || 1, 2); /* SDV: force WebGL 2.0 = OpenGL ES 3.0 */'
-    new_content, n_gl = pattern_gl.subn(replacement_gl, new_content, count=1)
-    if n_gl > 0:
-        print(f'  [OK] {path}: forced WebGL 2.0 majorVersion ({n_gl} replacement(s))')
+    replacement_major = r'\1 contextAttributes.majorVersion = Math.max(contextAttributes.majorVersion || 1, 2); /* SDV: force WebGL 2.0 = OpenGL ES 3.0 */'
+    new_content, n_major = pattern_major.subn(replacement_major, new_content, count=1)
+    if n_major > 0:
+        print(f'  [OK] {path}: forced majorVersion=2 ({n_major} replacement(s))')
     else:
-        print(f'  [WARN] {path}: could not patch majorVersion (pattern not found)')
+        print(f'  [WARN] {path}: could not patch majorVersion')
+
+    # Patch B: use "webgl2" when majorVersion >= 2
+    # Original: var ctx = (canvas.getContext("webgl", webGLContextAttributes));
+    # Patched:  var ctx = (canvas.getContext(webGLContextAttributes.majorVersion >= 2 ? "webgl2" : "webgl", webGLContextAttributes));
+    pattern_ctx = re.compile(
+        r'(var\s+ctx\s*=\s*\(canvas\.getContext\()"webgl"(\s*,\s*webGLContextAttributes\)\))'
+    )
+    replacement_ctx = r'\1webGLContextAttributes.majorVersion >= 2 ? "webgl2" : "webgl"\2'
+    new_content, n_ctx = pattern_ctx.subn(replacement_ctx, new_content, count=1)
+    if n_ctx > 0:
+        print(f'  [OK] {path}: patched GL.createContext to use webgl2 ({n_ctx} replacement(s))')
+    else:
+        print(f'  [WARN] {path}: could not patch GL.createContext getContext call')
 
     # Step 3: Append message listener IIFE
     new_content = new_content + MESSAGE_LISTENER_IIFE
