@@ -179,6 +179,22 @@ function __sdvCanvasMessageHandler(e){
 }
 // Install immediately — will be called for ALL messages before self.onmessage
 self.addEventListener('message',__sdvCanvasMessageHandler);
+// Set environment variables that C library reads via getenv().
+// FNA3D_OPENGL_FORCE_ES3=1: forces OpenGL ES 3.0 context (WebGL 2.0 in emscripten).
+// The .NET WASM SDK's withEnvironmentVariables may not propagate to the worker's
+// emscripten ENV object, so we set it directly here.
+// We can't access ENV yet (it's defined inside dotnet.native.js), but we CAN
+// override getenv() to return our value. Emscripten's getenv reads from ENV
+// object, so we patch ENV after module load via a getter.
+// Simpler: set it on the Module object that emscripten reads.
+if(typeof Module==='undefined')Module={};
+Module.preRun=Module.preRun||[];
+Module.preRun.push(function(){
+  if(typeof ENV!=='undefined'){
+    ENV.FNA3D_OPENGL_FORCE_ES3='1';
+    if(typeof console!=='undefined')console.log('[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1');
+  }
+});
 """
 
     # Prepend the inject at the very top of the file (after the license comment)
