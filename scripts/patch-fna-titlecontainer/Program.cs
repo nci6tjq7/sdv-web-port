@@ -20,11 +20,13 @@ class Program
         var shimPath = args[1];
 
         Console.WriteLine($"[+] Reading FNA: {fnaPath}");
-        // Read with ReadWrite mode so we can write back
-        var fnaAsm = AssemblyDefinition.ReadAssembly(fnaPath, new ReaderParameters { ReadWrite = true });
+        // Read into memory (not ReadWrite mode — that has issues with embedded resources)
+        var fnaBytes = File.ReadAllBytes(fnaPath);
+        var fnaAsm = AssemblyDefinition.ReadAssembly(new MemoryStream(fnaBytes));
 
         Console.WriteLine($"[+] Reading HttpTitleContainer: {shimPath}");
-        var shimAsm = AssemblyDefinition.ReadAssembly(shimPath, new ReaderParameters { AssemblyResolver = new DefaultAssemblyResolver() });
+        var shimBytes = File.ReadAllBytes(shimPath);
+        var shimAsm = AssemblyDefinition.ReadAssembly(new MemoryStream(shimBytes));
 
         var shimType = shimAsm.MainModule.Types.FirstOrDefault(t => t.FullName == "Microsoft.Xna.Framework.HttpTitleContainer");
         if (shimType == null)
@@ -68,7 +70,15 @@ class Program
 
         Console.WriteLine($"[+] Patched TitleContainer.OpenStream -> HttpTitleContainer.OpenStream");
 
-        fnaAsm.Write(fnaPath);
+        // Write to a temp file first, then replace the original
+        var tempPath = fnaPath + ".tmp";
+        using (var fs = File.Create(tempPath))
+        {
+            fnaAsm.Write(fs);
+        }
+        fnaAsm.Dispose();
+        File.Copy(tempPath, fnaPath, overwrite: true);
+        File.Delete(tempPath);
         Console.WriteLine($"[+] Written: {fnaPath}");
         return 0;
     }
