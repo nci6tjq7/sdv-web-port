@@ -62,19 +62,24 @@ jobs:
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/Stardew\ Valley.dll
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll
 
-      - name: Download pre-built fnalibs from r58Playz (threaded)
+      - name: Download fnalibs (our build with useES3 patch, fallback to r58Playz)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p download/fnalibs
-          # Use r58Playz's pre-built fnalibs — proven by celeste-wasm.
-          # Their FNA3D.a is upstream + minimal patches (SDLGPU removed, pthread added).
-          # We do NOT need to build FNA3D from source — the ES3 issue is fixed by
-          # EmccExtraLDFlags="-sMIN_WEBGL_VERSION=2" in the csproj, not by patching FNA3D.
-          RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
-          BASE="https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}"
-          curl -sL "${BASE}/SDL3.a" -o download/fnalibs/SDL3.a
-          curl -sL "${BASE}/FNA3D.a" -o download/fnalibs/FNA3D.a
-          curl -sL "${BASE}/FAudio.a" -o download/fnalibs/FAudio.a
-          curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
+          # Try to download our own fnalibs (with useES3=1 patch) from build-fnalibs workflow.
+          # If not available, fall back to r58Playz pre-built fnalibs.
+          python3 ${{ github.workspace }}/scripts/download-fnalibs-artifact.py download/fnalibs "$GH_TOKEN" || true
+          # If download failed or no artifact, use r58Playz
+          if [ ! -f download/fnalibs/FNA3D.a ]; then
+            echo "Falling back to r58Playz pre-built fnalibs"
+            RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
+            BASE="https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}"
+            curl -sL "${BASE}/SDL3.a" -o download/fnalibs/SDL3.a
+            curl -sL "${BASE}/FNA3D.a" -o download/fnalibs/FNA3D.a
+            curl -sL "${BASE}/FAudio.a" -o download/fnalibs/FAudio.a
+            curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
+          fi
           ls -la download/fnalibs/
 
       - name: Download and FULLY install patched .NET runtime from r58Playz
