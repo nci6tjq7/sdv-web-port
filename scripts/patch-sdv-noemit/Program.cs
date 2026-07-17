@@ -76,7 +76,13 @@ class Program
         // asset exists before loading. In WASM, File.Exists always returns false.
         // Fix: patch DoesAssetExist to always return true — let OpenStream handle
         // the actual file loading via HTTP.
-        methodsNopped += PatchDoesAssetExist(asm);
+        // NOTE: This caused StackOverflow because LoadImpl retried on "missing" assets.
+        // Disabled — we need a different approach.
+        // methodsNopped += PatchDoesAssetExist(asm);
+
+        // Instead: patch all File.Exists calls in LocalizedContentManager to return true.
+        // This is more targeted — only affects file existence checks within this class.
+        methodsNopped += PatchFileExistsInLocalizedContentManager(asm);
 
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
@@ -107,6 +113,68 @@ class Program
             return 1;
         }
         Console.WriteLine($"  [!] Method not found: {typeFullName}::{methodName}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Patch all File.Exists calls in LocalizedContentManager to return true.
+    /// In WASM, File.Exists always returns false for HTTP-served files.
+    /// By replacing 'call File.Exists' with 'ldc.i4.1' (true), we ensure
+    /// the code always proceeds to OpenStream which fetches via HTTP.
+    /// </summary>
+    static int PatchFileExistsInLocalizedContentManager(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            TypeDefinition FindType(TypeDefinition parent, string name)
+            {
+                if (parent.FullName == name) return parent;
+                foreach (var nested in parent.NestedTypes)
+                {
+                    var found = FindType(nested, name);
+                    if (found != null) return found;
+                }
+                return null;
+            }
+
+            TypeDefinition targetType = null;
+            foreach (var topType in module.Types)
+            {
+                targetType = FindType(topType, "StardewValley.LocalizedContentManager");
+                if (targetType != null) break;
+            }
+
+            if (targetType == null)
+            {
+                Console.WriteLine("  [!] LocalizedContentManager type not found for File.Exists patch");
+                return 0;
+            }
+
+            int patched = 0;
+            foreach (var method in targetType.Methods)
+            {
+                if (method.Body == null) continue;
+                foreach (var instr in method.Body.Instructions)
+                {
+                    if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr && mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
+                    {
+                        instr.OpCode = OpCodes.Ldc_I4_1; // push true
+                        instr.Operand = null;
+                        patched++;
+                    }
+                }
+            }
+
+            if (patched > 0)
+            {
+                Console.WriteLine($"  [-] Patched {patched} File.Exists → true in LocalizedContentManager");
+            }
+            else
+            {
+                Console.WriteLine("  [!] No File.Exists calls found in LocalizedContentManager");
+            }
+            return patched > 0 ? 1 : 0;
+        }
         return 0;
     }
 
