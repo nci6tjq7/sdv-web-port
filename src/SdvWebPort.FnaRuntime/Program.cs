@@ -17,6 +17,12 @@ public static partial class Program
     [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint SDL_SetHint(string name, string value);
 
+    // SDL_SetHintWithPriority with SDL_HINT_OVERRIDE (=2) forces the hint
+    // to be set regardless of existing priority. Used as fallback if
+    // SDL_SetHint returns 0 (failure).
+    [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
+    private static extern uint SDL_SetHintWithPriority(string name, string value, int priority);
+
     // Microsoft.NET.Sdk.WebAssembly invokes this Main method.
     private static int Main(string[] args)
     {
@@ -45,8 +51,17 @@ public static partial class Program
         // (SDL_GL_CONTEXT_MAJOR_VERSION=3, SDL_GL_CONTEXT_PROFILE_MASK=ES).
         try
         {
+            // Try SDL_SetHint first (normal priority)
             var result = SDL_SetHint("FNA3D_OPENGL_FORCE_ES3", "1");
-            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHint(FNA3D_OPENGL_FORCE_ES3, 1) = {result} (nonzero=true)");
+            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHint = {result}");
+
+            // If SDL_SetHint returned 0 (failure), try with OVERRIDE priority
+            if (result == 0)
+            {
+                // SDL_HINT_OVERRIDE = 2
+                result = SDL_SetHintWithPriority("FNA3D_OPENGL_FORCE_ES3", "1", 2);
+                Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHintWithPriority(OVERRIDE) = {result}");
+            }
         }
         catch (Exception ex)
         {
