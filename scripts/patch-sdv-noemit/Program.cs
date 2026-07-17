@@ -26,11 +26,21 @@ class Program
         // LocalMultiplayer.GenerateDynamicMethodsForStatics() — uses Reflection.Emit
         // (DynamicMethod, ILGenerator) to generate static field accessors at runtime.
         // This throws PlatformNotSupportedException in WASM (no JIT).
-        // Patch to NOP since the generated methods are only used for save serialization
-        // which is not needed for the title screen demo.
-        methodsNopped += NopMethod(asm, "StardewValley.LocalMultiplayer", "GenerateDynamicMethodsForStatics");
+        // 
+        // CRITICAL: We can't just NOP it — AddGameInstance calls
+        // Activator.CreateInstance(LocalMultiplayer.StaticVarHolderType) which would
+        // throw ArgumentNullException if StaticVarHolderType is null.
+        // 
+        // Fix: replace the method body with:
+        //   LocalMultiplayer.StaticVarHolderType = typeof(object);
+        //   return;
+        // This preserves the non-null invariant. The staticVarHolder field will hold
+        // a plain System.Object instance, which is fine for single-player (the
+        // StaticSave/StaticLoad delegates are only used in multiplayer, guarded by
+        // IsLocalMultiplayer which returns false for single-player).
+        methodsNopped += PatchGenerateDynamicMethodsForStatics(asm);
 
-        Console.WriteLine($"[+] Methods NOP'd: {methodsNopped}");
+        Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
         var dir = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -59,6 +69,73 @@ class Program
             return 1;
         }
         Console.WriteLine($"  [!] Method not found: {typeFullName}::{methodName}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Patch LocalMultiplayer.GenerateDynamicMethodsForStatics to set
+    /// StaticVarHolderType = typeof(object) instead of using Reflection.Emit.
+    /// 
+    /// Original method uses AssemblyBuilder/ModuleBuilder/TypeBuilder to create
+    /// a dynamic type with static field accessors. This fails in WASM (no JIT).
+    /// 
+    /// Patched method body:
+    ///   LocalMultiplayer.StaticVarHolderType = typeof(System.Object);
+    ///   return;
+    /// 
+    /// This preserves the non-null invariant on StaticVarHolderType, which is
+    /// required by GameRunner.AddGameInstance (calls Activator.CreateInstance on it).
+    /// The StaticSave/StaticLoad delegates stay null, but they're only invoked
+    /// when IsLocalMultiplayer is true (multiplayer mode), which is false for
+    /// single-player title screen.
+    /// </summary>
+    static int PatchGenerateDynamicMethodsForStatics(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            var type = module.Types.FirstOrDefault(t => t.FullName == "StardewValley.LocalMultiplayer");
+            if (type == null) continue;
+            var method = type.Methods.FirstOrDefault(m => m.Name == "GenerateDynamicMethodsForStatics");
+            if (method == null) continue;
+
+            // Find the StaticVarHolderType field
+            var field = type.Fields.FirstOrDefault(f => f.Name == "StaticVarHolderType");
+            if (field == null)
+            {
+                Console.WriteLine("  [!] StaticVarHolderType field not found!");
+                return 0;
+            }
+
+            // Import System.Object type reference
+            var objectTypeRef = module.ImportReference(typeof(object));
+            // Import Type.GetTypeFromHandle method
+            var getTypeFromHandle = module.ImportReference(typeof(Type).GetMethod("GetTypeFromHandle"));
+
+            // Build new method body:
+            //   ldtoken System.Object
+            //   call Type.GetTypeFromHandle(RuntimeTypeHandle)
+            //   stsfld LocalMultiplayer.StaticVarHolderType
+            //   ret
+            var instrs = method.Body.Instructions;
+            instrs.Clear();
+            method.Body.ExceptionHandlers.Clear();
+
+            // ldtoken System.Object — pushes RuntimeTypeHandle for System.Object
+            instrs.Add(Instruction.Create(OpCodes.Ldtoken, objectTypeRef));
+            // call Type.GetTypeFromHandle(RuntimeTypeHandle) — converts to Type
+            instrs.Add(Instruction.Create(OpCodes.Call, getTypeFromHandle));
+            // stsfld LocalMultiplayer.StaticVarHolderType — stores in static field
+            instrs.Add(Instruction.Create(OpCodes.Stsfld, field));
+            // ret
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+
+            method.Body.InitLocals = true;
+
+            Console.WriteLine($"  [-] Patched LocalMultiplayer::GenerateDynamicMethodsForStatics");
+            Console.WriteLine($"      → StaticVarHolderType = typeof(object); ret");
+            return 1;
+        }
+        Console.WriteLine($"  [!] Method not found: LocalMultiplayer::GenerateDynamicMethodsForStatics");
         return 0;
     }
 }
