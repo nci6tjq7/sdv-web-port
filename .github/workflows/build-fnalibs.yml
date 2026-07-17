@@ -75,8 +75,10 @@ jobs:
           # the ES profile flag in emscripten's SDL3 build, so useES3 stays false.
           # Fix 1: hardcode forceES3 = 1
           sed -i 's/forceES3 = SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3", 0);/forceES3 = 1; \/* SDV-WASM: hardcoded ES3 *\//' src/FNA3D_Driver_OpenGL.c
-          # Fix 2: set useES3 = forceES3 (don't rely on SDL_GL_GetAttribute)
-          sed -i 's/renderer->useES3 = (flags & SDL_GL_CONTEXT_PROFILE_ES) != 0;/renderer->useES3 = forceES3; \/* SDV-WASM: trust forceES3, not SDL_GL_GetAttribute *\//' src/FNA3D_Driver_OpenGL.c
+          # Fix 2: set useES3 = 1 (don't rely on SDL_GL_GetAttribute which is broken in emscripten)
+          # Note: forceES3 is a local variable in PrepareWindowAttributes, not accessible
+          # in OPENGL_CreateDevice. So we hardcode useES3 = 1 directly.
+          sed -i 's/renderer->useES3 = (flags & SDL_GL_CONTEXT_PROFILE_ES) != 0;/renderer->useES3 = 1; \/* SDV-WASM: force ES3, SDL_GL_GetAttribute is broken in emscripten *\//' src/FNA3D_Driver_OpenGL.c
           echo "=== Patched forceES3 and useES3 in FNA3D_Driver_OpenGL.c ==="
           grep -n "forceES3\|useES3 =" src/FNA3D_Driver_OpenGL.c | head -10
           
