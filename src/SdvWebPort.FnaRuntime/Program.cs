@@ -22,6 +22,15 @@ public static partial class Program
         AppContext.SetSwitch("System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", false);
         Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false (with .CompilerServices)");
 
+        // Force FNA3D to use OpenGL ES 3.0 (which maps to WebGL 2.0 in emscripten).
+        // FNA3D checks SDL_GetPlatform() and forces ES3 only if it returns "Emscripten".
+        // But in .NET WASM, SDL_GetPlatform() returns "Unknown" (not "Emscripten"),
+        // so FNA3D defaults to desktop OpenGL 2.1 — which emscripten maps to WebGL 1.0.
+        // WebGL 1.0 = OpenGL ES 2.0, but SDV requires OpenGL ES 3.0 features.
+        // Fix: set FNA3D_OPENGL_FORCE_ES3=1 to force ES3 context creation.
+        Environment.SetEnvironmentVariable("FNA3D_OPENGL_FORCE_ES3", "1");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Set FNA3D_OPENGL_FORCE_ES3=1");
+
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
 
