@@ -53,6 +53,35 @@ def main():
     else:
         print('[SKIP] Patch 3: depth check pattern not found (already patched?)')
 
+    # Patch 4: skip BaseGL check when useES3 is true.
+    # WebGL 2.0 may not expose all BaseGL functions (e.g., glClearDepth with GLdouble).
+    # When useES3 is true, skip the BaseGL check — ES3 mandates these functions.
+    pattern4 = re.compile(
+        r'(if\s*\(\s*!renderer->supports_BaseGL\s*\)\s*\{)'
+    )
+    new4 = 'if (!renderer->useES3 && !renderer->supports_BaseGL) {'
+    content, n4 = pattern4.subn(new4, content)
+    if n4 > 0:
+        print(f'[OK] Patch 4: skip BaseGL check when useES3 ({n4} replacement(s))')
+    else:
+        print('[SKIP] Patch 4: BaseGL check pattern not found (already patched?)')
+
+    # Patch 5: skip NonES3 check when useES3 is true (the else branch).
+    # The else branch checks !supports_3DTexture || !supports_ARB_occlusion_query || !supports_NonES3
+    # but useES3 takes the if branch, so this should already be skipped.
+    # However, if there's any other check that uses baseErrorString, skip it too.
+    # Replace all remaining 'FNA3D_LogError("%s\\n%s", baseErrorString, driverInfo); return;'
+    # with a warning instead of fatal error.
+    pattern5 = re.compile(
+        r'FNA3D_LogError\(\s*"%s\\n%s",\s*baseErrorString,\s*driverInfo\s*\);\s*return;'
+    )
+    new5 = 'FNA3D_LogWarn("SDV-WASM: skipping GL capability check (baseErrorString).\\n%s", driverInfo);'
+    content, n5 = pattern5.subn(new5, content)
+    if n5 > 0:
+        print(f'[OK] Patch 5: downgrade remaining baseErrorString errors to warnings ({n5} replacement(s))')
+    else:
+        print('[SKIP] Patch 5: no remaining baseErrorString errors found')
+
     path.write_text(content)
     print(f'[+] Patched file written to {path}')
 
