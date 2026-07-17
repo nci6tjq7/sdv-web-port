@@ -65,6 +65,14 @@ class Program
         // selection (we hardcode 1280x720 in the canvas).
         methodsNopped += NopMethod(asm, "StardewValley.Options", "setToDefaults");
 
+        // LocalizedContentManager.GetContentRoot — accesses TitleContainer.Location
+        // which is a MonoGame API not present in FNA. SDV throws:
+        //   InvalidOperationException: Can't get TitleContainer.Location property from MonoGame
+        // 
+        // Fix: patch GetContentRoot to return "Content" directly.
+        // This is the directory where FNA's ContentManager looks for .xnb files.
+        methodsNopped += PatchGetContentRoot(asm);
+
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
         var dir = Path.GetDirectoryName(outputPath);
@@ -94,6 +102,68 @@ class Program
             return 1;
         }
         Console.WriteLine($"  [!] Method not found: {typeFullName}::{methodName}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Patch LocalizedContentManager.GetContentRoot to return "Content" directly.
+    /// 
+    /// Original method accesses TitleContainer.Location (a MonoGame API not in FNA),
+    /// causing: InvalidOperationException: Can't get TitleContainer.Location property
+    /// 
+    /// Patched method body:
+    ///   ldstr "Content"
+    ///   ret
+    /// </summary>
+    static int PatchGetContentRoot(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            // GetContentRoot might be in StardewValley.LocalizedContentManager
+            // or a nested class. Search recursively.
+            TypeDefinition FindType(TypeDefinition parent, string name)
+            {
+                if (parent.FullName == name) return parent;
+                foreach (var nested in parent.NestedTypes)
+                {
+                    var found = FindType(nested, name);
+                    if (found != null) return found;
+                }
+                return null;
+            }
+
+            TypeDefinition targetType = null;
+            foreach (var topType in module.Types)
+            {
+                targetType = FindType(topType, "StardewValley.LocalizedContentManager");
+                if (targetType != null) break;
+            }
+
+            if (targetType == null)
+            {
+                Console.WriteLine("  [!] LocalizedContentManager type not found");
+                return 0;
+            }
+
+            var method = targetType.Methods.FirstOrDefault(m => m.Name == "GetContentRoot");
+            if (method == null)
+            {
+                Console.WriteLine("  [!] GetContentRoot method not found");
+                return 0;
+            }
+
+            // Replace body: return "Content"
+            var stringType = module.ImportReference(typeof(string));
+            var instrs = method.Body.Instructions;
+            instrs.Clear();
+            method.Body.ExceptionHandlers.Clear();
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "Content"));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+            method.Body.InitLocals = true;
+
+            Console.WriteLine("  [-] Patched LocalizedContentManager::GetContentRoot → return \"Content\"");
+            return 1;
+        }
         return 0;
     }
 
