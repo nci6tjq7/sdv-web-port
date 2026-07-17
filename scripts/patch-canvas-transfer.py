@@ -65,8 +65,9 @@ FIND_EVENT_TARGET_REPLACEMENT = (
 # Also patch findCanvasEventTarget = findEventTarget (no change needed, it's an alias)
 
 # Message listener IIFE to populate globalThis.__sdvTransferredCanvases
-# This runs in BOTH main thread and worker (no document check)
-# Also sets ENV.FNA3D_OPENGL_FORCE_ES3 to force ES3 profile recognition
+# This runs at MODULE TOP LEVEL (appended at end of file) and uses globalThis only.
+# It CANNOT access function-scoped variables like ENV, GL, etc.
+# ENV.FNA3D_OPENGL_FORCE_ES3 is set separately via run() injection (see patch_file step 3).
 MESSAGE_LISTENER_IIFE = r"""
 ;""" + "// " + PATCH_MARKER + r"""
 ;(function(){
@@ -83,22 +84,6 @@ MESSAGE_LISTENER_IIFE = r"""
       if(typeof console!=='undefined')console.log('[sdv-canvas] Worker received canvas "'+key+'"');
     }
   });
-  // Set FNA3D_OPENGL_FORCE_ES3=1 in emscripten's ENV object.
-  // FNA3D reads this via SDL_GetHintBoolean('FNA3D_OPENGL_FORCE_ES3', 0) which
-  // calls SDL_getenv which reads from ENV. This forces FNA3D to:
-  //   1. Call SDL_GL_SetAttribute(CONTEXT_MAJOR_VERSION, 3) before context creation
-  //   2. Call SDL_GL_SetAttribute(CONTEXT_PROFILE_MASK, ES) before context creation
-  //   3. Set renderer->useES3 = true after context creation
-  // Without this, FNA3D creates a WebGL 2.0 context but doesn't recognize it
-  // as ES3, causing 'OpenGL ES 3.0 support is required!' error.
-  // ENV is defined as 'var ENV = {};' earlier in this same module, so it's
-  // accessible here. We set it directly (no typeof check needed).
-  try {
-    ENV.FNA3D_OPENGL_FORCE_ES3='1';
-    if(typeof console!=='undefined')console.log('[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1 (ENV keys: '+Object.keys(ENV).length+')');
-  } catch(e) {
-    if(typeof console!=='undefined')console.warn('[sdv-canvas] Failed to set ENV:', e.message);
-  }
   if(typeof console!=='undefined')console.log('[sdv-canvas] Message listener installed');
 })();
 """
@@ -167,7 +152,20 @@ def patch_file(path):
     else:
         print(f'  [WARN] {path}: could not patch GL.createContext getContext call')
 
-    # Step 3: Append message listener IIFE
+    # Step 3: Inject ENV.FNA3D_OPENGL_FORCE_ES3='1' right before run() call.
+    # The run() call is inside the async function (moduleArg) which has access
+    # to ENV. Our appended IIFE at the end of the file is at MODULE top level
+    # and CANNOT access ENV (which is function-scoped).
+    # Fix: replace 'run();' with 'ENV.FNA3D_OPENGL_FORCE_ES3="1"; run();'
+    pattern_run = re.compile(r'(?<![A-Za-z_])run\(\);')
+    replacement_run = 'ENV.FNA3D_OPENGL_FORCE_ES3="1"; if(typeof console!=="undefined")console.log("[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1 (pre-run)"); run();'
+    new_content, n_run = pattern_run.subn(replacement_run, new_content, count=1)
+    if n_run > 0:
+        print(f'  [OK] {path}: injected ENV.FNA3D_OPENGL_FORCE_ES3 before run() ({n_run} replacement(s))')
+    else:
+        print(f'  [WARN] {path}: could not find run() to inject ENV setting')
+
+    # Step 4: Append message listener IIFE (at module top level — uses globalThis only)
     new_content = new_content + MESSAGE_LISTENER_IIFE
     print(f'  [OK] {path}: appended message listener IIFE ({len(MESSAGE_LISTENER_IIFE)} bytes)')
 
