@@ -86,8 +86,19 @@ jobs:
           # Note: forceES3 is a local variable in PrepareWindowAttributes, not accessible
           # in OPENGL_CreateDevice. So we hardcode useES3 = 1 directly.
           sed -i 's/renderer->useES3 = (flags & SDL_GL_CONTEXT_PROFILE_ES) != 0;/renderer->useES3 = 1; \/* SDV-WASM: force ES3, SDL_GL_GetAttribute is broken in emscripten *\//' src/FNA3D_Driver_OpenGL.c
-          echo "=== Patched forceES3 and useES3 in FNA3D_Driver_OpenGL.c ==="
-          grep -n "forceES3\|useES3 =" src/FNA3D_Driver_OpenGL.c | head -10
+
+          # Fix 3: skip DoublePrecisionDepth check when useES3 is true.
+          # WebGL 2.0 (= OpenGL ES 3.0) only has glClearDepthf/glDepthRangef (float versions),
+          # NOT glClearDepth/glDepthRange (double versions). FNA3D's DoublePrecisionDepth ext
+          # loads glClearDepth/glDepthRange which return NULL in WebGL, causing:
+          #   "OpenGL ES 3.0 support is required!" (because both DoublePrecisionDepth AND
+          #   OES_single_precision are false — OES_single_precision also fails because
+          #   emscripten doesn't expose the OES suffix variants either).
+          # Fix: when useES3 is true, skip this check entirely (ES3 always has float depth).
+          sed -i 's/!renderer->supports_DoublePrecisionDepth \&\&/renderer->useES3 ? 0 : (!renderer->supports_DoublePrecisionDepth \&\&)/' src/FNA3D_Driver_OpenGL.c
+
+          echo "=== Patched forceES3, useES3, and depth check in FNA3D_Driver_OpenGL.c ==="
+          grep -n "forceES3\|useES3 =\|DoublePrecisionDepth" src/FNA3D_Driver_OpenGL.c | head -10
           
           echo "=== Patched CMakeLists.txt (SDL references) ==="
           grep -n "SDL\|sdlgpu" CMakeLists.txt | head -10
