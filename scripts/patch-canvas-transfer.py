@@ -125,24 +125,112 @@ def patch_file(path):
     return True
 
 
+def patch_worker_file(path):
+    """Patch dotnet.native.worker.*.mjs to handle canvas transfer messages.
+
+    The worker's handleMessage function processes messages with specific 'cmd'
+    values. Our canvas transfer message has __type='sdv_canvas_transfer' (no cmd),
+    so it's silently ignored.
+
+    Fix: patch handleMessage to intercept our message type and store the canvas
+    in globalThis.__sdvTransferredCanvases BEFORE the import('./dotnet.native.js')
+    completes. This ensures the canvas is available when findEventTarget runs.
+    """
+    with open(path, 'r') as f:
+        content = f.read()
+
+    if PATCH_MARKER in content:
+        print(f'  [SKIP] {path}: already patched')
+        return False
+
+    # Find the handleMessage function and inject our handler at the TOP,
+    # before any other cmd checks. This ensures our message is processed
+    # even before the module is loaded.
+    #
+    # The handleMessage function starts with:
+    #   self.onmessage = handleMessage;
+    # And the function itself starts with:
+    #   var handleMessage = function(e) {
+    #     ...
+    #   };
+    # Or it might be:
+    #   function handleMessage(e) {
+    #     ...
+    #   }
+    # Or:
+    #   self.onmessage = (e) => { ... }
+
+    # Look for the onmessage assignment and inject our handler BEFORE it
+    # so our code runs first for every message.
+    inject = r"""
+// """ + PATCH_MARKER + r"""
+// Canvas transfer handler — runs BEFORE handleMessage to avoid race condition
+// where the message arrives before import('./dotnet.native.js') completes.
+if(typeof globalThis==='undefined')globalThis=globalThis;
+if(!globalThis.__sdvTransferredCanvases)globalThis.__sdvTransferredCanvases={};
+var __sdvOrigOnmessage=null;
+function __sdvCanvasMessageHandler(e){
+  var d=e&&e.data;
+  if(d&&d.__type==='sdv_canvas_transfer'&&d.canvas){
+    var key=d.id||'canvas';
+    globalThis.__sdvTransferredCanvases[key]=d.canvas;
+    if(typeof console!=='undefined')console.log('[sdv-canvas] Worker received canvas "'+key+'" (pre-load)');
+  }
+}
+// Install immediately — will be called for ALL messages before self.onmessage
+self.addEventListener('message',__sdvCanvasMessageHandler);
+"""
+
+    # Prepend the inject at the very top of the file (after the license comment)
+    # Find a good insertion point — after 'use strict';
+    insertion_point = content.find("'use strict';")
+    if insertion_point == -1:
+        insertion_point = content.find('"use strict";')
+    if insertion_point == -1:
+        # Just prepend
+        new_content = inject + content
+    else:
+        # Insert after 'use strict';
+        end_of_strict = insertion_point + len("'use strict';")
+        new_content = content[:end_of_strict] + inject + content[end_of_strict:]
+
+    with open(path, 'w') as f:
+        f.write(new_content)
+    print(f'  [OK] {path}: prepended canvas transfer handler')
+    return True
+
+
 def main():
     if len(sys.argv) < 2:
         print('Usage: patch-canvas-transfer.py /path/to/_framework/')
         sys.exit(1)
 
     framework_dir = sys.argv[1]
-    files = sorted(glob.glob(os.path.join(framework_dir, 'dotnet.native.*.js')))
-    if not files:
+
+    # Patch dotnet.native.*.js (findEventTarget + message listener IIFE)
+    js_files = sorted(glob.glob(os.path.join(framework_dir, 'dotnet.native.*.js')))
+    if not js_files:
         print(f'[ERROR] No dotnet.native.*.js found in {framework_dir}')
         sys.exit(1)
 
-    print(f'[+] Found {len(files)} dotnet.native.*.js file(s)')
+    print(f'[+] Found {len(js_files)} dotnet.native.*.js file(s)')
     patched_count = 0
-    for f in files:
+    for f in js_files:
         if patch_file(f):
             patched_count += 1
+    print(f'[+] Patched {patched_count}/{len(js_files)} .js file(s)')
 
-    print(f'[+] Patched {patched_count}/{len(files)} file(s)')
+    # Patch dotnet.native.worker.*.mjs (early message handler)
+    mjs_files = sorted(glob.glob(os.path.join(framework_dir, 'dotnet.native.worker.*.mjs')))
+    if not mjs_files:
+        print(f'[WARN] No dotnet.native.worker.*.mjs found — worker patch skipped')
+    else:
+        print(f'[+] Found {len(mjs_files)} dotnet.native.worker.*.mjs file(s)')
+        mjs_patched = 0
+        for f in mjs_files:
+            if patch_worker_file(f):
+                mjs_patched += 1
+        print(f'[+] Patched {mjs_patched}/{len(mjs_files)} .mjs file(s)')
 
 
 if __name__ == '__main__':
