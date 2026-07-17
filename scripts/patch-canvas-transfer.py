@@ -122,13 +122,15 @@ def patch_file(path):
     # may not propagate from .NET to C's getenv(). Directly patching the JS
     # ensures WebGL 2.0 context is always requested.
     #
-    # The contextAttributes object is built from WASM heap values. We append
-    # a line after it's built to force majorVersion=2.
+    # The contextAttributes object in _emscripten_webgl_do_create_context has
+    # properties read from GROWABLE_HEAP_I32(). We match that specific object
+    # (not the one in Browser.createContext which has hardcoded values).
+    # The object ends with `};` — we add the override AFTER it.
     pattern_gl = re.compile(
-        r'(majorVersion:\s*GROWABLE_HEAP_I32\(\)\[a\s*\+\s*\(32\s*>>\s*2\)\],)'
+        r'(var\s+contextAttributes\s*=\s*\{[^}]*majorVersion:\s*GROWABLE_HEAP_I32\(\)\[a\s*\+\s*\(32\s*>>\s*2\)\][^}]*\};)'
     )
-    replacement_gl = r'\1 contextAttributes.majorVersion = Math.max(contextAttributes.majorVersion, 2), /* SDV: force WebGL 2.0 */'
-    new_content, n_gl = pattern_gl.subn(replacement_gl, new_content)
+    replacement_gl = r'\1 contextAttributes.majorVersion = Math.max(contextAttributes.majorVersion || 1, 2); /* SDV: force WebGL 2.0 = OpenGL ES 3.0 */'
+    new_content, n_gl = pattern_gl.subn(replacement_gl, new_content, count=1)
     if n_gl > 0:
         print(f'  [OK] {path}: forced WebGL 2.0 majorVersion ({n_gl} replacement(s))')
     else:
