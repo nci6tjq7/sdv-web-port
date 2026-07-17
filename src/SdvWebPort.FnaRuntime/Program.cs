@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,14 @@ namespace SdvWebPort.FnaRuntime;
 
 public static partial class Program
 {
+    // P/Invoke SDL_SetHint directly from SDL3.a (linked into WASM).
+    // SDL3 no longer reads environment variables for hints (unlike SDL2).
+    // We need to call SDL_SetHint to set FNA3D_OPENGL_FORCE_ES3=1 so that
+    // FNA3D's SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3", 0) returns true.
+    [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool SDL_SetHint(string name, string value);
+
     // Microsoft.NET.Sdk.WebAssembly invokes this Main method.
     private static int Main(string[] args)
     {
@@ -27,9 +36,21 @@ public static partial class Program
         // But in .NET WASM, SDL_GetPlatform() returns "Unknown" (not "Emscripten"),
         // so FNA3D defaults to desktop OpenGL 2.1 — which emscripten maps to WebGL 1.0.
         // WebGL 1.0 = OpenGL ES 2.0, but SDV requires OpenGL ES 3.0 features.
-        // Fix: set FNA3D_OPENGL_FORCE_ES3=1 to force ES3 context creation.
-        Environment.SetEnvironmentVariable("FNA3D_OPENGL_FORCE_ES3", "1");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Set FNA3D_OPENGL_FORCE_ES3=1");
+        //
+        // SDL3 no longer reads environment variables for hints (unlike SDL2).
+        // So we must call SDL_SetHint directly to set FNA3D_OPENGL_FORCE_ES3=1.
+        // This makes FNA3D's SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3", 0) return true,
+        // which causes it to request OpenGL ES 3.0 context attributes
+        // (SDL_GL_CONTEXT_MAJOR_VERSION=3, SDL_GL_CONTEXT_PROFILE_MASK=ES).
+        try
+        {
+            var result = SDL_SetHint("FNA3D_OPENGL_FORCE_ES3", "1");
+            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHint(FNA3D_OPENGL_FORCE_ES3, 1) = {result}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHint failed: {ex.Message}");
+        }
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
