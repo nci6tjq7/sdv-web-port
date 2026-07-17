@@ -20,10 +20,11 @@ class Program
         var shimPath = args[1];
 
         Console.WriteLine($"[+] Reading FNA: {fnaPath}");
-        var fnaAsm = AssemblyDefinition.ReadAssembly(fnaPath);
+        // Read with ReadWrite mode so we can write back
+        var fnaAsm = AssemblyDefinition.ReadAssembly(fnaPath, new ReaderParameters { ReadWrite = true });
 
         Console.WriteLine($"[+] Reading HttpTitleContainer: {shimPath}");
-        var shimAsm = AssemblyDefinition.ReadAssembly(shimPath);
+        var shimAsm = AssemblyDefinition.ReadAssembly(shimPath, new ReaderParameters { AssemblyResolver = new DefaultAssemblyResolver() });
 
         var shimType = shimAsm.MainModule.Types.FirstOrDefault(t => t.FullName == "Microsoft.Xna.Framework.HttpTitleContainer");
         if (shimType == null)
