@@ -122,7 +122,14 @@ jobs:
       - name: Copy native libs to runtime project
         run: |
           mkdir -p src/SdvWebPort.FnaRuntime/native
-          cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
+          # Only copy the libs that the csproj references (SDL3.a, FNA3D.a, FAudio.a).
+          # libmojoshader.a is merged into FNA3D.a by build-fnalibs, so don't copy it
+          # (an empty .a file causes 'wasm-ld: unknown file type' error).
+          for lib in SDL3.a FNA3D.a FAudio.a; do
+            if [ -f "download/fnalibs/$lib" ]; then
+              cp "download/fnalibs/$lib" "src/SdvWebPort.FnaRuntime/native/$lib"
+            fi
+          done
           ls -la src/SdvWebPort.FnaRuntime/native/
 
       - name: Build strip-pinvokes tool and stub GalaxyCSharp/Steamworks.NET

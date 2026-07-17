@@ -103,12 +103,9 @@ def main():
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(output_dir)
 
-    # libmojoshader.a is not in our build (merged into FNA3D.a by build-fnalibs)
-    # Create empty file so csproj NativeLibrary reference doesn't fail
-    mojoshader_path = os.path.join(output_dir, 'libmojoshader.a')
-    if not os.path.exists(mojoshader_path):
-        open(mojoshader_path, 'w').close()
-        print('Created empty libmojoshader.a (merged into FNA3D.a)')
+    # libmojoshader.a is NOT created — it's merged into FNA3D.a by build-fnalibs.
+    # The csproj does NOT reference libmojoshader.a (only SDL3.a, FNA3D.a, FAudio.a).
+    # Including an empty .a file causes 'wasm-ld: unknown file type' error.
 
     print(f'fnalibs downloaded to {output_dir}')
 

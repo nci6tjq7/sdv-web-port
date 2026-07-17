@@ -99,7 +99,9 @@
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
-    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a" />
+    <!-- libmojoshader.a is NOT included here because MojoShader is merged into
+         FNA3D.a by our build-fnalibs workflow. Including an empty .a file
+         causes 'wasm-ld: unknown file type' error. -->
   </ItemGroup>
 
 </Project>
