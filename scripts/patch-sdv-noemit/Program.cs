@@ -34,11 +34,17 @@ class Program
         // Fix: replace the method body with:
         //   LocalMultiplayer.StaticVarHolderType = typeof(object);
         //   return;
-        // This preserves the non-null invariant. The staticVarHolder field will hold
-        // a plain System.Object instance, which is fine for single-player (the
-        // StaticSave/StaticLoad delegates are only used in multiplayer, guarded by
-        // IsLocalMultiplayer which returns false for single-player).
         methodsNopped += PatchGenerateDynamicMethodsForStatics(asm);
+
+        // GameRunner.SetInstanceDefaults — uses Force.DeepCloner to deep-clone game
+        // state objects. Force.DeepCloner uses Expression.Compile (Linq.Expressions
+        // interpreter) which fails with NullReferenceException in WASM when cloning
+        // Nullable<T> struct fields (the interpreter can't handle null boxed structs).
+        // 
+        // Fix: NOP SetInstanceDefaults — it's used to clone default player settings
+        // into new game instances, but for the title screen demo we don't need it.
+        // The game will still boot; player defaults will be set later by Game1.
+        methodsNopped += NopMethod(asm, "StardewValley.GameRunner", "SetInstanceDefaults");
 
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
