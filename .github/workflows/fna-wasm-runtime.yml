@@ -179,11 +179,29 @@ jobs:
           echo "=== WASM bundle size ==="
           du -sh /tmp/wasm-publish/wwwroot/
 
+      - name: Patch dotnet.native.js for canvas transfer (celeste-wasm 1-line sed)
+        run: |
+          # Celeste-wasm pattern (research-10): inject transferredCanvasNames=[".canvas"]
+          # right after 'var offscreenCanvases = {};' in dotnet.native.*.js.
+          # This tells emscripten's pthread bootstrap to automatically transfer
+          # the canvas element (matched by CSS class "canvas") to the deputy worker.
+          # The canvas must have class="canvas" in index.html (already set).
+          #
+          # This is much simpler than our previous 250-line patch-canvas-transfer.py
+          # and is the proven approach from celeste-wasm.
+          cd /tmp/wasm-publish/wwwroot/_framework
+          echo "=== Before patch ==="
+          grep -c "transferredCanvasNames" dotnet.native.*.js || echo "(not found)"
+          sed -i 's/var offscreenCanvases \?= \?{};/var offscreenCanvases={};if(globalThis.window\&\&!window.TRANSFERRED_CANVAS){transferredCanvasNames=[".canvas"];window.TRANSFERRED_CANVAS=true;}/' dotnet.native.*.js
+          echo "=== After patch ==="
+          grep -c "transferredCanvasNames" dotnet.native.*.js
+          echo "=== Verify ==="
+          grep -o "transferredCanvasNames=\[\".canvas\"\]" dotnet.native.*.js | head -1
+
       - name: Verify EmccExtraLDFlags are in emcc-link.rsp
         run: |
           # Verify that -sMIN_WEBGL_VERSION=2 and -sOFFSCREENCANVAS_SUPPORT are
           # present in the emcc link response file.
-          # emcc-link.rsp is in obj/ (not publish output), so check both locations.
           echo "=== Find emcc-link.rsp ==="
           find /home/runner/work -name "emcc-link.rsp" 2>/dev/null | head -5
           echo ""
@@ -191,9 +209,6 @@ jobs:
           find /home/runner/work -name "*.rsp" -exec grep -l "MIN_WEBGL_VERSION" {} \; 2>/dev/null || echo "(NOT FOUND — EmccExtraLDFlags not applied!)"
           echo "=== Check for OFFSCREENCANVAS_SUPPORT ==="
           find /home/runner/work -name "*.rsp" -exec grep -l "OFFSCREENCANVAS_SUPPORT" {} \; 2>/dev/null || echo "(NOT FOUND — EmccExtraLDFlags not applied!)"
-          echo ""
-          echo "=== Show emcc-link.rsp if found ==="
-          find /home/runner/work -name "emcc-link.rsp" -exec head -30 {} \; 2>/dev/null
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4

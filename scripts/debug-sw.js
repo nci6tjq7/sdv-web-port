@@ -19,7 +19,7 @@ const os = require('os');
   page.on('pageerror', err => logs.push(`[pageerror] ${err.message}`));
 
   console.log('=== Pass 1: load page (registers SW) ===');
-  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784297744', {
+  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784298817', {
     waitUntil: 'networkidle2',
     timeout: 60000
   }).catch(e => console.log('goto err:', e.message));
@@ -95,8 +95,8 @@ const os = require('os');
   console.log(JSON.stringify(htmlHeaders, null, 2));
 
   // Wait a bit more to see if SDV boots
-  console.log('\n=== Waiting 30s more for SDV boot ===');
-  await new Promise(r => setTimeout(r, 30000));
+  console.log('\n=== Waiting 60s more for SDV boot ===');
+  await new Promise(r => setTimeout(r, 60000));
 
   console.log('\n=== ALL captured logs ===');
   logs.forEach(l => console.log(l));
