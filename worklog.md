@@ -2231,3 +2231,35 @@ Next Steps:
 - Likely related to SDV's player initialization needing Content/ files or platform-specific code
 - The hardest part (FNA3D + WebGL 2.0 + ES3) is DONE
 
+
+---
+Task ID: phase10-content-loading-breakthrough
+Agent: main
+Task: Debug and advance past GameRunner.Initialize
+
+Work Log:
+- Fixed 4 sequential blockers via Mono.Cecil IL patching (scripts/patch-sdv-noemit):
+  1. GenerateDynamicMethodsForStatics: set StaticVarHolderType=typeof(object) instead of NOP
+     → fixes ArgumentNullException at Activator.CreateInstance(StaticVarHolderType)
+  2. SetInstanceDefaults: NOP (Force.DeepCloner uses Expression.Compile which fails)
+  3. KeyboardInput.Initialize: NOP (Windows hook not supported in WASM)
+  4. Options.setToDefaults: NOP (GraphicsAdapter.SupportedDisplayModes empty in WASM)
+
+Stage Summary:
+- ✅ FNA3D OpenGL ES 3.0 fully initialized (WebGL 2.0 context)
+- ✅ GraphicsDevice created
+- ✅ GameRunner.AddGameInstance succeeded (StaticVarHolderType fix)
+- ✅ SetInstanceDefaults skipped
+- ✅ Game1.Initialize() entered
+- ✅ KeyboardInput.Initialize skipped
+- ✅ Options constructor succeeded (setToDefaults skipped)
+- ✅ Content loading attempted!
+- ❌ ContentLoadException: Failed loading asset 'Data\BigCraftables'
+- This is EXPECTED — no Content/ files are deployed yet!
+
+Next Steps:
+- User needs to upload 星露谷物语.zip to /home/z/my-project/upload/
+- Run scripts/upload-content-release.sh to create sdv-content-v1 release
+- CI will download content.zip and deploy to wwwroot/deps/Content/
+- SDV should then load game data and reach title screen
+
