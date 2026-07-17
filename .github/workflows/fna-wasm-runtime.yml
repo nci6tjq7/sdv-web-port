@@ -67,39 +67,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p download/fnalibs
-          # Download fnalibs-single artifact from build-fnalibs workflow
-          # This includes SDL3.a, FNA3D.a (with MojoShader merged + ES3 patches), FAudio.a
-          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-fnalibs.yml/runs?status=completed&conclusion=success&per_page=1"
-          RUN_DATA=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${API}")
-          RUN_ID=$(echo "$RUN_DATA" | python3 -c "import json,sys; d=json.load(sys.stdin); runs = d.get('workflow_runs', []); print(runs[0]['id'] if runs else '')")
-          echo "Found build-fnalibs run ID: ${RUN_ID}"
-          if [ -z "$RUN_ID" ]; then
-            echo "ERROR: No successful build-fnalibs run found. Falling back to r58Playz."
-            RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
-            BASE="https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}"
-            curl -sL "${BASE}/SDL3.a" -o download/fnalibs/SDL3.a
-            curl -sL "${BASE}/FNA3D.a" -o download/fnalibs/FNA3D.a
-            curl -sL "${BASE}/FAudio.a" -o download/fnalibs/FAudio.a
-            curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
-          else
-            ARTIFACTS=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts")
-            ARTIFACT_ID=$(echo "$ARTIFACTS" | python3 -c "
-            import json,sys
-            d=json.load(sys.stdin)
-            for a in d.get('artifacts',[]):
-                if a['name']=='fnalibs-single':
-                    print(a['id']); break
-            ")
-            echo "Artifact ID: ${ARTIFACT_ID}"
-            REDIRECT=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -o /dev/null -w '%{redirect_url}' \
-              "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip")
-            curl -sL "$REDIRECT" -o /tmp/fnalibs-single.zip
-            cd download/fnalibs && unzip -q /tmp/fnalibs-single.zip
-            # libmojoshader.a is not needed separately (merged into FNA3D.a by build-fnalibs)
-            # Create empty file so csproj NativeLibrary reference doesn't fail
-            touch libmojoshader.a
-          fi
+          # Use standalone Python script to avoid YAML indentation issues with inline Python.
+          # Downloads fnalibs-single artifact (SDL3.a, FNA3D.a with ES3 patches, FAudio.a)
+          # Falls back to r58Playz pre-built fnalibs if no successful build-fnalibs run exists.
+          python3 ${{ github.workspace }}/scripts/download-fnalibs-artifact.py download/fnalibs "$GH_TOKEN"
           ls -la download/fnalibs/
 
       - name: Download and FULLY install patched .NET runtime from r58Playz
