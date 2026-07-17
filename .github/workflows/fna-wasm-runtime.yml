@@ -169,9 +169,11 @@ jobs:
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime
-          # Don't rm obj/ - it has project.assets.json from dotnet restore
-          rm -rf bin
-          dotnet publish -c Release -o /tmp/wasm-publish --no-restore
+          # Clean bin AND obj to ensure EmccExtraLDFlags are picked up fresh
+          # (stale obj/ can cache old emcc-link.rsp without our flags)
+          rm -rf bin obj
+          dotnet restore --no-cache
+          dotnet publish -c Release -o /tmp/wasm-publish
           ls -la /tmp/wasm-publish/
           ls -la /tmp/wasm-publish/wwwroot/ | head -20
           echo "=== WASM bundle size ==="
@@ -180,15 +182,18 @@ jobs:
       - name: Verify EmccExtraLDFlags are in emcc-link.rsp
         run: |
           # Verify that -sMIN_WEBGL_VERSION=2 and -sOFFSCREENCANVAS_SUPPORT are
-          # present in the emcc link response file. These are set via
-          # <EmccExtraLDFlags> in the csproj and are THE FIX for the ES3 issue.
-          echo "=== emcc-link.rsp contents ==="
-          find /tmp/wasm-publish -name "emcc-link.rsp" -exec cat {} \; 2>/dev/null | head -20 || echo "(not found)"
+          # present in the emcc link response file.
+          # emcc-link.rsp is in obj/ (not publish output), so check both locations.
+          echo "=== Find emcc-link.rsp ==="
+          find /home/runner/work -name "emcc-link.rsp" 2>/dev/null | head -5
           echo ""
-          echo "=== Check for MIN_WEBGL_VERSION ==="
-          find /tmp/wasm-publish -name "*.rsp" -exec grep -l "MIN_WEBGL_VERSION" {} \; 2>/dev/null || echo "(not found in rsp)"
+          echo "=== Check for MIN_WEBGL_VERSION in all .rsp files ==="
+          find /home/runner/work -name "*.rsp" -exec grep -l "MIN_WEBGL_VERSION" {} \; 2>/dev/null || echo "(NOT FOUND — EmccExtraLDFlags not applied!)"
           echo "=== Check for OFFSCREENCANVAS_SUPPORT ==="
-          find /tmp/wasm-publish -name "*.rsp" -exec grep -l "OFFSCREENCANVAS_SUPPORT" {} \; 2>/dev/null || echo "(not found in rsp)"
+          find /home/runner/work -name "*.rsp" -exec grep -l "OFFSCREENCANVAS_SUPPORT" {} \; 2>/dev/null || echo "(NOT FOUND — EmccExtraLDFlags not applied!)"
+          echo ""
+          echo "=== Show emcc-link.rsp if found ==="
+          find /home/runner/work -name "emcc-link.rsp" -exec head -30 {} \; 2>/dev/null
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4

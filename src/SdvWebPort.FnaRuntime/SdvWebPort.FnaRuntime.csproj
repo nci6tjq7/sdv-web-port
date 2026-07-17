@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <!--
-    Emscripten link flags — THE MISSING PIECE (research-7 finding).
+    Emscripten link flags — THE MISSING PIECE (research-7 + research-9 finding).
     celeste-wasm uses these flags to make FNA3D's OpenGL ES3 driver work:
     - -sMIN_WEBGL_VERSION=2: force WebGL 2.0 context (OpenGL ES 3.0).
       Without this, emscripten defaults to WebGL 1.0 (ES 2.0), and FNA3D's
@@ -42,8 +42,13 @@
     - -sWASMFS: use WASM filesystem (for SDV's Content/ XNB file access).
     - -sMAXIMUM_MEMORY=4294901760: 4GB memory limit (SDV needs lots of RAM).
     - -sMALLOC=mimalloc: faster malloc (celeste-wasm uses this for performance).
+
+    CRITICAL (research-9): EmccExtraLDFlags is only consumed when WasmBuildNative=true.
+    WasmBuildNative defaults to true only during Release publish, but we set it
+    explicitly to be safe.
   -->
   <PropertyGroup>
+    <WasmBuildNative>true</WasmBuildNative>
     <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc</EmccExtraLDFlags>
   </PropertyGroup>
 
