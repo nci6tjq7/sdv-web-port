@@ -203,6 +203,56 @@ jobs:
           echo "=== Verify ==="
           grep -o "transferredCanvasNames=\[\".canvas\"\]" dotnet.native.*.js | head -1
 
+      - name: Download SDV Content files (if available)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Download Content/ files from sdv-content-v1 release (if it exists).
+          # The user runs scripts/upload-content-release.sh locally to create this release.
+          # If the release doesn't exist yet, skip — SDV will fail at runtime when
+          # trying to load Content, but the WASM bundle will still build.
+          echo "=== Checking for sdv-content-v1 release ==="
+          API_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/sdv-content-v1")
+
+          # Check if release exists
+          RELEASE_ID=$(echo "$API_RESPONSE" | python3 -c "import json,sys; r=json.load(sys.stdin); print(r.get('id',''))" 2>/dev/null || echo "")
+          if [ -z "$RELEASE_ID" ]; then
+            echo "No sdv-content-v1 release found. Skipping Content deployment."
+            echo "To add Content: run scripts/upload-content-release.sh locally"
+            exit 0
+          fi
+          echo "Found release ID: $RELEASE_ID"
+
+          # Find content.zip asset
+          ASSET_URL=$(echo "$API_RESPONSE" | python3 -c "
+          import json,sys
+          r=json.load(sys.stdin)
+          for a in r.get('assets',[]):
+              if a['name']=='content.zip':
+                  print(a['url']); break
+          ")
+          if [ -z "$ASSET_URL" ]; then
+            echo "No content.zip asset in release. Skipping."
+            exit 0
+          fi
+          echo "Downloading content.zip..."
+          curl -sL -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/octet-stream" \
+            "$ASSET_URL" -o /tmp/content.zip
+          ls -lh /tmp/content.zip
+
+          # Extract to wwwroot/deps/content/
+          echo "=== Extracting Content/ to wwwroot/deps/content/ ==="
+          mkdir -p /tmp/wasm-publish/wwwroot/deps
+          cd /tmp/wasm-publish/wwwroot/deps
+          unzip -q /tmp/content.zip
+          # Content/ should now be at wwwroot/deps/Content/
+          ls -la Content/ | head -10
+          echo "=== Content file count ==="
+          find Content/ -type f | wc -l
+          echo "=== Content size ==="
+          du -sh Content/
+
       - name: Verify EmccExtraLDFlags are in emcc-link.rsp
         run: |
           # Verify that -sMIN_WEBGL_VERSION=2 and -sOFFSCREENCANVAS_SUPPORT are
