@@ -72,10 +72,12 @@ def main():
     # However, if there's any other check that uses baseErrorString, skip it too.
     # Replace all remaining 'FNA3D_LogError("%s\\n%s", baseErrorString, driverInfo); return;'
     # with a warning instead of fatal error.
+    # IMPORTANT: the \\n in the C string literal must be preserved as backslash-n.
+    # In Python, '\\\\n' produces the two characters \ and n in the output file.
     pattern5 = re.compile(
         r'FNA3D_LogError\(\s*"%s\\n%s",\s*baseErrorString,\s*driverInfo\s*\);\s*return;'
     )
-    new5 = 'FNA3D_LogWarn("SDV-WASM: skipping GL capability check (baseErrorString).\\n%s", driverInfo);'
+    new5 = 'FNA3D_LogWarn("SDV-WASM: skipping GL capability check. %s", driverInfo);'
     content, n5 = pattern5.subn(new5, content)
     if n5 > 0:
         print(f'[OK] Patch 5: downgrade remaining baseErrorString errors to warnings ({n5} replacement(s))')
