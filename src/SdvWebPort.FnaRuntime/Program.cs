@@ -23,6 +23,14 @@ public static partial class Program
     [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint SDL_SetHintWithPriority(string name, string value, int priority);
 
+    // SDL_GetHintBoolean — read back the hint to verify it was set.
+    [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
+    private static extern uint SDL_GetHintBoolean(string name, uint default_value);
+
+    // SDL_GetPlatform — check what platform SDL3 reports.
+    [DllImport("SDL3", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr SDL_GetPlatform();
+
     // Microsoft.NET.Sdk.WebAssembly invokes this Main method.
     private static int Main(string[] args)
     {
@@ -62,6 +70,15 @@ public static partial class Program
                 result = SDL_SetHintWithPriority("FNA3D_OPENGL_FORCE_ES3", "1", 2);
                 Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_SetHintWithPriority(OVERRIDE) = {result}");
             }
+
+            // Verify the hint was set by reading it back
+            var hintValue = SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3", 0);
+            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_GetHintBoolean(FNA3D_OPENGL_FORCE_ES3) = {hintValue}");
+
+            // Check what platform SDL3 reports
+            var platformPtr = SDL_GetPlatform();
+            var platform = Marshal.PtrToStringAnsi(platformPtr);
+            Console.WriteLine($"[SdvWebPort.FnaRuntime] SDL_GetPlatform() = '{platform}'");
         }
         catch (Exception ex)
         {

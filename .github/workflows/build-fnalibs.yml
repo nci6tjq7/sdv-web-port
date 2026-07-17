@@ -67,6 +67,15 @@ jobs:
           sed -i '/FNA3D_Driver_SDL\.c/d' CMakeLists.txt
           sed -i '/mojoshader_sdlgpu\.c/d' CMakeLists.txt
           sed -i '/#if FNA3D_DRIVER_SDL/{N;N;d;}' src/FNA3D.c
+
+          # Force OpenGL ES 3.0 mode (required for WebGL 2.0 / SDV).
+          # FNA3D checks SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3") and
+          # SDL_GetPlatform() == "Emscripten". In .NET WASM, SDL_GetPlatform()
+          # returns "Unknown" and SDL3 hints don't propagate from C# to C.
+          # Fix: hardcode forceES3 = 1 in FNA3D_Driver_OpenGL.c
+          sed -i 's/forceES3 = SDL_GetHintBoolean("FNA3D_OPENGL_FORCE_ES3", 0);/forceES3 = 1; \/* SDV-WASM: hardcoded ES3 *\//' src/FNA3D_Driver_OpenGL.c
+          echo "=== Patched forceES3 in FNA3D_Driver_OpenGL.c ==="
+          grep -n "forceES3" src/FNA3D_Driver_OpenGL.c | head -5
           
           echo "=== Patched CMakeLists.txt (SDL references) ==="
           grep -n "SDL\|sdlgpu" CMakeLists.txt | head -10
