@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch dotnet.native.*.js to transfer canvas elements to the WASM worker.
+"""Patch dotnet.native.*.js to look up transferred offscreen canvases.
 
 In .NET 10 threaded WASM, all C# runs in the deputy worker, but <canvas>
 lives only on the DOM thread. SDL3's emscripten video driver calls
@@ -9,20 +9,82 @@ findCanvasEventTarget("#canvas") which calls document.querySelector("#canvas")
 GL.createContext is never called. FNA3D then calls a non-null JS stub
 which hits GLctx.getParameter with GLctx===undefined → crash.
 
-Fix: monkey-patch `findCanvasEventTarget` in dotnet.native.*.js to look up
-transferred offscreen canvases via OffscreenCanvas's name registry.
+Fix: patch the findEventTarget function definition to ALSO check
+globalThis.__sdvTransferredCanvases (a dictionary populated by the main
+thread posting messages with transferred OffscreenCanvas).
 
-We do this by appending an IIFE that:
-1. Listens for 'message' events from the main thread
-2. When the main thread posts a transferred OffscreenCanvas, registers it
-3. Overrides findCanvasEventTarget to look up by CSS selector
+We also append a message listener at the end of the file to populate
+globalThis.__sdvTransferredCanvases from main-thread messages.
+
+Usage: patch-canvas-transfer.py /path/to/_framework/
 """
 import glob
 import os
+import re
 import sys
 
 
-PATCH_MARKER = '__SDV_CANVAS_PATCH_v2__'
+PATCH_MARKER = '__SDV_CANVAS_PATCH_v3__'
+
+# The original findEventTarget function (emscripten-generated):
+#   var findEventTarget = target => {
+#    target = maybeCStringToJsString(target);
+#    var domElement = specialHTMLTargets[target] || (typeof document != "undefined" ? document.querySelector(target) : undefined);
+#    return domElement;
+#   };
+#
+# We patch it to also check globalThis.__sdvTransferredCanvases:
+#   var findEventTarget = target => {
+#    target = maybeCStringToJsString(target);
+#    var domElement = specialHTMLTargets[target]
+#      || (typeof globalThis.__sdvTransferredCanvases!=='undefined' && globalThis.__sdvTransferredCanvases[target.replace(/^#/, '')])
+#      || (typeof document != "undefined" ? document.querySelector(target) : undefined);
+#    return domElement;
+#   };
+
+# Match the findEventTarget definition (single-line, emscripten output)
+FIND_EVENT_TARGET_PATTERN = re.compile(
+    r'(var\s+findEventTarget\s*=\s*target\s*=>\s*\{\s*'
+    r'target\s*=\s*maybeCStringToJsString\(target\);\s*'
+    r'var\s+domElement\s*=\s*specialHTMLTargets\[target\]\s*\|\|\s*'
+    r'\(typeof\s+document\s*!=\s*"undefined"\s*\?\s*document\.querySelector\(target\)\s*:\s*undefined\);\s*'
+    r'return\s+domElement;\s*'
+    r'\})'
+)
+
+FIND_EVENT_TARGET_REPLACEMENT = (
+    'var findEventTarget = target => { '
+    'target = maybeCStringToJsString(target); '
+    'var domElement = specialHTMLTargets[target] '
+    '|| (typeof globalThis.__sdvTransferredCanvases!=="undefined" && globalThis.__sdvTransferredCanvases[target.replace(/^#/, "")]) '
+    '|| (typeof document != "undefined" ? document.querySelector(target) : undefined); '
+    'return domElement; '
+    '}'
+)
+
+# Also patch findCanvasEventTarget = findEventTarget (no change needed, it's an alias)
+
+# Message listener IIFE to populate globalThis.__sdvTransferredCanvases
+# This runs in BOTH main thread and worker (no document check)
+MESSAGE_LISTENER_IIFE = r"""
+;""" + "// " + PATCH_MARKER + r"""
+;(function(){
+  if(typeof globalThis==='undefined')return;
+  if(!globalThis.__sdvTransferredCanvases)globalThis.__sdvTransferredCanvases={};
+  // Listen for transferred OffscreenCanvas messages from main thread
+  // (addEventListener('message') works alongside self.onmessage)
+  globalThis.addEventListener('message',function(e){
+    var d=e&&e.data;
+    if(!d)return;
+    if(d.__type==='sdv_canvas_transfer'&&d.canvas){
+      var key=d.id||'canvas';
+      globalThis.__sdvTransferredCanvases[key]=d.canvas;
+      if(typeof console!=='undefined')console.log('[sdv-canvas] Worker received canvas "'+key+'"');
+    }
+  });
+  if(typeof console!=='undefined')console.log('[sdv-canvas] Message listener installed');
+})();
+"""
 
 
 def patch_file(path):
@@ -33,69 +95,33 @@ def patch_file(path):
         print(f'  [SKIP] {path}: already patched')
         return False
 
-    # Inject our canvas lookup override.
-    # The IIFE wraps the original findCanvasEventTarget, intercepting "#canvas"
-    # and "canvas" selectors to return a transferred OffscreenCanvas.
-    #
-    # The main thread (main.js) is responsible for posting a message with the
-    # OffscreenCanvas to the worker before SDV starts.
-    inject = r"""
-;""" + "// " + PATCH_MARKER + r"""
-;(function(){
-  if(typeof globalThis==='undefined')return;
-  // Only patch on worker threads (where 'document' is undefined)
-  if(typeof document!=='undefined')return;
+    # Step 1: Patch findEventTarget function definition
+    new_content, n = FIND_EVENT_TARGET_PATTERN.subn(FIND_EVENT_TARGET_REPLACEMENT, content)
+    if n == 0:
+        print(f'  [WARN] {path}: findEventTarget pattern not found')
+        # Try a more flexible match
+        # Look for the line with specialHTMLTargets[target] ||
+        pattern2 = re.compile(
+            r'(var\s+domElement\s*=\s*specialHTMLTargets\[target\]\s*\|\|\s*'
+            r'\(typeof\s+document\s*!=\s*"undefined"\s*\?\s*document\.querySelector\(target\)\s*:\s*undefined\);)'
+        )
+        replacement2 = (
+            'var domElement = specialHTMLTargets[target] '
+            '|| (typeof globalThis.__sdvTransferredCanvases!=="undefined" && globalThis.__sdvTransferredCanvases[target.replace(/^#/, "")]) '
+            '|| (typeof document != "undefined" ? document.querySelector(target) : undefined);'
+        )
+        new_content, n = pattern2.subn(replacement2, content)
+        if n == 0:
+            print(f'  [ERROR] {path}: could not patch findEventTarget')
+            return False
+    print(f'  [OK] {path}: patched findEventTarget ({n} replacement(s))')
 
-  // Storage for transferred canvases (keyed by id, defaults to 'canvas')
-  if(!globalThis.__sdvTransferredCanvases)globalThis.__sdvTransferredCanvases={};
+    # Step 2: Append message listener IIFE
+    new_content = new_content + MESSAGE_LISTENER_IIFE
+    print(f'  [OK] {path}: appended message listener IIFE ({len(MESSAGE_LISTENER_IIFE)} bytes)')
 
-  // Listen for transferred OffscreenCanvas messages from main thread
-  globalThis.addEventListener('message',function(e){
-    var d=e&&e.data;
-    if(!d)return;
-    if(d.__type==='sdv_canvas_transfer'&&d.canvas){
-      var key=d.id||'canvas';
-      globalThis.__sdvTransferredCanvases[key]=d.canvas;
-      console.log('[sdv-canvas] Worker received canvas "'+key+'"');
-    }
-  });
-
-  // Wait for Module to be defined, then patch findCanvasEventTarget
-  function patchFindCanvasEventTarget(){
-    if(typeof findCanvasEventTarget==='undefined'){
-      setTimeout(patchFindCanvasEventTarget,0);
-      return;
-    }
-    var orig=findCanvasEventTarget;
-    // findCanvasEventTarget is a let/var assignment, can't be reassigned in module scope.
-    // Instead, hook into GL.createContext to translate '#canvas' → transferred canvas.
-    if(typeof GL!=='undefined'&&GL&&GL.createContext){
-      var origCreateContext=GL.createContext;
-      GL.createContext=function(canvas,attrs){
-        // If canvas is a string (CSS selector), look up transferred canvas
-        if(typeof canvas==='string'){
-          var selector=canvas.replace(/^#/,'');
-          var transferred=globalThis.__sdvTransferredCanvases[selector];
-          if(transferred){
-            console.log('[sdv-canvas] GL.createContext using transferred canvas for "'+selector+'"');
-            return origCreateContext.call(GL,transferred,attrs);
-          }
-        }
-        return origCreateContext.apply(GL,arguments);
-      };
-      console.log('[sdv-canvas] Patched GL.createContext to intercept canvas selectors');
-    } else {
-      // GL not ready yet — retry
-      setTimeout(patchFindCanvasEventTarget,0);
-    }
-  }
-  patchFindCanvasEventTarget();
-})();
-"""
-    content = content + inject
     with open(path, 'w') as f:
-        f.write(content)
-    print(f'  [OK] {path}: appended canvas transfer patch ({len(inject)} bytes)')
+        f.write(new_content)
     return True
 
 
