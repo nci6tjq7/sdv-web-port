@@ -100,7 +100,6 @@ def patch_file(path):
     if n == 0:
         print(f'  [WARN] {path}: findEventTarget pattern not found')
         # Try a more flexible match
-        # Look for the line with specialHTMLTargets[target] ||
         pattern2 = re.compile(
             r'(var\s+domElement\s*=\s*specialHTMLTargets\[target\]\s*\|\|\s*'
             r'\(typeof\s+document\s*!=\s*"undefined"\s*\?\s*document\.querySelector\(target\)\s*:\s*undefined\);)'
@@ -116,7 +115,26 @@ def patch_file(path):
             return False
     print(f'  [OK] {path}: patched findEventTarget ({n} replacement(s))')
 
-    # Step 2: Append message listener IIFE
+    # Step 2: Force WebGL 2.0 context (OpenGL ES 3.0) by patching
+    # _emscripten_webgl_do_create_context to override majorVersion=2.
+    # FNA3D checks SDL_GetPlatform() which returns "Unknown" (not "Emscripten")
+    # in .NET WASM, so FNA3D_OPENGL_FORCE_ES3 env var is needed. But env vars
+    # may not propagate from .NET to C's getenv(). Directly patching the JS
+    # ensures WebGL 2.0 context is always requested.
+    #
+    # The contextAttributes object is built from WASM heap values. We append
+    # a line after it's built to force majorVersion=2.
+    pattern_gl = re.compile(
+        r'(majorVersion:\s*GROWABLE_HEAP_I32\(\)\[a\s*\+\s*\(32\s*>>\s*2\)\],)'
+    )
+    replacement_gl = r'\1 contextAttributes.majorVersion = Math.max(contextAttributes.majorVersion, 2), /* SDV: force WebGL 2.0 */'
+    new_content, n_gl = pattern_gl.subn(replacement_gl, new_content)
+    if n_gl > 0:
+        print(f'  [OK] {path}: forced WebGL 2.0 majorVersion ({n_gl} replacement(s))')
+    else:
+        print(f'  [WARN] {path}: could not patch majorVersion (pattern not found)')
+
+    # Step 3: Append message listener IIFE
     new_content = new_content + MESSAGE_LISTENER_IIFE
     print(f'  [OK] {path}: appended message listener IIFE ({len(MESSAGE_LISTENER_IIFE)} bytes)')
 
