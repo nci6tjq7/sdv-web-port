@@ -91,16 +91,14 @@ MESSAGE_LISTENER_IIFE = r"""
   //   3. Set renderer->useES3 = true after context creation
   // Without this, FNA3D creates a WebGL 2.0 context but doesn't recognize it
   // as ES3, causing 'OpenGL ES 3.0 support is required!' error.
-  // ENV is defined inside dotnet.native.js, so we need to wait for it.
-  function setEnvVar(){
-    if(typeof ENV!=='undefined'){
-      ENV.FNA3D_OPENGL_FORCE_ES3='1';
-      if(typeof console!=='undefined')console.log('[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1');
-    }else{
-      setTimeout(setEnvVar,0);
-    }
+  // ENV is defined as 'var ENV = {};' earlier in this same module, so it's
+  // accessible here. We set it directly (no typeof check needed).
+  try {
+    ENV.FNA3D_OPENGL_FORCE_ES3='1';
+    if(typeof console!=='undefined')console.log('[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1 (ENV keys: '+Object.keys(ENV).length+')');
+  } catch(e) {
+    if(typeof console!=='undefined')console.warn('[sdv-canvas] Failed to set ENV:', e.message);
   }
-  setEnvVar();
   if(typeof console!=='undefined')console.log('[sdv-canvas] Message listener installed');
 })();
 """
