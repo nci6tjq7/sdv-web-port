@@ -128,7 +128,19 @@ const SDV = {
             window.Worker.PROTOTYPE = origWorker.prototype;
 
             console.log("[SDV] Creating .NET runtime instance...");
-            dotnetInstance = await dotnet.create();
+            // Set environment variables that the C library (SDL3/FNA3D) reads via getenv().
+            // Environment.SetEnvironmentVariable() in C# only affects .NET's view, NOT the
+            // C library's getenv(). We need to set them via the WASM runtime config so
+            // emscripten's ENV object is populated before any C code runs.
+            //
+            // FNA3D_OPENGL_FORCE_ES3=1: forces FNA3D to request OpenGL ES 3.0 context
+            // attributes (SDL_GL_CONTEXT_MAJOR_VERSION=3, PROFILE_ES), which emscripten
+            // maps to WebGL 2.0 context creation. Without this, FNA3D defaults to desktop
+            // OpenGL 2.1 (because SDL_GetPlatform() returns "Unknown" not "Emscripten"),
+            // which emscripten maps to WebGL 1.0 — insufficient for SDV.
+            dotnetInstance = await dotnet.withEnvironmentVariables({
+                FNA3D_OPENGL_FORCE_ES3: '1',
+            }).create();
             console.log("[SDV] .NET runtime loaded");
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
