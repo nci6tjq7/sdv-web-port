@@ -62,15 +62,19 @@ jobs:
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/Stardew\ Valley.dll
           test -f download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll
 
-      - name: Download fnalibs from our build-fnalibs workflow
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download pre-built fnalibs from r58Playz (threaded)
         run: |
           mkdir -p download/fnalibs
-          # Use standalone Python script to avoid YAML indentation issues with inline Python.
-          # Downloads fnalibs-single artifact (SDL3.a, FNA3D.a with ES3 patches, FAudio.a)
-          # Falls back to r58Playz pre-built fnalibs if no successful build-fnalibs run exists.
-          python3 ${{ github.workspace }}/scripts/download-fnalibs-artifact.py download/fnalibs "$GH_TOKEN"
+          # Use r58Playz's pre-built fnalibs — proven by celeste-wasm.
+          # Their FNA3D.a is upstream + minimal patches (SDLGPU removed, pthread added).
+          # We do NOT need to build FNA3D from source — the ES3 issue is fixed by
+          # EmccExtraLDFlags="-sMIN_WEBGL_VERSION=2" in the csproj, not by patching FNA3D.
+          RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
+          BASE="https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}"
+          curl -sL "${BASE}/SDL3.a" -o download/fnalibs/SDL3.a
+          curl -sL "${BASE}/FNA3D.a" -o download/fnalibs/FNA3D.a
+          curl -sL "${BASE}/FAudio.a" -o download/fnalibs/FAudio.a
+          curl -sL "${BASE}/libmojoshader.a" -o download/fnalibs/libmojoshader.a
           ls -la download/fnalibs/
 
       - name: Download and FULLY install patched .NET runtime from r58Playz
@@ -122,14 +126,10 @@ jobs:
       - name: Copy native libs to runtime project
         run: |
           mkdir -p src/SdvWebPort.FnaRuntime/native
-          # Only copy the libs that the csproj references (SDL3.a, FNA3D.a, FAudio.a).
-          # libmojoshader.a is merged into FNA3D.a by build-fnalibs, so don't copy it
-          # (an empty .a file causes 'wasm-ld: unknown file type' error).
-          for lib in SDL3.a FNA3D.a FAudio.a; do
-            if [ -f "download/fnalibs/$lib" ]; then
-              cp "download/fnalibs/$lib" "src/SdvWebPort.FnaRuntime/native/$lib"
-            fi
-          done
+          # Copy all fnalibs from r58Playz (SDL3.a, FNA3D.a, FAudio.a, libmojoshader.a).
+          # r58Playz's FNA3D.a does NOT include MojoShader (unlike our build-fnalibs),
+          # so libmojoshader.a is needed separately.
+          cp download/fnalibs/*.a src/SdvWebPort.FnaRuntime/native/
           ls -la src/SdvWebPort.FnaRuntime/native/
 
       - name: Build strip-pinvokes tool and stub GalaxyCSharp/Steamworks.NET
@@ -177,24 +177,18 @@ jobs:
           echo "=== WASM bundle size ==="
           du -sh /tmp/wasm-publish/wwwroot/
 
-      - name: Patch dotnet.native.js to transfer canvas to worker (celeste-wasm pattern)
+      - name: Verify EmccExtraLDFlags are in emcc-link.rsp
         run: |
-          # In .NET 10 threaded WASM, all C# runs in the deputy worker, but <canvas>
-          # lives only on the DOM thread. SDL3's emscripten video driver hardcodes
-          # '#canvas' as the selector, and emscripten_webgl_create_context tries
-          # GL.offscreenCanvases["canvas"] (empty) then Module['canvas'] (unset)
-          # then document.querySelector (undefined in workers) → returns 0 silently.
-          # FNA3D then calls a non-null JS stub which hits GLctx.getParameter with
-          # GLctx===undefined → 'Cannot read properties of undefined (reading getParameter)'.
-          #
-          # Fix: celeste-wasm pattern — append a self-executing function expression
-          # to dotnet.native.*.js that pre-populates GL.offscreenCanvases by transferring
-          # the canvas element (matched by CSS class 'canvas') via transferControlToOffscreen().
-          # Combined with class="canvas" on the <canvas> element (added in index.html),
-          # this makes SDL3 find the canvas and create a real WebGL context.
-          python3 ${{ github.workspace }}/scripts/patch-canvas-transfer.py /tmp/wasm-publish/wwwroot/_framework/
-          echo "=== Verify patch applied ==="
-          grep -c "TRANSFERRED_CANVAS" /tmp/wasm-publish/wwwroot/_framework/dotnet.native.*.js || echo "(no matches found)"
+          # Verify that -sMIN_WEBGL_VERSION=2 and -sOFFSCREENCANVAS_SUPPORT are
+          # present in the emcc link response file. These are set via
+          # <EmccExtraLDFlags> in the csproj and are THE FIX for the ES3 issue.
+          echo "=== emcc-link.rsp contents ==="
+          find /tmp/wasm-publish -name "emcc-link.rsp" -exec cat {} \; 2>/dev/null | head -20 || echo "(not found)"
+          echo ""
+          echo "=== Check for MIN_WEBGL_VERSION ==="
+          find /tmp/wasm-publish -name "*.rsp" -exec grep -l "MIN_WEBGL_VERSION" {} \; 2>/dev/null || echo "(not found in rsp)"
+          echo "=== Check for OFFSCREENCANVAS_SUPPORT ==="
+          find /tmp/wasm-publish -name "*.rsp" -exec grep -l "OFFSCREENCANVAS_SUPPORT" {} \; 2>/dev/null || echo "(not found in rsp)"
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4

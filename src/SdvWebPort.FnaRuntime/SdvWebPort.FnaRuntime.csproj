@@ -28,6 +28,25 @@
     <DynamicCodeSupport>false</DynamicCodeSupport>
   </PropertyGroup>
 
+  <!--
+    Emscripten link flags — THE MISSING PIECE (research-7 finding).
+    celeste-wasm uses these flags to make FNA3D's OpenGL ES3 driver work:
+    - -sMIN_WEBGL_VERSION=2: force WebGL 2.0 context (OpenGL ES 3.0).
+      Without this, emscripten defaults to WebGL 1.0 (ES 2.0), and FNA3D's
+      ES3 auto-detection (SDL_GetPlatform()=="Emscripten") creates a context
+      but SDL_GL_GetAttribute returns wrong profile → "OpenGL ES 3.0 support
+      is required!" error.
+    - -sOFFSCREENCANVAS_SUPPORT: enable OffscreenCanvas transfer to worker.
+      This makes emscripten's SDL3 video driver automatically transfer the
+      canvas to the deputy worker, replacing our manual canvas-transfer hack.
+    - -sWASMFS: use WASM filesystem (for SDV's Content/ XNB file access).
+    - -sMAXIMUM_MEMORY=4294901760: 4GB memory limit (SDV needs lots of RAM).
+    - -sMALLOC=mimalloc: faster malloc (celeste-wasm uses this for performance).
+  -->
+  <PropertyGroup>
+    <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc</EmccExtraLDFlags>
+  </PropertyGroup>
+
   <!-- Backup: also set via RuntimeHostConfigurationOption with CORRECT switch name.
        The switch name MUST include '.CompilerServices' segment — verified from
        dotnet/runtime System.Private.CoreLib RuntimeFeature.NonNativeAot.cs -->
@@ -99,9 +118,7 @@
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\SDL3.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FNA3D.a" />
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\FAudio.a" />
-    <!-- libmojoshader.a is NOT included here because MojoShader is merged into
-         FNA3D.a by our build-fnalibs workflow. Including an empty .a file
-         causes 'wasm-ld: unknown file type' error. -->
+    <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a" />
   </ItemGroup>
 
 </Project>

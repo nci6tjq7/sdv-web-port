@@ -47,100 +47,16 @@ const SDV = {
             const { dotnet } = await import('./_framework/dotnet.js');
             console.log("[SDV] dotnet.js loaded, creating instance...");
 
-            // Transfer the canvas to the WASM worker thread BEFORE creating the runtime.
-            // .NET 10 threaded WASM runs all C# in the deputy worker, but <canvas> lives
-            // on the DOM thread. SDL3's emscripten video driver calls
-            // emscripten_webgl_create_context('#canvas', ...) which calls
-            // findCanvasEventTarget('#canvas') → document.querySelector('#canvas')
-            // — but `document` doesn't exist in workers, so it returns undefined.
+            // With -sOFFSCREENCANVAS_SUPPORT in EmccExtraLDFlags (csproj),
+            // emscripten's SDL3 video driver automatically transfers the canvas
+            // to the deputy worker. No manual canvas transfer hack needed.
             //
-            // Fix: transfer the canvas via canvas.transferControlToOffscreen() and post
-            // the resulting OffscreenCanvas to the worker via a 'message' event.
-            // The patch-canvas-transfer.py-injected IIFE in dotnet.native.*.js listens
-            // for this message and intercepts GL.createContext to substitute the
-            // transferred OffscreenCanvas when the selector is '#canvas' or 'canvas'.
+            // With -sMIN_WEBGL_VERSION=2, emscripten creates WebGL 2.0 context
+            // (= OpenGL ES 3.0), which FNA3D's ES3 auto-detection requires.
             //
-            // We can't transfer the canvas BEFORE creating the runtime because we don't
-            // have access to the worker. Instead, we register a callback to run as soon
-            // as the worker is created. We do this by wrapping the Worker constructor.
-            //
-            // Reference: celeste-wasm pattern (adapted to .NET 10 SDK that doesn't
-            // support transferredCanvasNames config option)
-            let canvasTransferred = false;
-            const origWorker = window.Worker;
-            window.Worker = function(url, opts) {
-                console.log('[SDV] Worker created:', url, opts);
-                const worker = new origWorker(url, opts);
-                // Transfer the canvas to the FIRST worker created (the deputy worker).
-                // We transfer via postMessage with an OffscreenCanvas transferable.
-                // The patch-canvas-transfer.py-injected IIFE in dotnet.native.*.js
-                // listens for this message and intercepts GL.createContext.
-                if (!canvasTransferred) {
-                    // Set canvasTransferred synchronously so only the first worker
-                    // gets the transfer (other workers created in the same microtask
-                    // won't enter this block).
-                    canvasTransferred = true;
-                    // Defer the actual transfer to the next microtask so the worker's
-                    // message handler can be set up first.
-                    setTimeout(() => {
-                        try {
-                            const offscreen = canvas.transferControlToOffscreen();
-                            worker.postMessage(
-                                { __type: 'sdv_canvas_transfer', id: 'canvas', canvas: offscreen },
-                                [offscreen]
-                            );
-                            console.log('[SDV] Canvas transferred to worker');
-
-                            // After transfer, the main-thread canvas.width/height setters
-                            // throw 'Cannot resize canvas after call to transferControlToOffscreen()'.
-                            // The .NET WASM SDK's setCanvasElementSizeCallingThread checks
-                            // canvas.controlTransferredOffscreen, but only after looking up the
-                            // canvas via document.querySelector. If the lookup returns the original
-                            // canvas (not a stale reference), the check should work — but if
-                            // FNA3D calls SDL_SetWindowSize via proxyToMainThread BEFORE the
-                            // transfer completes, the check fails.
-                            // Fix: override canvas.width/height setters to no-op silently.
-                            // The worker side will handle the actual resize via OffscreenCanvas.
-                            try {
-                                Object.defineProperty(canvas, 'width', {
-                                    get: () => 1280,
-                                    set: () => {},
-                                    configurable: true
-                                });
-                                Object.defineProperty(canvas, 'height', {
-                                    get: () => 720,
-                                    set: () => {},
-                                    configurable: true
-                                });
-                                console.log('[SDV] Canvas width/height setters neutralized');
-                            } catch (e) {
-                                console.warn('[SDV] Failed to neutralize canvas setters:', e);
-                            }
-                        } catch (e) {
-                            console.warn('[SDV] Canvas transfer failed:', e);
-                        }
-                    }, 0);
-                }
-                return worker;
-            };
-            // Copy prototype and static properties
-            window.Worker.prototype = origWorker.prototype;
-            window.Worker.PROTOTYPE = origWorker.prototype;
-
+            // Reference: celeste-wasm pattern (MercuryWorkshop/celeste-wasm)
             console.log("[SDV] Creating .NET runtime instance...");
-            // Set environment variables that the C library (SDL3/FNA3D) reads via getenv().
-            // Environment.SetEnvironmentVariable() in C# only affects .NET's view, NOT the
-            // C library's getenv(). We need to set them via the WASM runtime config so
-            // emscripten's ENV object is populated before any C code runs.
-            //
-            // FNA3D_OPENGL_FORCE_ES3=1: forces FNA3D to request OpenGL ES 3.0 context
-            // attributes (SDL_GL_CONTEXT_MAJOR_VERSION=3, PROFILE_ES), which emscripten
-            // maps to WebGL 2.0 context creation. Without this, FNA3D defaults to desktop
-            // OpenGL 2.1 (because SDL_GetPlatform() returns "Unknown" not "Emscripten"),
-            // which emscripten maps to WebGL 1.0 — insufficient for SDV.
-            dotnetInstance = await dotnet.withEnvironmentVariables({
-                FNA3D_OPENGL_FORCE_ES3: '1',
-            }).create();
+            dotnetInstance = await dotnet.create();
             console.log("[SDV] .NET runtime loaded");
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);

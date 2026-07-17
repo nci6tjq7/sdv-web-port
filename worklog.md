@@ -2092,3 +2092,101 @@ Work Log:
 2. Edit `scripts/build-sdv-fna.sh` (or `scripts/patch-sdv-fna.sh`) — after `dotnet publish`, add the celeste-wasm sed patch targeting the published `_framework/dotnet.native.*.js`. Use the exact regex from celeste-wasm `Makefile:45`.
 3. Rebuild and test in browser — should see `pthread_create: canvas.transferControlToOffscreen()...` in console (with GL_DEBUG), then FNA3D's `OpenGL Renderer:WebKit WebGL` log, then SDV should advance past FNA3D init.
 4. If still failing: verify the patch landed in `dotnet.native.*.js` (grep for `TRANSFERRED_CANVAS`) and that `crossOriginIsolated` is true (required for OffscreenCanvas transfer).
+
+## 2026-07-05 — Task research-7: How r58Playz solved FNA3D ES3/WebGL2 for Celeste
+- **Task ID:** research-7
+- **Agent:** general-purpose research subagent
+- **Type:** Research only — no code changes
+- **Status:** DONE
+
+### Summary
+Researched r58Playz/FNA-WASM-Build, MercuryWorkshop/celeste-wasm, FNA-XNA/FNA3D, and libsdl-org/SDL to understand how Celeste runs in WASM with FNA3D's OpenGL driver while our SDV port hits `"OpenGL ES 3.0 support is required!"`.
+
+### Root cause (the answer)
+**r58Playz does NOT patch FNA3D's OpenGL driver.** Their `FNA3D.patch` only (a) removes the SDLGPU driver from the build, and (b) adds `-pthread` to CFLAGS for WASM threads. The ES3 detection logic, forceES3 path, and GL function loading are all unmodified upstream FNA3D 26.04.
+
+The actual fix lives in the *consumer* csproj. MercuryWorkshop/celeste-wasm's `CelesteLoader.csproj:38` sets:
+```xml
+<EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sWASMFS -sOFFSCREENCANVAS_SUPPORT -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc</EmccExtraLDFlags>
+```
+`-sMIN_WEBGL_VERSION=2` is the critical flag. Without it, emscripten creates a WebGL1 context (ES2 only). With it, emscripten creates a WebGL2 context (ES3-compatible). FNA3D's `OPENGL_PrepareWindowAttributes()` auto-detects Emscripten via `SDL_GetPlatform()` and forces ES3 — but this only succeeds if the underlying context is WebGL2.
+
+**Our `SdvWebPort.FnaRuntime.csproj` is missing `<EmccExtraLDFlags>` entirely**, so emscripten creates a WebGL1 context, FNA3D requests ES3, can't get it, and bails out with the "ES 3.0 support is required!" error. **The bug is in our csproj, not in our FNA3D.a build.**
+
+### Key findings
+1. **r58Playz patches FNA3D source:** Only minimally — removes SDLGPU driver + adds `-pthread`. No ES3 logic changes.
+2. **FNA3D WebGPU driver:** Does not exist. FNA3D has only OpenGL, D3D11, and SDLGPU (SDL_GPU) drivers. No `FNA3D_Driver_WebGPU.c`. SDL_GPU itself doesn't have a WebGPU backend yet. WebGPU is not a path today.
+3. **Celeste ES requirements:** Celeste (and SDV) don't strictly need ES3 features — they're 2D games. But FNA3D unconditionally forces ES3 on Emscripten, so we must provide a WebGL2/ES3 context. celeste-wasm uses WebGL2 (`-sMIN_WEBGL_VERSION=2`), not WebGL1.
+4. **SDL3 platform detection:** `SDL_GetPlatform()` returns `"Emscripten"` automatically when compiled with emcc (via `__EMSCRIPTEN__` → `SDL_PLATFORM_EMSCRIPTEN`). No patches needed. Both r58Playz's SDL3.a and ours do this correctly.
+5. **FNA3D has first-class Emscripten support upstream:** `CMakeLists.txt:90-94` disables GLSPIRV on emscripten; `FNA3D_Driver_OpenGL.c:5759` checks `WEBGL_compressed_texture_s3tc`; `FNA3D_Driver_OpenGL.c:5815` matches `"Emscripten"` for ES3 auto-force.
+
+### Top recommendation
+Add to `src/SdvWebPort.FnaRuntime/SdvWebPort.FnaRuntime.csproj`:
+```xml
+<EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc</EmccExtraLDFlags>
+<EmccEnvironment>web,worker</EmccEnvironment>
+```
+This single change (specifically `-sMIN_WEBGL_VERSION=2`) should fix the "OpenGL ES 3.0 support is required!" error.
+
+### Should we use r58Playz's pre-built fnalibs as-is?
+**YES.** They are built from upstream FNA3D 26.04 + SDL3 release-3.4.4, only minimally patched (SDLGPU removed, pthread added), use the same emsdk we should use, and are proven by celeste-wasm. Stop building FNA3D from source; revert our misguided "forceES3=1 / useES3=1 / skip GL checks" patches; just consume r58Playz's artifacts and fix our csproj link flags.
+
+### Files
+- `download/research-r58playz-fna3d.md` — comprehensive findings with source references, annotated FNA3D.patch, side-by-side csproj comparison, and recommended next actions.
+
+---
+
+## Task ID: research-8
+- **Agent:** research-subagent (general-purpose)
+- **Date:** 2026-07-17
+- **Task:** Research latest (2025-2026) approaches to running .NET games in the browser via WebAssembly, and evaluate alternatives to our current FNA + .NET 10 WASM (preview 5) + r58Playz patched runtime approach. Cover .NET 10/11 status, NativeAOT-LLVM, Blazor vs `Microsoft.NET.Sdk.WebAssembly`, KNI, Emscripten direct interop, WebGPU, C#→JS transpilers, browser gaming platforms.
+
+### Method
+- 30 web searches via `z-ai function -n web_search` covering: .NET 10/11 RTM + previews, PInvoke signature mismatch (dotnet/runtime#112262), NativeAOT-LLVM, KNI/MonoGame/FNA WASM, Blazor vs WebAssembly SDK, WebGPU stability/FNA3D backend, C#→JS transpilers (Bridge.NET, H5), existing SDV web ports.
+- Direct GitHub API queries (`curl api.github.com`) for: dotnet/runtime#112262 (state, milestone, comments), dotnet/runtime#130634 (newer related sig-mismatch bug), dotnet/runtime#99514, kniEngine/kni (repo metadata, releases, commits), r58Playz/FNA-WASM-Build (releases, README, build-dotnet.sh, Makefile), dotnet/runtimelab (branches, NativeAOT-LLVM latest commit).
+- Fetched and read raw markdown: `MercuryWorkshop/celeste-wasm/threads-v2/how.md` (417 lines, the r58Playz porting story), `celeste-wasm/Makefile` (the patched-runtime + sed-patch pipeline), `r58Playz/FNA-WASM-Build/README.md`, `r58Playz/FNA-WASM-Build/build-dotnet.sh`.
+- Fetched and parsed: .NET 10 announcement (devblogs), .NET 10 overview (learn.microsoft.com), .NET 11 runtime what's new, .NET 11 Preview 5 runtime release notes (the Browser CoreCLR bring-up section), VS Magazine "Devs Souring on .NET 11?" (Feb 2026), Uno Platform "State of WebAssembly 2025-2026", blog.nkast.gr "What's new in KNI v4.02", Wavedash KNI/MonoGame engine docs.
+
+### Key findings
+
+1. **.NET 10 RTM shipped Nov 11 2025** — we are 6 months behind on preview 5. Servicing updates shipped Apr 21 2026 and Jul 14 2026. Upgrade to RTM is overdue.
+
+2. **dotnet/runtime#112262 (PInvoke signature mismatch on `i64`/`ulong` enums) is STILL OPEN** as of 2026-07-17. Verified via GitHub API. Milestone: **11.0.0** — will NOT be fixed in .NET 10. Maintainer `kg` confirmed workaround (cast enum to `ulong` at call site). r58Playz uses this workaround in celeste-wasm. A newer related bug, #130634 (Jul 13 2026, R2R sig mismatch on `Monitor.Exit` cold path), is also open — confirms the signature-mismatch class of bugs is ongoing in Mono-WASM.
+
+3. **NativeAOT-LLVM is NOT a viable browser-game path.** Branch `feature/NativeAOT-LLVM` is active (last commit 2026-07-07) but targets **WASI P2 components**, not browser/Emscripten/Canvas/SDL. No Reflection.Emit, no FNA3D native-lib path, no JS/DOM interop story. Skip.
+
+4. **KNI (kniEngine/kni, NOT AristurtleDev/Kni.NET — repo moved) is the most promising alternative.** v4.2.9001 (Nov 2 2025) + hotfix1 (Nov 8) + hotfix2 (Nov 17) shipped significant Blazor.GL maturation: `DrawInstancedPrimitives`, `OnTextInput`, `Mouse.SetCursor`, WebAudio Pan, `DynamicSoundEffectInstance`, microphone input. NuGet: `nkast.Kni.Platform.Blazor.GL` 4.2.9001.2. **Critical advantage: Blazor.GL is pure C# WebGL2 via `IJSRuntime` — no FNA3D.a, no SDL3.a, no `NativeFileReference`, no PInvoke signature mismatch, no OffscreenCanvas transfer sed patch, no r58Playz patched runtime.** Demo shows 40K instanced sprites @ 60fps in browser.
+
+5. **WebGPU shipped stable in all major browsers Nov 2025** (Chrome 113+, Edge, Safari 26, Firefox 141 Win), declared Baseline Jan 2026. **BUT it does NOT solve our problem:** (a) FNA3D has no WebGPU backend (only D3D11/D3D12/OpenGL/Metal/SDL_GPU); (b) the `<canvas>` still must be transferred to the deputy worker via `OffscreenCanvas` regardless of graphics API; (c) writing a new FNA3D WebGPU backend is 4-8 weeks of work with no upstream support.
+
+6. **MonoGame officially does NOT support web builds** in 2026 (Wavedash docs explicitly say "For the browser, use KNI"). MonoGame 3.8.5 released Jul 15 2026 with no web target.
+
+7. **.NET 11 Preview 5 (Jun 2026) introduces Browser CoreCLR** (`<UseMonoRuntime>false</UseMonoRuntime>`) as opt-in alternative to Mono. Real RyuJIT in browser. **BUT:** per the Preview 5 runtime notes — *"A dedicated native WebAssembly toolchain/workload for browser CoreCLR isn't available yet, so AOT and the native build paths still require the Mono runtime in Preview 5."* → Cannot drive FNA3D (which needs `NativeFileReference` + Emscripten linking = Mono-only). Revisit in .NET 12 (2027).
+
+8. **r58Playz patched runtime is still required for FNA path on .NET 10 RTM.** celeste-wasm's current `threads-v2` Makefile targets `net10.0` and still downloads the pre-patched `dotnet.zip` from FNA-WASM-Build releases. **However, most of r58Playz's Mono patches target MonoMod.RuntimeDetour (mod loading), which SDV does not need.** Only the PInvokeTableGenerator patch (fixes #112262 without per-call casts) and possibly the `Module.GetTypes` patch are relevant to SDV.
+
+9. **No public SDV browser port exists.** Search results show only: cloud streaming (Amazon Luna), emulated play (Reddit), save-file viewers (Nexus Mods "Stardew Web"), demakes (Pico Valley on itch.io). Our project is the first known real port attempt. Closest precedent: celeste-wasm + terraria-wasm (both FNA-based, both use r58Playz/FNA-WASM-Build).
+
+10. **C# → JS transpilers (Bridge.NET, H5 fork) are not viable for SDV.** SDV uses Reflection.Emit (`Force.DeepCloner`, `NetFields`), `Assembly.LoadFrom` (SMAPI), `System.Net.Sockets` (multiplayer), `.xnb` content pipeline — none of which JS transpilers handle. No precedent for game-scale C#→JS ports.
+
+### Deliverable
+- `download/research-wasm-alternatives.md` — comprehensive 13-section findings document covering all 8 research goals + cross-cutting findings + Top 3 recommendations with effort estimates + 30-source bibliography. Research-only, no code changes made.
+
+### Top 3 recommended directions (with effort estimates)
+
+**A — Switch FNA → KNI Blazor.GL (RECOMMENDED, 3-5 weeks, medium risk).** Replace FNA.csproj with `nkast.Kni.Framework` + `nkast.Kni.Platform.Blazor.GL` 4.2.9001.2. Build out `KniCompatShim.cs` (already stubbed in repo). Delete FNA3D/SDL3/FAudio native lib pipeline, delete r58Playz patched runtime, delete canvas-transfer sed patch, delete `WasmBuildNative` infrastructure. **Eliminates the entire PInvoke-signature-mismatch + canvas-transfer + native-lib-linking class of bugs.** Risk: KNI Blazor.GL unproven at SDV scale → mitigate with 2-3 day title-screen spike first.
+
+**B — Stay on FNA, upgrade to .NET 10 RTM, keep r58Playz runtime (DEFAULT, 1-2 weeks, low risk).** Bump `global.json` from preview 5 to .NET 10 RTM servicing. Apply canvas-transfer sed patch (research-6). Apply `<DynamicCodeSupport>false</DynamicCodeSupport>` (research-5). Audit all `ulong`-enum PInvokes for #112262 workaround (cast to `ulong` at call site). Continue through remaining blockers. celeste-wasm precedent proves this works.
+
+**C — Wait for .NET 11 RTM + Browser CoreCLR (DEFERRED, 0 now, 4-6 weeks when Nov 2026 RTM ships, high risk).** Do nothing major until .NET 11 RTM. Browser CoreCLR bring-up is in Preview 5 but native-link paths still require Mono — FNA3D won't work yet. Revisit in .NET 12 (2027). Pursue in parallel as future migration, not current.
+
+**Anti-recommendations (explicitly do NOT pursue):** NativeAOT-LLVM (wrong target — WASI not browser); WebGPU backend (would require writing new FNA3D backend; doesn't fix actual blocker); C#→JS transpilation (Reflection.Emit incompatibility, no game-scale precedent); cloud streaming (not a port, licensing/IP concerns).
+
+### Files
+- `download/research-wasm-alternatives.md` — comprehensive findings + recommendations (research-only, no code changes made).
+
+### Next steps (for a future implementer task, not this research)
+1. **Decision point: A vs B.** Run a 2-3 day KNI Blazor.GL spike: port SDV's title-screen rendering to `nkast.Kni.Platform.Blazor.GL` 4.2.9001.2 in a fresh Blazor WASM project. If title screen renders at 60fps with content loading → commit to A. If blocking incompatibilities surface → fall back to B.
+2. **If A:** create `SdvWebPort.KniRuntime` Blazor WASM project, port `KniCompatShim.cs` (Texture2D.FromStream, Audio, GameWindow adapters), delete FNA3D native pipeline, delete `SdvWebPort.FnaRuntime`.
+3. **If B:** bump `global.json` to .NET 10 RTM SDK (latest servicing); keep r58Playz runtime; apply canvas-transfer sed patch from research-6; apply `<DynamicCodeSupport>false</DynamicCodeSupport>` from research-5; audit FNA3D.cs/SDL3.cs PInvokes for `ulong`-enum #112262 workaround.
+4. **In parallel:** subscribe to dotnet/runtime#112262 and dotnet/runtime#130634 for fix notifications; subscribe to .NET 11 release notes for Browser CoreCLR native-toolchain availability; re-evaluate direction in Nov 2026 (.NET 11 RTM).
