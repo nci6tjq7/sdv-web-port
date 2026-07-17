@@ -66,6 +66,7 @@ FIND_EVENT_TARGET_REPLACEMENT = (
 
 # Message listener IIFE to populate globalThis.__sdvTransferredCanvases
 # This runs in BOTH main thread and worker (no document check)
+# Also sets ENV.FNA3D_OPENGL_FORCE_ES3 to force ES3 profile recognition
 MESSAGE_LISTENER_IIFE = r"""
 ;""" + "// " + PATCH_MARKER + r"""
 ;(function(){
@@ -82,6 +83,24 @@ MESSAGE_LISTENER_IIFE = r"""
       if(typeof console!=='undefined')console.log('[sdv-canvas] Worker received canvas "'+key+'"');
     }
   });
+  // Set FNA3D_OPENGL_FORCE_ES3=1 in emscripten's ENV object.
+  // FNA3D reads this via SDL_GetHintBoolean('FNA3D_OPENGL_FORCE_ES3', 0) which
+  // calls SDL_getenv which reads from ENV. This forces FNA3D to:
+  //   1. Call SDL_GL_SetAttribute(CONTEXT_MAJOR_VERSION, 3) before context creation
+  //   2. Call SDL_GL_SetAttribute(CONTEXT_PROFILE_MASK, ES) before context creation
+  //   3. Set renderer->useES3 = true after context creation
+  // Without this, FNA3D creates a WebGL 2.0 context but doesn't recognize it
+  // as ES3, causing 'OpenGL ES 3.0 support is required!' error.
+  // ENV is defined inside dotnet.native.js, so we need to wait for it.
+  function setEnvVar(){
+    if(typeof ENV!=='undefined'){
+      ENV.FNA3D_OPENGL_FORCE_ES3='1';
+      if(typeof console!=='undefined')console.log('[sdv-canvas] Set ENV.FNA3D_OPENGL_FORCE_ES3=1');
+    }else{
+      setTimeout(setEnvVar,0);
+    }
+  }
+  setEnvVar();
   if(typeof console!=='undefined')console.log('[sdv-canvas] Message listener installed');
 })();
 """
