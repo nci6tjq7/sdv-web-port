@@ -56,6 +56,20 @@ def main():
     else:
         print('[SKIP] Patch 3: depth check pattern not found (already patched?)')
 
+    # Patch 4: skip BaseGL check when useES3 is true.
+    # BaseGL loads glActiveTexture, glBindBuffer, etc. via SDL_GL_GetProcAddress.
+    # In WebGL 2.0, these functions exist but SDL_GL_GetProcAddress might not find them
+    # (emscripten's GL proc lookup is finicky). When useES3 is true, skip this check.
+    pattern4 = re.compile(
+        r'(if\s*\(\s*!renderer->supports_BaseGL\s*\)\s*\{)'
+    )
+    new4 = 'if (!renderer->useES3 && !renderer->supports_BaseGL) {'
+    content, n4 = pattern4.subn(new4, content)
+    if n4 > 0:
+        print(f'[OK] Patch 4: skip BaseGL check when useES3 ({n4} replacement(s))')
+    else:
+        print('[SKIP] Patch 4: BaseGL check pattern not found (already patched?)')
+
     path.write_text(content)
     print(f'[+] Patched file written to {path}')
 
