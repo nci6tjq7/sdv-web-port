@@ -76,8 +76,12 @@ const SDV = {
                 // The patch-canvas-transfer.py-injected IIFE in dotnet.native.*.js
                 // listens for this message and intercepts GL.createContext.
                 if (!canvasTransferred) {
-                    // Defer the transfer to the next microtask so the worker's message
-                    // handler can be set up first.
+                    // Set canvasTransferred synchronously so only the first worker
+                    // gets the transfer (other workers created in the same microtask
+                    // won't enter this block).
+                    canvasTransferred = true;
+                    // Defer the actual transfer to the next microtask so the worker's
+                    // message handler can be set up first.
                     setTimeout(() => {
                         try {
                             const offscreen = canvas.transferControlToOffscreen();
@@ -85,8 +89,33 @@ const SDV = {
                                 { __type: 'sdv_canvas_transfer', id: 'canvas', canvas: offscreen },
                                 [offscreen]
                             );
-                            canvasTransferred = true;
                             console.log('[SDV] Canvas transferred to worker');
+
+                            // After transfer, the main-thread canvas.width/height setters
+                            // throw 'Cannot resize canvas after call to transferControlToOffscreen()'.
+                            // The .NET WASM SDK's setCanvasElementSizeCallingThread checks
+                            // canvas.controlTransferredOffscreen, but only after looking up the
+                            // canvas via document.querySelector. If the lookup returns the original
+                            // canvas (not a stale reference), the check should work — but if
+                            // FNA3D calls SDL_SetWindowSize via proxyToMainThread BEFORE the
+                            // transfer completes, the check fails.
+                            // Fix: override canvas.width/height setters to no-op silently.
+                            // The worker side will handle the actual resize via OffscreenCanvas.
+                            try {
+                                Object.defineProperty(canvas, 'width', {
+                                    get: () => 1280,
+                                    set: () => {},
+                                    configurable: true
+                                });
+                                Object.defineProperty(canvas, 'height', {
+                                    get: () => 720,
+                                    set: () => {},
+                                    configurable: true
+                                });
+                                console.log('[SDV] Canvas width/height setters neutralized');
+                            } catch (e) {
+                                console.warn('[SDV] Failed to neutralize canvas setters:', e);
+                            }
                         } catch (e) {
                             console.warn('[SDV] Canvas transfer failed:', e);
                         }
