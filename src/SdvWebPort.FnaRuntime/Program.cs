@@ -25,23 +25,12 @@ public static partial class Program
 
         try
         {
-            // Set the working directory to /deps so SDV can find Content/ files.
-            // SDV sets Content.RootDirectory = "Content" and FNA's TitleContainer
-            // resolves paths relative to the current directory.
-            // In WASM with -sWASMFS, the virtual filesystem root is /.
-            // Our Content files are deployed at /deps/Content/ (served as static files
-            // from wwwroot/deps/Content/).
-            // Setting CurrentDirectory to /deps makes "Content/Data/BigCraftables.xnb"
-            // resolve to /deps/Content/Data/BigCraftables.xnb.
-            try
-            {
-                Environment.CurrentDirectory = "/deps";
-                Console.WriteLine($"[SdvWebPort.FnaRuntime] Working directory: {Environment.CurrentDirectory}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SdvWebPort.FnaRuntime] Failed to set working directory: {ex.Message}");
-            }
+            // Initialize the HTTP-based TitleContainer with the correct base URL.
+            // Content files are served from /deps/ (wwwroot/deps/Content/).
+            // FNA's TitleContainer.OpenStream has been patched (via Mono.Cecil)
+            // to call HttpTitleContainer.OpenStream instead of File.OpenRead.
+            // This fetches XNB files via HTTP instead of the virtual filesystem.
+            Microsoft.Xna.Framework.HttpTitleContainer.SetBaseUrl("/deps/");
 
             // Signal JS that we're ready
             OnReady();

@@ -171,6 +171,37 @@ jobs:
           dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
           ls -la "Stardew Valley.dll"
 
+      - name: Patch FNA TitleContainer for HTTP-based Content loading
+        run: |
+          # FNA's TitleContainer.OpenStream uses File.OpenRead which can't access
+          # HTTP-served static files in WASM. Patch it to call our HttpTitleContainer
+          # which fetches Content files via HTTP from /deps/Content/.
+          #
+          # First, build the HttpTitleContainer shim (part of SdvWebPort.FnaRuntime)
+          # to get its DLL, then use Mono.Cecil to redirect FNA's OpenStream to it.
+          dotnet build scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj -c Release -o /tmp/patch-fna-tc
+
+          # Build just the HttpTitleContainer.cs file to get its DLL
+          # (it's part of SdvWebPort.FnaRuntime, so we build the whole project first
+          #  to get the DLL, then use it for patching)
+          cd src/SdvWebPort.FnaRuntime
+          dotnet build -c Release --no-restore 2>/dev/null || true
+          # The HttpTitleContainer is compiled into SdvWebPort.FnaRuntime.dll
+          SHIM_DLL="bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
+          if [ ! -f "$SHIM_DLL" ]; then
+            echo "ERROR: SdvWebPort.FnaRuntime.dll not found. Building with restore..."
+            dotnet build -c Release
+            SHIM_DLL="bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
+          fi
+
+          # Patch FNA.dll
+          cd "${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0"
+          cp FNA.dll FNA.orig.dll
+          dotnet /tmp/patch-fna-tc/patch-fna-titlecontainer.dll FNA.orig.dll "${{ github.workspace }}/$SHIM_DLL" 2>&1 || true
+          # The patcher modifies FNA.dll in place (first arg is both input and output)
+          dotnet /tmp/patch-fna-tc/patch-fna-titlecontainer.dll FNA.dll "${{ github.workspace }}/$SHIM_DLL"
+          ls -la FNA.dll
+
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime

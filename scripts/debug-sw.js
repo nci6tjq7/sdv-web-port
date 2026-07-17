@@ -19,7 +19,7 @@ const os = require('os');
   page.on('pageerror', err => logs.push(`[pageerror] ${err.message}`));
 
   console.log('=== Pass 1: load page (registers SW) ===');
-  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784317458', {
+  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784317955', {
     waitUntil: 'networkidle2',
     timeout: 60000
   }).catch(e => console.log('goto err:', e.message));
