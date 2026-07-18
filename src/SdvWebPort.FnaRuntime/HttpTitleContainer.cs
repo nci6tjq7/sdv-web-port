@@ -1,8 +1,6 @@
 using System;
 using System.IO;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Runtime.InteropServices.JavaScript;
 
 namespace Microsoft.Xna.Framework
 {
@@ -10,55 +8,38 @@ namespace Microsoft.Xna.Framework
     /// HTTP-based replacement for FNA's TitleContainer.OpenStream.
     ///
     /// In WASM, File.OpenRead can't access HTTP-served static files.
-    /// This shim fetches Content files via HTTP from /deps/Content/.
+    /// This shim fetches Content files via synchronous XMLHttpRequest
+    /// (using JS interop) from /deps/Content/.
     ///
-    /// FNA's ContentManager calls TitleContainer.OpenStream(assetName) where
-    /// assetName is like "Data\BigCraftables" (no .xnb extension, with backslashes).
-    /// ContentManager prepends RootDirectory ("Content") before calling OpenStream.
-    ///
-    /// So OpenStream receives: "Content\Data\BigCraftables.xnb"
-    /// We convert to: "/deps/Content/Data/BigCraftables.xnb" and fetch via HTTP.
+    /// IMPORTANT: HttpClient.GetAsync().GetAwaiter().GetResult() deadlocks in
+    /// WASM single-threaded environment. We use JS XMLHttpRequest in synchronous
+    /// mode instead, which is blocking but doesn't deadlock.
     /// </summary>
     public static class HttpTitleContainer
     {
-        private static readonly HttpClient _httpClient = new HttpClient();
         private static string _baseUrl = "/deps/";
 
-        /// <summary>
-        /// Set the base URL where Content files are served.
-        /// Default: /deps/ (files at wwwroot/deps/Content/)
-        /// </summary>
         public static void SetBaseUrl(string url)
         {
             _baseUrl = url;
             Console.WriteLine($"[HttpTitleContainer] Base URL: {_baseUrl}");
         }
 
-        /// <summary>
-        /// The root directory for content files.
-        /// SDV's LocalizedContentManager.GetContentRoot() reads this property.
-        /// In FNA, TitleContainer doesn't have a Location property (it's MonoGame),
-        /// but SDV expects it. We return "Content" to match SDV's expectation.
-        /// </summary>
         public static string Location
         {
             get { return "Content"; }
         }
 
         /// <summary>
-        /// Open a stream to a Content file via HTTP fetch.
-        /// This is a synchronous wrapper around HttpClient.GetAsync.
+        /// Open a stream to a Content file via synchronous XMLHttpRequest.
         /// </summary>
         public static Stream OpenStream(string name)
         {
-            // Normalize path separators (\ → /)
             string safeName = name.Replace('\\', '/');
 
-            // Build the URL
             string url;
             if (safeName.StartsWith("/"))
             {
-                // Already an absolute path
                 url = safeName;
             }
             else
@@ -70,20 +51,16 @@ namespace Microsoft.Xna.Framework
 
             try
             {
-                // Synchronous HTTP fetch (blocking — OK for WASM single-threaded)
-                var response = _httpClient.GetAsync(url).GetAwaiter().GetResult();
-                if (!response.IsSuccessStatusCode)
+                // Use JS interop to call synchronous XMLHttpRequest.
+                // This is blocking (like File.OpenRead) but doesn't deadlock
+                // because XMLHttpRequest runs in the browser's native network stack.
+                byte[] data = FetchSync(url);
+                if (data == null)
                 {
-                    throw new FileNotFoundException(
-                        $"HTTP {response.StatusCode}: {url}", url
-                    );
+                    throw new FileNotFoundException($"HTTP fetch failed: {url}", url);
                 }
-
-                // Read the content into a MemoryStream
-                var stream = new MemoryStream();
-                response.Content.ReadAsStreamAsync().GetAwaiter().GetResult().CopyTo(stream);
-                stream.Position = 0;
-                return stream;
+                Console.WriteLine($"[HttpTitleContainer] Got {data.Length} bytes for {url}");
+                return new MemoryStream(data);
             }
             catch (Exception ex)
             {
@@ -91,5 +68,12 @@ namespace Microsoft.Xna.Framework
                 throw;
             }
         }
+
+        /// <summary>
+        /// JS interop: fetch a URL synchronously via XMLHttpRequest.
+        /// Returns the response as a byte array, or null if the request failed.
+        /// </summary>
+        [JSImport("globalThis.SDV.fetchSync")]
+        private static partial byte[] FetchSync(string url);
     }
 }

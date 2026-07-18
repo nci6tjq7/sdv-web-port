@@ -122,6 +122,27 @@ const SDV = {
         console.log("[C#]", msg);
     },
 
+    // Synchronous HTTP fetch for Content files.
+    // Used by HttpTitleContainer.OpenStream via JS interop.
+    // XMLHttpRequest in synchronous mode is blocking but doesn't deadlock
+    // the WASM single thread (unlike HttpClient.GetAsync().GetAwaiter().GetResult()).
+    fetchSync(url) {
+        try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, false); // false = synchronous
+            xhr.responseType = 'arraybuffer';
+            xhr.send();
+            if (xhr.status === 200) {
+                return new Uint8Array(xhr.response);
+            }
+            console.warn('[SDV] fetchSync failed:', url, 'status:', xhr.status);
+            return null;
+        } catch (e) {
+            console.warn('[SDV] fetchSync error:', url, e.message);
+            return null;
+        }
+    },
+
     error(msg) {
         console.error("[C#]", msg);
         const el = document.getElementById('error-log');
