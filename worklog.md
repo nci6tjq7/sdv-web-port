@@ -2263,3 +2263,122 @@ Next Steps:
 - CI will download content.zip and deploy to wwwroot/deps/Content/
 - SDV should then load game data and reach title screen
 
+
+---
+Task ID: retrospective
+Agent: general-purpose-subagent
+Task: Comprehensive project retrospective covering Phase 0 → Phase 10
+
+Work Log:
+- Read worklog.md in full (2,266 lines, 40+ Task IDs) — read in 7 chunks via Read tool with offset/limit because output exceeded 30 KB per call.
+- Searched for download/research-*.md files: NONE EXIST. The 8 research deliverables
+  (research-pinvoke-solutions, research-pinvoke-mismatch, research-coop-coep,
+  research-xmlserializer-wasm, research-xmlserializer-mode, research-fna-wasm-canvas,
+  research-r58playz-fna3d, research-wasm-alternatives) were created by prior research
+  subagents but never committed to git — they were wiped on session reset. Their
+  existence is recorded only in worklog entries. The download/ directory itself
+  doesn't exist (had to mkdir it). This is itself a finding for the retro (§4 Blocker #74).
+- Read MEMORY.md (874 lines) — discovered it is OUT OF DATE: "Last updated: 2026-07-11"
+  and still describes the KNI Blazor.GL approach (Phase 2.8) as current path, while
+  the actual current approach is FNA + .NET 10 WASM (Phase 4+). Anyone resuming from
+  MEMORY.md alone will be confused.
+- Read AGENTS.md (37 lines) — discovered it's the DEFAULT superpowers contributor
+  guidelines, NOT the project-specific agent guidelines that MEMORY.md §Session
+  Bootstrap step 4 claims it should be. Either the project-specific version was
+  reverted or MEMORY.md lies about it.
+- Explored project structure:
+  * src/ — 11 projects (1 active FnaRuntime, 5 stale PoCs, 5 supporting: Vfs, Rewriter,
+    Facade, MockSdv.Target, StardewValley.Decompiled with 950 decompiled files)
+  * .github/workflows/ — 6 workflows (ci, build-fnalibs, fna-wasm-build,
+    fna-wasm-runtime, deploy-pages, aot-build)
+  * scripts/ — 56 scripts (Cecil patchers, build helpers, headless test scripts)
+  * global.json pins .NET 10.0.100-preview.5 (7+ months behind RTM)
+  * 18 version tags (v0.1.0-phase0 → v1.1.0-sdv-fs-redirect)
+  * 40 unit tests (Rewriter 7 + VFS 14 + Content 19)
+- Inspected SdvWebPort.FnaRuntime.csproj: confirms current stack (net10.0,
+  Microsoft.NET.Sdk.WebAssembly, WasmEnableThreads=true, DynamicCodeSupport=false,
+  EmccExtraLDFlags with -sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS
+  -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc, WasmBuildNative=true).
+- Inspected fna-wasm-runtime.yml (307 lines) — most complex workflow: downloads
+  sdv-fna-build artifact, downloads fnalibs (own build or r58Playz fallback),
+  installs r58Playz patched runtime, stubs GalaxyCSharp/Steamworks.NET, NOPs
+  Reflection.Emit usage in SDV, patches FNA TitleContainer, dotnet publish,
+  applies celeste-wasm canvas-transfer sed patch, optionally downloads Content/
+  from sdv-content-v1 release.
+- Created /home/z/my-project/download/RETROSPECTIVE.md (630 lines, 61 KB) covering:
+  1. Project Goal (run unmodified GOG SDV in browser, with SMAPI + XNB editing;
+     hard constraints C1-C4)
+  2. Technical Stack (3 pivots: Uno→Blazor, .NET10→.NET8 for KNI, KNI→FNA;
+     current = .NET 10 preview 5 + FNA + native fnalibs + r58Playz patched runtime)
+  3. Journey Timeline (18 phases, ~40 task IDs, 15 sub-iterations in Phase 2.8 alone)
+  4. Blockers Encountered (74 numbered blockers across all phases + cross-cutting
+     process/persistence blockers — including the lost research deliverables)
+  5. Current Status (13 things that work ✅ / 14 things that don't ❌ — including
+     MEMORY.md being out of date, AGENTS.md being default template, Content/ not
+     deployed, AOT never run in CI)
+  6. Architecture (5-layer stack, source layout, 6 CI workflows table, Cecil
+     patcher pipeline table with 9 patchers, runtime boot sequence walkthrough)
+  7. Key Lessons Learned (17 technical lessons L1-L17, 11 process lessons P1-P11)
+  8. Next Steps (immediate: commit this retro + update MEMORY.md; operational:
+     upload Content/; short-term: iterate on Content access, audio, saves;
+     medium-term: FSA/OPFS UI, Phase 3 SMAPI, AOT build in CI, .NET 10 RTM upgrade)
+  9. Risk Assessment (5 High 🔴 / 6 Medium 🟡 / 4 Low 🟢 with mitigations)
+  10. Alternative Paths (A: KNI Blazor.GL recommended in research-8 but blocked
+      by transform.c:1146; B: FNA + r58Playz — current path; C: wait for .NET 11
+      Browser CoreCLR; plus 4 anti-recommendations)
+  11. Metrics Summary (18 phases, 18 tags, ~150 commits, 11 projects, 40 tests,
+      1 code review (should have been ~18), 6 headless verifications, 6 workflows,
+      25+ Cecil patch passes, 8 research subagent tasks, 950 decompiled files,
+      3 architectural pivots)
+  12. Closing Thoughts (commit early commit often; upload Content/ and verify
+      title screen)
+
+Stage Summary:
+- Comprehensive retrospective saved to /home/z/my-project/download/RETROSPECTIVE.md
+  (630 lines, 61 KB)
+- Document is honest about failures as well as successes — explicitly catalogs
+  wrong conclusions (TypeForwardedTo "doesn't work", Nullable<Rectangle> "broken")
+  and process failures (lost research files, MEMORY.md out of date, only 1 code
+  review, brainstorming skipped)
+- Three key findings highlighted for the team:
+  1. MEMORY.md is dangerously out of date (describes KNI approach as current;
+     actual current is FNA + .NET 10 WASM)
+  2. Content/ files are the only remaining blocker (operational, not technical)
+  3. All uncommitted files will be lost on session reset — commit this retro
+     immediately (which is what I'm doing now via this worklog entry; the
+     RETROSPECTIVE.md file itself needs a separate commit by main agent)
+- Recommended Path B (stay on FNA + r58Playz) as current path; revisit Path A
+  (KNI Blazor.GL) only if .NET 11 fixes the Mono JIT bug; pursue Path C
+  (Browser CoreCLR) in parallel but don't block on it
+
+Next Steps (for main agent):
+- CRITICAL: commit + push RETROSPECTIVE.md immediately (otherwise it will be
+  lost on session reset like the 8 prior research deliverables)
+- Update MEMORY.md to reflect Phase 4+ FNA pivot (current "Last updated: 2026-07-11"
+  is wrong; the file describes KNI Blazor.GL as current approach which is misleading)
+- Replace default AGENTS.md with project-specific agent guidelines (or update
+  MEMORY.md §Session Bootstrap to stop claiming AGENTS.md is project-specific)
+- Upload 星露谷物语.zip to /home/z/my-project/upload/ if not already there
+  (currently 490 MB present at upload/星露谷物语.zip)
+- Run scripts/upload-content-release.sh to create sdv-content-v1 release
+- Trigger fna-wasm-runtime workflow to rebuild with Content/ deployed
+- Browser test: verify SDV gets past ContentLoadException
+
+Files:
+- /home/z/my-project/download/RETROSPECTIVE.md (new, 630 lines, 61 KB)
+- /home/z/my-project/worklog.md (modified — this entry appended)
+
+Concerns flagged:
+- The 8 prior research deliverable files (research-pinvoke-solutions.md etc.)
+  are GONE. They were never committed to git and were wiped on session reset.
+  Their full content survives only as summaries in worklog.md task entries.
+  Consider this a strong reminder: any file under /home/z/my-project/ that
+  isn't committed will be lost on session reset. RETROSPECTIVE.md must be
+  committed before this session ends.
+- MEMORY.md's staleness is a quiet hazard. New agents resuming work read
+  MEMORY.md FIRST (per its own §Session Bootstrap step 1). If it describes
+  the wrong current approach (KNI instead of FNA), they'll start with wrong
+  assumptions. This retro recommends rewriting MEMORY.md as the very next task.
+- Only 1 code review has ever been done on this project (Phase 2.6/2.75 health
+  check). 50+ commits since are unreviewed. The retrospective itself was not
+  peer-reviewed; treat its assessments with appropriate skepticism.
