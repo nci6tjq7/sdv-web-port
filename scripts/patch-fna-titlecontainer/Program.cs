@@ -70,31 +70,29 @@ class Program
 
         Console.WriteLine($"[+] Patched TitleContainer.OpenStream -> HttpTitleContainer.OpenStream");
 
-        // Also patch ContentManager.CheckRawExtensions to skip File.Exists checks.
+        // Also patch ALL File.Exists calls in ContentManager to return true.
         // In WASM, File.Exists always returns false for HTTP-served files.
-        // We replace 'call File.Exists' with 'ldc.i4.1' (true) so the code always
-        // proceeds to TitleContainer.OpenStream.
+        // This affects CheckRawExtensions AND any other method that checks file existence.
         var contentManagerType = fnaAsm.MainModule.Types.FirstOrDefault(t => t.FullName == "Microsoft.Xna.Framework.Content.ContentManager");
         if (contentManagerType != null)
         {
-            var checkRawMethod = contentManagerType.Methods.FirstOrDefault(m => m.Name == "CheckRawExtensions");
-            if (checkRawMethod != null)
+            int totalPatched = 0;
+            foreach (var method in contentManagerType.Methods)
             {
-                var fileExistsMethod = fnaAsm.MainModule.ImportReference(typeof(File).GetMethod("Exists", new[] { typeof(string) }));
-                int patched = 0;
-                foreach (var instr in checkRawMethod.Body.Instructions)
+                if (method.Body == null) continue;
+                foreach (var instr in method.Body.Instructions)
                 {
-                    if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr && mr.Name == "Exists")
+                    if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr && mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
                     {
                         instr.OpCode = OpCodes.Ldc_I4_1; // push true
                         instr.Operand = null;
-                        patched++;
+                        totalPatched++;
                     }
                 }
-                if (patched > 0)
-                {
-                    Console.WriteLine($"[+] Patched CheckRawExtensions: {patched} File.Exists → true");
-                }
+            }
+            if (totalPatched > 0)
+            {
+                Console.WriteLine($"[+] Patched ContentManager: {totalPatched} File.Exists → true (all methods)");
             }
         }
 
