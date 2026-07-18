@@ -13,21 +13,12 @@ const SDV = {
 
     async init() {
         console.log("[SDV] Initializing runtime...");
+        // Note: we no longer require crossOriginIsolated (SharedArrayBuffer).
+        // The -sOFFSCREENCANVAS_SUPPORT flag handles canvas transfer without
+        // requiring COOP/COEP headers. If threading is needed later, we can
+        // re-enable the SW-based COOP/COEP setup.
         if (!window.crossOriginIsolated) {
-            // SW should be registered by inline script in index.html.
-            // If crossOriginIsolated is still false, the SW is still activating
-            // — wait briefly and reload.
-            console.log("[SDV] crossOriginIsolated=false, waiting for SW...");
-            if (navigator.serviceWorker.controller) {
-                // SW is controlling but COOP/COEP not set — reload to re-fetch through SW
-                window.location.reload();
-                return;
-            }
-            // Wait for SW to be ready, then reload
-            navigator.serviceWorker.ready.then(() => {
-                window.location.reload();
-            });
-            return;
+            console.log("[SDV] crossOriginIsolated=false (expected without COOP/COEP SW). Continuing anyway...");
         }
 
         canvas = document.getElementById('canvas');
