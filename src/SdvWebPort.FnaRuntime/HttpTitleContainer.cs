@@ -15,7 +15,7 @@ namespace Microsoft.Xna.Framework
     /// WASM single-threaded environment. We use JS XMLHttpRequest in synchronous
     /// mode instead, which is blocking but doesn't deadlock.
     /// </summary>
-    public static class HttpTitleContainer
+    public static partial class HttpTitleContainer
     {
         private static string _baseUrl = "/deps/";
 
