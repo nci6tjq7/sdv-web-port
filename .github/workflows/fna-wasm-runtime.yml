@@ -228,9 +228,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Download Content/ files from sdv-content-v1 release (if it exists).
-          # The user runs scripts/upload-content-release.sh locally to create this release.
-          # If the release doesn't exist yet, skip — SDV will fail at runtime when
-          # trying to load Content, but the WASM bundle will still build.
+          # Content is deployed as STATIC FILES on GitHub Pages — included directly
+          # in the wwwroot so they're served from the same origin.
+          # This avoids CORS issues with cross-origin requests.
+          #
+          # NOTE: GitHub Pages has a 1GB limit. Content is ~544MB, WASM is ~50MB.
+          # Total ~594MB, which fits within the 1GB limit.
           echo "=== Checking for sdv-content-v1 release ==="
           API_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/sdv-content-v1")
@@ -261,8 +264,8 @@ jobs:
             "$ASSET_URL" -o /tmp/content.zip
           ls -lh /tmp/content.zip
 
-          # Extract to wwwroot/deps/content/
-          echo "=== Extracting Content/ to wwwroot/deps/content/ ==="
+          # Extract to wwwroot/deps/Content/
+          echo "=== Extracting Content/ to wwwroot/deps/Content/ ==="
           mkdir -p /tmp/wasm-publish/wwwroot/deps
           cd /tmp/wasm-publish/wwwroot/deps
           unzip -q /tmp/content.zip
@@ -272,6 +275,8 @@ jobs:
           find Content/ -type f | wc -l
           echo "=== Content size ==="
           du -sh Content/
+          echo "=== Total wwwroot size ==="
+          du -sh /tmp/wasm-publish/wwwroot/
 
       - name: Verify EmccExtraLDFlags are in emcc-link.rsp
         run: |

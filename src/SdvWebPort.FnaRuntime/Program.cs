@@ -20,7 +20,7 @@ public static partial class Program
         AppContext.SetSwitch("System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported", false);
         Console.WriteLine("[SdvWebPort.FnaRuntime] Set IsDynamicCodeSupported=false (with .CompilerServices)");
 
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM)...");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (build: $(date +%s)) (FNA WASM)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
 
         try
