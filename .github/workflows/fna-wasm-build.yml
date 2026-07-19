@@ -3,8 +3,8 @@ name: FNA WASM Build
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    # Build on main branch pushes
+    branches:
+      - main
 
 permissions:
   contents: read
