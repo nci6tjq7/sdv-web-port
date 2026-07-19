@@ -24,7 +24,7 @@ public static partial class Program
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
         Console.WriteLine("[SdvWebPort.FnaRuntime] Build: ca3e79f (stack-balanced File.Exists patch)");
         Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +ContentHashParser File.ReadAllText→TitleContainer.ReadAllText redirect");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +DoesAssetExist always returns true (bypass manifest check)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: DoesAssetExist NOT patched (causes stack overflow)");
 
         try
         {

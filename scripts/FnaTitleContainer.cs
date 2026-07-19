@@ -56,13 +56,34 @@ namespace Microsoft.Xna.Framework
         /// </summary>
         public static string ReadAllText(string path)
         {
-            Console.WriteLine("[TitleContainer] ReadAllText: " + path);
-            using (Stream stream = OpenStream(path))
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            Console.WriteLine("[TitleContainer] ReadAllText CALLED with path: " + path);
+            Console.WriteLine("[TitleContainer] ReadAllText stack trace:");
+            var st = new StackTrace();
+            for (int i = 1; i < Math.Min(6, st.FrameCount); i++)
             {
-                string text = reader.ReadToEnd();
-                Console.WriteLine("[TitleContainer] ReadAllText got: " + text.Length + " chars");
+                var f = st.GetFrame(i);
+                Console.WriteLine("[TitleContainer]   #" + i + ": " + f.GetMethod().DeclaringType?.FullName + "::" + f.GetMethod().Name);
+            }
+            string safeName = path.Replace('\\', '/');
+            // Strip leading "Content/" if present (we prepend /deps/ which already includes Content)
+            // Actually, /deps/ serves the wwwroot/deps/ directory which contains Content/.
+            // The path "Content/ContentHashes.json" should become "/deps/Content/ContentHashes.json".
+            string url = "/deps/" + safeName.TrimStart('/');
+            Console.WriteLine("[TitleContainer] ReadAllText fetching: " + url);
+            try
+            {
+                byte[] data = FetchSync(url);
+                Console.WriteLine("[TitleContainer] ReadAllText got: " + (data == null ? "null" : data.Length + " bytes"));
+                if (data == null || data.Length == 0)
+                    throw new FileNotFoundException("HTTP fetch failed: " + url, url);
+                string text = Encoding.UTF8.GetString(data);
+                Console.WriteLine("[TitleContainer] ReadAllText decoded: " + text.Length + " chars");
                 return text;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[TitleContainer] ReadAllText ERROR: " + ex.GetType().Name + ": " + ex.Message);
+                throw;
             }
         }
 

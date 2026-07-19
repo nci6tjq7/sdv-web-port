@@ -78,14 +78,15 @@ class Program
 
         // LocalizedContentManager.DoesAssetExist — uses File.Exists to check if an
         // asset exists before loading. In WASM, File.Exists always returns false.
-        // Fix: patch DoesAssetExist to always return true — let OpenStream handle
-        // the actual file loading via HTTP.
         //
-        // PREVIOUS NOTE said this caused StackOverflow — that was a misdiagnosis.
-        // Looking at LoadImpl's IL: `call ContentManager::Load<!!T>(string)` is a
-        // NON-VIRTUAL call to the base class. So LoadImpl → base.Load → ReadAsset →
-        // OpenStream. No recursion. Safe to enable.
-        methodsNopped += PatchDoesAssetExist(asm);
+        // ATTEMPTED FIX: Patch DoesAssetExist to always return true.
+        // RESULT: StackOverflow! The IL `call ContentManager::Load<!!T>` in LoadImpl
+        // is treated by Mono WASM as virtual dispatch, so LoadImpl → Load (override)
+        // → Load(string, LanguageCode) → LoadImpl → ... infinite recursion.
+        // The original comment was CORRECT — this cannot be enabled.
+        //
+        // The proper fix is to make the manifest loading work (PatchContentHashParserReadAllText).
+        // methodsNopped += PatchDoesAssetExist(asm);
 
         // Instead: patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
         // File.Exists → return true (so asset is considered to exist)
