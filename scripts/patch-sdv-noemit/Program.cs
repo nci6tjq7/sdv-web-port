@@ -361,18 +361,35 @@ class Program
             Console.WriteLine($"  [i] Constructed MethodReference: TitleContainer.GetManifestJson() → string");
 
             // REPLACE THE ENTIRE METHOD BODY with:
+            //   ldstr "[PATCH] ParseFromFile called"
+            //   call Console.WriteLine(string)
             //   call TitleContainer.GetManifestJson  // → string (ignores ldarg.0 path)
             //   call CHJsonParser.ParseJson          // → object
             //   isinst Dictionary<string,object>     // cast
             //   ret
             //
+            // The Console.WriteLine at the start is a diagnostic marker — if it
+            // appears in the browser console, we know the patched body IS being
+            // executed. If not, the patched DLL isn't being used.
+            //
             // Note: we intentionally DON'T use ldarg.0 (the path parameter) because
             // GetManifestJson() takes no arguments — it returns the preloaded manifest.
             // The path argument is ignored (the manifest is always at Content/ContentHashes.json).
+
+            // Find Console.WriteLine(string) method reference
+            var consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
+            var writeLineRef = new MethodReference("WriteLine", module.TypeSystem.Void, consoleType)
+            {
+                HasThis = false,
+            };
+            writeLineRef.Parameters.Add(new ParameterDefinition(stringType));
+
             var instrs = parseFromFileMethod.Body.Instructions;
             instrs.Clear();
             parseFromFileMethod.Body.ExceptionHandlers.Clear();
 
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] ParseFromFile called — patched body executing"));
+            instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
             instrs.Add(Instruction.Create(OpCodes.Call, getManifestJsonRef));
             instrs.Add(Instruction.Create(OpCodes.Call, parseJsonRef));
             instrs.Add(Instruction.Create(OpCodes.Isinst, dictTypeRef));
@@ -381,7 +398,7 @@ class Program
             parseFromFileMethod.Body.InitLocals = true;
             parseFromFileMethod.Body.MaxStackSize = 2;
 
-            Console.WriteLine($"  [-] REPLACED ParseFromFile body: GetManifestJson() → CHJsonParser.ParseJson → isinst → ret");
+            Console.WriteLine($"  [-] REPLACED ParseFromFile body: WriteLine(marker) → GetManifestJson() → CHJsonParser.ParseJson → isinst → ret");
             return 1;
         }
         return 0;
