@@ -2429,3 +2429,99 @@ Next Steps:
 - Browser-test: verify "Preloaded N entries" > 0 and "fetchSync cache hit" appears
 - If still 404: check case-sensitivity of remaining missing files
 - If preloads succeed: watch for next error (likely audio or font loading)
+
+---
+Task ID: phase12-content-loading-deep-debug
+Agent: main
+Task: Browser-test the deployment and debug BigCraftables ContentLoadException
+
+Work Log:
+- Loaded agent-browser skill, opened https://nci6tjq7.github.io/sdv-web-port/
+- Tested with browser fetch: discovered the URL resolution bug — `/deps/...`
+  resolves to DOMAIN ROOT, not the /sdv-web-port/ subpath
+- FIX #1 (commit e39dc87): main.js uses `document.baseURI` for relative URL
+  resolution, fetchSync normalizes incoming URLs to depsBase
+- RESULT: Audio files (FarmerSounds.xgs, Wave Bank.xwb 460MB, Wave Bank(1.4).xwb,
+  Sound Bank.xsb) now load successfully via sync XHR
+- BUT: BigCraftables still fails with "Could not load Data\BigCraftables asset!"
+
+DEEPER DEBUG:
+- Installed dotnet SDK 8.0 + ilspycmd locally to decompile SDV
+- Decompiled StardewValley.LocalizedContentManager:
+  LoadImpl throws "Could not load X asset!" if DoesAssetExist returns false
+- Decompiled DoesAssetExist: checks _manifest HashSet (populated from ContentHashes.json)
+- Decompiled PlatformEnsureManifestInitialized: uses File.ReadAllText (broken in WASM)
+- Decompiled ContentHashParser.ParseFromFile IL: just `ldarg; call File.ReadAllText;
+  call CHJsonParser.ParseJson; isinst; ret` (17 bytes, very simple)
+
+FIX #2 (commit ca3e79f): Stack-balanced File.Exists IL patch
+- Previous patch had STACK IMBALANCE: `ldarg; call File.Exists` (net 0) was
+  replaced with `ldarg; ldc.i4.1` (net +2, orphan string on stack)
+- Fixed to `ldarg; pop; ldc.i4.1` (net +1, matches bool return)
+- Applied to both patch-fna-titlecontainer and patch-sdv-noemit
+- Did NOT fix BigCraftables (root cause was elsewhere)
+
+FIX #3 (commit ce00696): Redirect File.ReadAllText → TitleContainer.ReadAllText
+- Added TitleContainer.ReadAllText(path) to FnaTitleContainer.cs (HTTP fetch + UTF-8 decode)
+- Added PatchContentHashParserReadAllText to SDV patcher:
+  - Finds ContentManifest.ContentHashParser type
+  - Finds ParseFromFile method
+  - Searches module.GetTypeReferences() for Microsoft.Xna.Framework.TitleContainer
+  - Constructs MethodReference manually (avoids assembly resolution failure)
+  - Replaces `call File.ReadAllText(string)` with `call TitleContainer.ReadAllText(string)`
+
+FIX #4 (commit 846b9a4): Tried enabling PatchDoesAssetExist (always return true)
+- RESULT: StackOverflow! The `call ContentManager::Load<!!T>` in LoadImpl is
+  treated by Mono WASM as virtual dispatch, causing infinite recursion:
+  LoadImpl → Load(override) → Load(string,lang) → LoadImpl → ...
+- REVERTED in commit 6026592
+
+CURRENT STATUS (commit 6026592):
+- main.js: URL resolution fixed (relative to document.baseURI)
+- FNA patcher: stack-balanced File.Exists patch
+- SDV patcher: stack-balanced File.Exists + ContentHashParser redirect
+- FnaTitleContainer.cs: ReadAllText method with verbose logging
+- PatchDoesAssetExist: DISABLED (causes stack overflow)
+
+OUTSTANDING ISSUE:
+- The ReadAllText log does NOT appear in the browser console
+- This means either:
+  (a) The patcher didn't apply the redirect in CI (CI environment issue?)
+  (b) ParseFromFile isn't being called (EnsureManifestInitialized returns early?)
+  (c) The deployed wasm is stale (caching issue?)
+- Could not verify because:
+  - Cannot access CI logs (rate-limited GitHub API)
+  - Cannot easily inspect the deployed wasm bundle
+  - Browser caching might be serving old wasm
+
+NEXT STEPS (for future session):
+1. Verify the patcher's File.ReadAllText redirect is actually applied in CI:
+   - Add a unique marker log at the start of PatchContentHashParserReadAllText
+   - Check if "[i] Found TitleContainer reference" appears in CI logs
+   - Or download the workflow artifact and inspect the patched DLL
+2. If redirect IS applied but ReadAllText still doesn't appear:
+   - Check if EnsureManifestInitialized returns early (_manifest already set?)
+   - Maybe DoesAssetExist is never called (different code path)
+3. Consider alternative approaches:
+   - Patch PlatformEnsureManifestInitialized entirely (replace body with
+     custom IL that fetches manifest via HttpTitleContainer.OpenStream)
+   - OR: Preload manifest in JS, expose via globalThis.__manifestText,
+     patch ParseFromFile to call a JS function instead of File.ReadAllText
+4. The `call` vs `callvirt` issue with Mono WASM is a known gotcha —
+   document this in MEMORY.md so future agents don't repeat the mistake
+
+KEY ACHIEVEMENTS in this session:
+- Fixed URL resolution (BIG win — all Content fetches were 404 before)
+- Audio loading fully working (460MB Wave Bank loads via sync XHR)
+- Identified root cause of BigCraftables failure (manifest not loaded)
+- Added TitleContainer.ReadAllText HTTP-based replacement
+- Discovered Mono WASM treats `call` on virtual methods as virtual dispatch
+  (important architectural knowledge for future IL patching)
+
+Files modified in this session:
+- src/SdvWebPort.FnaRuntime/wwwroot/main.js (URL fix, cache key handling)
+- src/SdvWebPort.FnaRuntime/Program.cs (build markers)
+- scripts/FnaTitleContainer.cs (ReadAllText method + verbose logging)
+- scripts/patch-fna-titlecontainer/Program.cs (stack-balanced File.Exists)
+- scripts/patch-sdv-noemit/Program.cs (stack-balanced File.Exists +
+  PatchContentHashParserReadAllText + diagnostic method listing)
