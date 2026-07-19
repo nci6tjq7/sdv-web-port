@@ -67,12 +67,18 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // For _framework/ requests: DON'T intercept — let the browser handle them.
-    // The .NET runtime downloads many .wasm files from _framework/. Interception
-    // causes "Failed to fetch" errors due to Response body streaming issues.
-    // Same-origin resources don't need CORP for COEP compliance.
+    // For _framework/ requests: add CORP header (needed for COEP compliance).
+    // Use arrayBuffer() to buffer the body before creating new Response
+    // (avoids stream issues that caused "Failed to fetch" errors).
     if (req.url.includes('/_framework/')) {
-        return; // Don't call event.respondWith — browser handles natively
+        event.respondWith(
+            fetch(req)
+                .then((response) => withCorpOnly(response))
+                .catch(() => {
+                    return fetch(req).then((response) => withCorpOnly(response));
+                })
+        );
+        return;
     }
 
     // For navigation (HTML) and other requests: add COOP + COEP + CORP
