@@ -2,10 +2,10 @@
 // Based on the coi-serviceworker pattern (https://github.com/gzuidhof/coi-serviceworker)
 //
 // For /deps/ requests: add ONLY CORP header (sync XHR can read this)
+// For _framework/ requests: add ONLY CORP header (COEP requires it)
 // For navigation (HTML) requests: add COOP + COEP + CORP headers
-// For _framework/ requests: pass through WITHOUT interception (avoids "Failed to fetch")
 
-const CACHE_NAME = 'sdv-coop-coep-v9';
+const CACHE_NAME = 'sdv-coop-coep-v10';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
@@ -15,27 +15,24 @@ self.addEventListener('activate', (event) => {
     event.waitUntil(self.clients.claim());
 });
 
-async function withAllHeaders(response) {
+function withAllHeaders(response) {
     if (response.status === 0) return response;
-    // Buffer the body to avoid stream issues (response.body can be null or locked)
-    const body = await response.arrayBuffer();
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
     newHeaders.set('Cross-Origin-Embedder-Policy', 'require-corp');
     newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    return new Response(body, {
+    return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
         headers: newHeaders,
     });
 }
 
-async function withCorpOnly(response) {
+function withCorpOnly(response) {
     if (response.status === 0) return response;
-    const body = await response.arrayBuffer();
     const newHeaders = new Headers(response.headers);
     newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    return new Response(body, {
+    return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
         headers: newHeaders,
@@ -54,8 +51,6 @@ self.addEventListener('fetch', (event) => {
     }
 
     // For /deps/ requests: add ONLY CORP header
-    // (sync XMLHttpRequest CAN read Response with CORP — the issue before
-    //  was COOP/COEP headers, not the Response wrapper itself)
     if (req.url.includes('/deps/')) {
         event.respondWith(
             fetch(req)
@@ -67,9 +62,9 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // For _framework/ requests: add CORP header (needed for COEP compliance).
-    // Use arrayBuffer() to buffer the body before creating new Response
-    // (avoids stream issues that caused "Failed to fetch" errors).
+    // For _framework/ requests: add ONLY CORP header (COEP requires it)
+    // Use stream (response.body) for performance — arrayBuffer() buffers
+    // entire file in memory, causing hangs on 50MB+ wasm files.
     if (req.url.includes('/_framework/')) {
         event.respondWith(
             fetch(req)
