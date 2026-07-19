@@ -39,6 +39,57 @@ jobs:
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
           cd /tmp/FNA && git submodule update --init --recursive
 
+      - name: Patch FNA TitleContainer for HTTP-based Content loading
+        run: |
+          # Patch FNA source directly (not post-build Cecil) so the AOT compiler
+          # sees our changes. Cecil patches on the compiled DLL are lost during
+          # .NET WASM AOT compilation because the SDK re-resolves assemblies.
+          #
+          # Replace TitleContainer.OpenStream to call HttpTitleContainer.OpenStream
+          # which uses XMLHttpRequest via JS interop to fetch Content files.
+          cat > /tmp/FNA/src/TitleContainer.cs << 'FNAPATCH'
+using System;
+using System.IO;
+using System.Runtime.InteropServices.JavaScript;
+
+namespace Microsoft.Xna.Framework
+{
+    public static partial class TitleContainer
+    {
+        public static string Location
+        {
+            get { return "Content"; }
+        }
+
+        public static Stream OpenStream(string name)
+        {
+            Console.WriteLine("[TitleContainer] OpenStream: " + name);
+            string safeName = name.Replace('\\', '/');
+            string url = "/deps/" + safeName.TrimStart('/');
+            Console.WriteLine("[TitleContainer] Fetching: " + url);
+            try
+            {
+                byte[] data = FetchSync(url);
+                Console.WriteLine("[TitleContainer] Got: " + (data == null ? "null" : data.Length + " bytes"));
+                if (data == null || data.Length == 0)
+                    throw new FileNotFoundException("HTTP fetch failed: " + url, url);
+                return new MemoryStream(data);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[TitleContainer] ERROR: " + ex.Message);
+                throw;
+            }
+        }
+
+        [JSImport("globalThis.SDV.fetchSync")]
+        private static partial byte[] FetchSync(string url);
+    }
+}
+FNAPATCH
+          echo "=== Patched TitleContainer.cs ==="
+          head -5 /tmp/FNA/src/TitleContainer.cs
+
       - name: Scan SDL3-CS for problematic DllImports (diagnostic)
         run: |
           # PREVIOUS APPROACH (REVERTED): we sed-patched all `extern long/ulong`
