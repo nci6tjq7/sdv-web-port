@@ -121,10 +121,18 @@ const SDV = {
         try {
             const xhr = new XMLHttpRequest();
             xhr.open('GET', url, false); // false = synchronous
-            xhr.responseType = 'arraybuffer';
+            // Note: cannot set responseType='arraybuffer' for sync requests from document.
+            // Instead, overrideMimeType to get raw bytes via responseText.
+            xhr.overrideMimeType('text/plain; charset=x-user-defined');
             xhr.send();
             if (xhr.status === 200) {
-                return new Uint8Array(xhr.response);
+                // Convert responseText to Uint8Array (binary string → bytes)
+                const text = xhr.responseText;
+                const bytes = new Uint8Array(text.length);
+                for (let i = 0; i < text.length; i++) {
+                    bytes[i] = text.charCodeAt(i) & 0xff;
+                }
+                return bytes;
             }
             console.warn('[SDV] fetchSync failed:', url, 'status:', xhr.status);
             return null;
