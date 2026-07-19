@@ -65,15 +65,19 @@ jobs:
           unzip -q ../wasm.zip
           ls -la
 
-      - name: Add COOP/COEP headers for SharedArrayBuffer
+      - name: Add COOP/COEP/CORP headers for SharedArrayBuffer
         run: |
           cat > site/.nojekyll << 'EOF'
           EOF
           # Create _headers for SharedArrayBuffer support (needed for threading)
+          # COOP+COEP on all responses → enables crossOriginIsolated
+          # CORP on all responses → COEP requires CORP for ALL subresources
+          #   (even same-origin ones loaded with mode:'no-cors')
           cat > site/_headers << 'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
             Cross-Origin-Embedder-Policy: require-corp
+            Cross-Origin-Resource-Policy: cross-origin
           EOF
           cat site/_headers
 
