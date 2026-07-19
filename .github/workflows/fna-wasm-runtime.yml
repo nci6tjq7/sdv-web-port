@@ -82,15 +82,12 @@ jobs:
           fi
           ls -la download/fnalibs/
 
-      - name: Use stock .NET 10 runtime (no patched runtime — threads disabled)
+      - name: Use stock .NET 10 runtime (no patched runtime needed)
         run: |
-          # We no longer use r58Playz's patched runtime because:
-          # 1. WasmEnableThreads=false → no SharedArrayBuffer needed
-          # 2. PInvoke signature mismatch fixed via SDL3-CS source patches
-          # 3. Patched runtime forces --shared-memory which requires COOP/COEP
-          #
-          # Stock .NET 10 runtime works fine for single-threaded WASM.
-          echo "Using stock .NET 10 runtime (no patched runtime needed)"
+          # We use stock .NET 10 runtime with threads enabled.
+          # The PInvoke signature mismatch was fixed via SDL3-CS source patches.
+          # SW handles COOP/COEP/CORP headers for SharedArrayBuffer.
+          echo "Using stock .NET 10 runtime with threads"
           dotnet workload install wasm-tools
 
       - name: Copy native libs to runtime project

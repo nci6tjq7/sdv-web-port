@@ -12,7 +12,7 @@
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <DefineConstants>$(DefineConstants);FNA_WASM</DefineConstants>
     <WasmAllowUndefinedSymbols>true</WasmAllowUndefinedSymbols>
-    <WasmEnableThreads>false</WasmEnableThreads>
+    <WasmEnableThreads>true</WasmEnableThreads>
     <!--
       Disable dynamic code (System.Reflection.Emit) support.
       XmlSerializer uses Reflection.Emit to generate temp assemblies at runtime,
