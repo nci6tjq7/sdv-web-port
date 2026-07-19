@@ -85,6 +85,14 @@ class Program
         // File.OpenRead → redirect to HttpTitleContainer.OpenStream (fetch via HTTP)
         methodsNopped += PatchFileOperationsInLocalizedContentManager(asm);
 
+        // Patch ContentHashParser.ParseFromFile to use HTTP fetch instead of File.ReadAllText.
+        // SDV's LocalizedContentManager.DoesAssetExist checks a manifest loaded from
+        // ContentHashes.json. The manifest is loaded via ContentHashParser.ParseFromFile,
+        // which calls File.ReadAllText. In WASM, File.ReadAllText throws (no filesystem).
+        // Result: _manifest stays empty, DoesAssetExist always returns false, every Load fails.
+        // Fix: redirect File.ReadAllText → TitleContainer.ReadAllText (HTTP fetch).
+        methodsNopped += PatchContentHashParserReadAllText(asm);
+
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
         var dir = Path.GetDirectoryName(outputPath);
@@ -161,7 +169,12 @@ class Program
             int fileExistsPatched = 0;
             int fileOpenReadPatched = 0;
 
-            Console.WriteLine($"  [i] LocalizedContentManager methods: {targetType.Methods.Count}");
+            Console.WriteLine($"  [i] LocalizedContentManager methods ({targetType.Methods.Count}):");
+            foreach (var m in targetType.Methods)
+            {
+                if (m.Body == null) continue;
+                Console.WriteLine($"    - {m.Name} (params: {m.Parameters.Count}, body instrs: {m.Body.Instructions.Count})");
+            }
             foreach (var method in targetType.Methods)
             {
                 if (method.Body == null) continue;
@@ -217,6 +230,133 @@ class Program
 
             Console.WriteLine($"  [-] Total: {fileExistsPatched} File.Exists → true (with pop), {fileOpenReadPatched} File.OpenRead → HttpTitleContainer.OpenStream");
             return (fileExistsPatched + fileOpenReadPatched) > 0 ? 1 : 0;
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Patch ContentHashParser.ParseFromFile to use TitleContainer.ReadAllText
+    /// (HTTP fetch) instead of File.ReadAllText (which fails in WASM).
+    ///
+    /// SDV's LocalizedContentManager loads a manifest of all asset file paths
+    /// from ContentHashes.json. DoesAssetExist checks this manifest before
+    /// attempting to load any asset. Without the manifest, every Load fails
+    /// with "Could not load X asset!".
+    ///
+    /// The manifest is loaded via:
+    ///   ContentHashParser.ParseFromFile(path) → File.ReadAllText(path) → CHJsonParser.ParseJson(text)
+    ///
+    /// In WASM, File.ReadAllText throws (no filesystem access). We redirect
+    /// File.ReadAllText → TitleContainer.ReadAllText, which uses the same
+    /// HTTP fetch mechanism as TitleContainer.OpenStream.
+    /// </summary>
+    static int PatchContentHashParserReadAllText(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            var parserType = module.GetType("ContentManifest.ContentHashParser");
+            if (parserType == null)
+            {
+                Console.WriteLine("  [!] ContentManifest.ContentHashParser type not found");
+                continue;
+            }
+
+            var parseFromFileMethod = parserType.Methods.FirstOrDefault(m => m.Name == "ParseFromFile");
+            if (parseFromFileMethod == null || parseFromFileMethod.Body == null)
+            {
+                Console.WriteLine("  [!] ContentHashParser.ParseFromFile method not found");
+                continue;
+            }
+
+            // Find TitleContainer type reference in this module's referenced assemblies.
+            // SDV references MonoGame.Framework (which is the FNA facade with type forwarders).
+            // We search module.GetTypeReferences() for any reference to TitleContainer.
+            TypeReference titleContainerRef = null;
+            foreach (var tr in module.GetTypeReferences())
+            {
+                if (tr.FullName == "Microsoft.Xna.Framework.TitleContainer")
+                {
+                    titleContainerRef = tr;
+                    break;
+                }
+            }
+
+            if (titleContainerRef == null)
+            {
+                Console.WriteLine("  [!] Microsoft.Xna.Framework.TitleContainer not found in type references");
+                Console.WriteLine("  [i] Available type references containing 'TitleContainer' or 'Microsoft.Xna.Framework':");
+                int shown = 0;
+                foreach (var tr in module.GetTypeReferences())
+                {
+                    if (tr.FullName.Contains("TitleContainer") || (tr.FullName.StartsWith("Microsoft.Xna.Framework") && shown < 10))
+                    {
+                        Console.WriteLine($"      - {tr.FullName} (from {tr.Scope})");
+                        shown++;
+                    }
+                }
+                continue;
+            }
+
+            Console.WriteLine($"  [i] Found TitleContainer reference: {titleContainerRef.FullName} (from {titleContainerRef.Scope})");
+
+            // Resolve the type reference to get its TypeDefinition (so we can find methods)
+            TypeDefinition titleContainerDef;
+            try
+            {
+                titleContainerDef = titleContainerRef.Resolve();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Could not resolve TitleContainer: {ex.Message}");
+                continue;
+            }
+
+            if (titleContainerDef == null)
+            {
+                Console.WriteLine("  [!] TitleContainer.Resolve() returned null");
+                continue;
+            }
+
+            // Find the ReadAllText method we added via FnaTitleContainer.cs
+            var readAllTextMethod = titleContainerDef.Methods.FirstOrDefault(m => m.Name == "ReadAllText");
+            if (readAllTextMethod == null)
+            {
+                Console.WriteLine("  [!] TitleContainer.ReadAllText method not found!");
+                Console.WriteLine("  [i] Available methods in TitleContainer:");
+                foreach (var m in titleContainerDef.Methods)
+                {
+                    Console.WriteLine($"      - {m.Name}({string.Join(", ", m.Parameters.Select(p => p.ParameterType.Name))})");
+                }
+                continue;
+            }
+
+            // Import the method reference into the SDV module
+            var importedReadAllText = module.ImportReference(readAllTextMethod);
+
+            // Now find all `call File.ReadAllText(string)` instructions in ParseFromFile
+            // and replace with `call TitleContainer.ReadAllText(string)`
+            int patched = 0;
+            var instrs = parseFromFileMethod.Body.Instructions;
+            for (int i = 0; i < instrs.Count; i++)
+            {
+                var instr = instrs[i];
+                if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr)
+                {
+                    if (mr.Name == "ReadAllText" && mr.DeclaringType?.FullName == "System.IO.File")
+                    {
+                        instr.Operand = importedReadAllText;
+                        patched++;
+                        Console.WriteLine($"  [-] Redirected File.ReadAllText → TitleContainer.ReadAllText in ParseFromFile");
+                    }
+                }
+            }
+
+            if (patched == 0)
+            {
+                Console.WriteLine("  [!] No File.ReadAllText calls found in ParseFromFile");
+            }
+
+            return patched > 0 ? 1 : 0;
         }
         return 0;
     }

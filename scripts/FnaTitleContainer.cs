@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
+using System.Text;
 
 namespace Microsoft.Xna.Framework
 {
@@ -40,6 +41,28 @@ namespace Microsoft.Xna.Framework
                 Console.WriteLine("[TitleContainer] ERROR: " + ex.GetType().Name + ": " + ex.Message);
                 Console.WriteLine("[TitleContainer] Stack: " + ex.StackTrace);
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// HTTP-based replacement for File.ReadAllText.
+        /// Used by SDV's ContentHashParser.ParseFromFile to load ContentHashes.json
+        /// (the file manifest). In WASM, File.ReadAllText can't access HTTP-served
+        /// files, so we fetch via the same mechanism as OpenStream.
+        ///
+        /// The path passed in is typically Path.Combine(GetContentRoot(), "ContentHashes.json")
+        /// = something like "Content/ContentHashes.json" or "Content\ContentHashes.json".
+        /// We normalize backslashes to forward slashes and prepend /deps/.
+        /// </summary>
+        public static string ReadAllText(string path)
+        {
+            Console.WriteLine("[TitleContainer] ReadAllText: " + path);
+            using (Stream stream = OpenStream(path))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                string text = reader.ReadToEnd();
+                Console.WriteLine("[TitleContainer] ReadAllText got: " + text.Length + " chars");
+                return text;
             }
         }
 
