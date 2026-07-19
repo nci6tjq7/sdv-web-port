@@ -32,6 +32,20 @@ namespace Microsoft.Xna.Framework
             }
         }
 
+        // ReadToPointer — used by FNA's Audio system (WaveBank, AudioEngine, SoundBank).
+        // In WASM we can't return a raw pointer, so we read into a managed buffer
+        // and pin it. The caller (FNA) uses this for XACT audio file mapping.
+        internal static IntPtr ReadToPointer(string name, out IntPtr size)
+        {
+            Stream stream = OpenStream(name);
+            byte[] buffer = new byte[stream.Length];
+            stream.Read(buffer, 0, buffer.Length);
+            // Pin the buffer and return the pointer
+            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            size = (IntPtr)buffer.Length;
+            return handle.AddrOfPinnedObject();
+        }
+
         [JSImport("globalThis.SDV.fetchSync")]
         private static partial byte[] FetchSync(string url);
     }
