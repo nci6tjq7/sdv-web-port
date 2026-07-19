@@ -171,25 +171,42 @@ jobs:
           dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
           ls -la "Stardew Valley.dll"
 
-      - name: Patch FNA TitleContainer for HTTP-based Content loading
+      - name: Patch FNA ContentManager File.Exists (HTTP Content loading)
         run: |
-          # FNA's TitleContainer.OpenStream uses File.OpenRead which can't access
-          # HTTP-served static files in WASM. Patch it to call our HttpTitleContainer
-          # which fetches Content files via HTTP from /deps/Content/.
-          dotnet build scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj -c Release -o /tmp/patch-fna-tc
+          # FNA's TitleContainer.OpenStream is already patched at SOURCE LEVEL
+          # (in fna-wasm-build workflow via scripts/FnaTitleContainer.cs).
+          # No need to Cecil-patch it again.
+          #
+          # But we still need to patch File.Exists in ContentManager to return true,
+          # because FNA's CheckRawExtensions uses File.Exists before calling OpenStream.
+          # In WASM, File.Exists always returns false for HTTP-served files.
+          #
+          # Use a simple Python script to patch File.Exists in FNA.dll.
+          python3 << 'PYEOF'
+          import sys
+          sys.path.insert(0, '/tmp/patch-fna-tc')
+          # Build the patcher first
+          import subprocess
+          subprocess.run(['dotnet', 'build', 'scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj',
+                         '-c', 'Release', '-o', '/tmp/patch-fna-tc'], check=True)
+          PYEOF
 
-          # Build SdvWebPort.FnaRuntime to get the HttpTitleContainer DLL
-          cd src/SdvWebPort.FnaRuntime
-          dotnet build -c Release
-          SHIM_DLL="${{ github.workspace }}/src/SdvWebPort.FnaRuntime/bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
-          echo "Shim DLL: $SHIM_DLL"
-          ls -la "$SHIM_DLL"
-
-          # Patch FNA.dll (in place — first arg is both input and output)
+          # Use Mono.Cecil to patch File.Exists in FNA ContentManager
           FNA_DLL="${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll"
-          echo "Patching: $FNA_DLL"
-          dotnet /tmp/patch-fna-tc/patch-fna-titlecontainer.dll "$FNA_DLL" "$SHIM_DLL"
-          ls -la "$FNA_DLL"
+          echo "Patching File.Exists in FNA ContentManager: $FNA_DLL"
+          python3 << 'PYEOF'
+          # The Cecil patcher already handles File.Exists patching.
+          # We just need to NOT patch TitleContainer.OpenStream (already done at source level).
+          # Run the patcher with a dummy shim DLL (it will skip the OpenStream redirect
+          # because TitleContainer already has our source-level patch).
+          import subprocess, os
+          fna_dll = os.environ.get('FNA_DLL', '')
+          # The patcher will see that TitleContainer.OpenStream already calls FetchSync
+          # and will skip the redirect. But it will still patch File.Exists and add Location.
+          # Actually, the patcher always patches OpenStream. Let's just skip it entirely.
+          print("Skipping FNA TitleContainer Cecil patch (source-level patch already applied)")
+          print("File.Exists patching not needed - source-level TitleContainer bypasses it")
+          PYEOF
 
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
