@@ -382,8 +382,22 @@ class Program
             // GetManifestJson() takes no arguments — it returns the preloaded manifest.
             // The path argument is ignored (the manifest is always at Content/ContentHashes.json).
 
-            // Find Console.WriteLine(string) method reference
-            var consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
+            // Find Console.WriteLine(string) method reference.
+            // Search existing type references for System.Console to avoid
+            // TypeLoadException from wrong assembly scope.
+            TypeReference consoleType = null;
+            foreach (var tr in module.GetTypeReferences())
+            {
+                if (tr.FullName == "System.Console")
+                {
+                    consoleType = tr;
+                    break;
+                }
+            }
+            if (consoleType == null)
+            {
+                consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
+            }
             var writeLineRef = new MethodReference("WriteLine", module.TypeSystem.Void, consoleType)
             {
                 HasThis = false,
@@ -526,10 +540,27 @@ class Program
 
             Console.WriteLine($"  [i] Constructed MethodReference: ContentManager.ReadAsset<!!T>(string, Action<IDisposable>) → !!T");
 
-            // Find Console.WriteLine(string) method reference
+            // Find Console.WriteLine(string) method reference.
+            // We search the module's existing type references for System.Console
+            // (constructing it manually with CoreLibrary scope doesn't work because
+            // Console might be in a different assembly than CoreLibrary).
+            TypeReference consoleType = null;
+            foreach (var tr in module.GetTypeReferences())
+            {
+                if (tr.FullName == "System.Console")
+                {
+                    consoleType = tr;
+                    break;
+                }
+            }
+            if (consoleType == null)
+            {
+                // Fallback: try constructing with System.Runtime scope
+                consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
+                Console.WriteLine("  [!] System.Console not found in type refs, using fallback");
+            }
             var stringType = module.TypeSystem.String;
             var voidType = module.TypeSystem.Void;
-            var consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
             var writeLineRef = new MethodReference("WriteLine", voidType, consoleType)
             {
                 HasThis = false,
