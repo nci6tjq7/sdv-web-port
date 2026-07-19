@@ -1,2 +1,11 @@
 /deps/*
   Cross-Origin-Resource-Policy: cross-origin
+
+/_framework/*
+  Cross-Origin-Resource-Policy: cross-origin
+
+/*.wasm
+  Cross-Origin-Resource-Policy: cross-origin
+
+/*.js
+  Cross-Origin-Resource-Policy: cross-origin

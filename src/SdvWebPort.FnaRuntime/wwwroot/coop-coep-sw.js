@@ -62,18 +62,11 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // For _framework/ requests: add ONLY CORP header (COEP requires it)
-    // Use stream (response.body) for performance — arrayBuffer() buffers
-    // entire file in memory, causing hangs on 50MB+ wasm files.
+    // For _framework/ requests: DON'T intercept.
+    // CORP headers are added by the GitHub Pages _headers file.
+    // SW interception causes "Failed to fetch" errors for large wasm files.
     if (req.url.includes('/_framework/')) {
-        event.respondWith(
-            fetch(req)
-                .then((response) => withCorpOnly(response))
-                .catch(() => {
-                    return fetch(req).then((response) => withCorpOnly(response));
-                })
-        );
-        return;
+        return; // Let browser handle natively — _headers file adds CORP
     }
 
     // For navigation (HTML) and other requests: add COOP + COEP + CORP
