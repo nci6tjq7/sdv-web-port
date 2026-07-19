@@ -56,19 +56,34 @@ class Program
         }
         Console.WriteLine($"[+] Found TitleContainer.OpenStream");
 
-        var importedShimMethod = fnaAsm.MainModule.ImportReference(shimMethod);
+        // Check if TitleContainer.OpenStream already calls FetchSync (source-level patch).
+        // If so, skip the Cecil redirect — the source-level patch handles everything.
+        bool alreadyPatched = false;
+        foreach (var instr in openStreamMethod.Body.Instructions)
+        {
+            if (instr.Operand is MethodReference mr && mr.Name == "FetchSync")
+            {
+                alreadyPatched = true;
+                break;
+            }
+        }
 
-        var instrs = openStreamMethod.Body.Instructions;
-        instrs.Clear();
-        openStreamMethod.Body.ExceptionHandlers.Clear();
-
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
-        instrs.Add(Instruction.Create(OpCodes.Call, importedShimMethod));
-        instrs.Add(Instruction.Create(OpCodes.Ret));
-
-        openStreamMethod.Body.InitLocals = true;
-
-        Console.WriteLine($"[+] Patched TitleContainer.OpenStream -> HttpTitleContainer.OpenStream");
+        if (alreadyPatched)
+        {
+            Console.WriteLine("[SKIP] TitleContainer.OpenStream already has FetchSync (source-level patch). Skipping Cecil redirect.");
+        }
+        else
+        {
+            var importedShimMethod = fnaAsm.MainModule.ImportReference(shimMethod);
+            var instrs = openStreamMethod.Body.Instructions;
+            instrs.Clear();
+            openStreamMethod.Body.ExceptionHandlers.Clear();
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Call, importedShimMethod));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+            openStreamMethod.Body.InitLocals = true;
+            Console.WriteLine($"[+] Patched TitleContainer.OpenStream -> HttpTitleContainer.OpenStream");
+        }
 
         // Also patch ALL File.Exists calls in ContentManager to return true.
         // In WASM, File.Exists always returns false for HTTP-served files.

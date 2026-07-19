@@ -42,7 +42,7 @@ const path = require('path');
 
   console.log('=== Loading page ===');
   try {
-    await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784430201' + Date.now(), {
+    await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784431308' + Date.now(), {
       waitUntil: 'networkidle2',
       timeout: 120000
     });
