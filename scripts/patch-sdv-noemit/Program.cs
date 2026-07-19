@@ -88,6 +88,12 @@ class Program
         // The proper fix is to make the manifest loading work (PatchContentHashParserReadAllText).
         // methodsNopped += PatchDoesAssetExist(asm);
 
+        // NEW FIX: Patch LoadImpl to call base.ReadAsset directly instead of base.Load.
+        // This bypasses BOTH DoesAssetExist AND the virtual Load dispatch (which causes
+        // stack overflow in Mono WASM). ReadAsset calls OpenStream directly.
+        // This is the nuclear option — skip the manifest check entirely.
+        methodsNopped += PatchLoadImplToCallReadAsset(asm);
+
         // Instead: patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
         // File.Exists → return true (so asset is considered to exist)
         // File.OpenRead → redirect to HttpTitleContainer.OpenStream (fetch via HTTP)
@@ -405,10 +411,163 @@ class Program
     }
 
     /// <summary>
+    /// Patch LocalizedContentManager.LoadImpl to call base.ReadAsset directly
+    /// instead of base.Load. This bypasses:
+    /// 1. DoesAssetExist check (which fails because manifest is empty)
+    /// 2. Virtual Load dispatch (which causes stack overflow in Mono WASM:
+    ///    LoadImpl → Load(override) → Load(string,lang) → LoadImpl → ...)
+    ///
+    /// Original LoadImpl IL:
+    ///   ldarg.0
+    ///   ldarg.2
+    ///   callvirt DoesAssetExist<!!T>(string) → bool
+    ///   brtrue.s L_load
+    ///   ldstr "Could not load "
+    ///   ldarg.2
+    ///   ldstr " asset!"
+    ///   call String.Concat
+    ///   newobj ContentLoadException
+    ///   throw
+    /// L_load:
+    ///   ldarg.0
+    ///   ldarg.2
+    ///   call ContentManager::Load<!!T>(string) → !!T  ← causes stack overflow!
+    ///   ret
+    ///
+    /// Patched LoadImpl IL:
+    ///   ldstr "[PATCH] LoadImpl calling ReadAsset directly"
+    ///   call Console.WriteLine
+    ///   ldarg.0
+    ///   ldarg.2
+    ///   ldnull
+    ///   call ContentManager::ReadAsset<!!T>(string, Action<IDisposable>) → !!T
+    ///   ret
+    ///
+    /// ReadAsset is protected virtual but NOT overridden by LocalizedContentManager.
+    /// Even if Mono WASM treats `call` as `callvirt`, there's no override to dispatch to,
+    /// so it calls the base ContentManager.ReadAsset, which calls OpenStream.
+    /// No recursion, no manifest check, no stack overflow.
+    /// </summary>
+    static int PatchLoadImplToCallReadAsset(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            TypeDefinition FindType(TypeDefinition parent, string name)
+            {
+                if (parent.FullName == name) return parent;
+                foreach (var nested in parent.NestedTypes)
+                {
+                    var found = FindType(nested, name);
+                    if (found != null) return found;
+                }
+                return null;
+            }
+
+            TypeDefinition targetType = null;
+            foreach (var topType in module.Types)
+            {
+                targetType = FindType(topType, "StardewValley.LocalizedContentManager");
+                if (targetType != null) break;
+            }
+
+            if (targetType == null)
+            {
+                Console.WriteLine("  [!] LocalizedContentManager type not found for LoadImpl patch");
+                return 0;
+            }
+
+            var loadImplMethod = targetType.Methods.FirstOrDefault(m => m.Name == "LoadImpl");
+            if (loadImplMethod == null || loadImplMethod.Body == null)
+            {
+                Console.WriteLine("  [!] LoadImpl method not found");
+                return 0;
+            }
+
+            Console.WriteLine($"  [i] Found LoadImpl: {loadImplMethod.Body.Instructions.Count} instructions, {loadImplMethod.GenericParameters.Count} generic params");
+
+            // Find the ContentManager.ReadAsset method reference.
+            // ReadAsset is: protected virtual T ReadAsset<T>(string assetName, Action<IDisposable> recordDisposableObject)
+            // We need to find it in the module's type references.
+            TypeReference contentManagerRef = null;
+            foreach (var tr in module.GetTypeReferences())
+            {
+                if (tr.FullName == "Microsoft.Xna.Framework.Content.ContentManager")
+                {
+                    contentManagerRef = tr;
+                    break;
+                }
+            }
+
+            if (contentManagerRef == null)
+            {
+                Console.WriteLine("  [!] ContentManager type reference not found");
+                return 0;
+            }
+
+            // Construct MethodReference for ContentManager.ReadAsset<!!T>(string, Action<IDisposable>) → !!T
+            // We need the generic instantiation: ReadAsset<!!T> where !!T is the method's generic parameter
+            var actionType = new TypeReference("System", "Action`1", module, module.TypeSystem.CoreLibrary);
+            var idisposableType = new TypeReference("System", "IDisposable", module, module.TypeSystem.CoreLibrary);
+            var actionOfIDisposable = new GenericInstanceType(actionType);
+            actionOfIDisposable.GenericArguments.Add(idisposableType);
+
+            // The return type is !!T — the method's own generic parameter
+            var tParam = loadImplMethod.GenericParameters[0];
+
+            var readAssetRef = new MethodReference("ReadAsset", tParam, contentManagerRef)
+            {
+                HasThis = true,  // instance method
+            };
+            readAssetRef.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+            readAssetRef.Parameters.Add(new ParameterDefinition(actionOfIDisposable));
+            // Make it a generic instance method with !!T as the type argument
+            var readAssetGeneric = new GenericInstanceMethod(readAssetRef);
+            readAssetGeneric.GenericArguments.Add(tParam);
+
+            Console.WriteLine($"  [i] Constructed MethodReference: ContentManager.ReadAsset<!!T>(string, Action<IDisposable>) → !!T");
+
+            // Find Console.WriteLine(string) method reference
+            var stringType = module.TypeSystem.String;
+            var voidType = module.TypeSystem.Void;
+            var consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
+            var writeLineRef = new MethodReference("WriteLine", voidType, consoleType)
+            {
+                HasThis = false,
+            };
+            writeLineRef.Parameters.Add(new ParameterDefinition(stringType));
+
+            // REPLACE THE ENTIRE METHOD BODY with:
+            //   ldstr "[PATCH] LoadImpl → ReadAsset direct"
+            //   call Console.WriteLine
+            //   ldarg.0          // this
+            //   ldarg.2          // localizedAssetName (string)
+            //   ldnull           // null for Action<IDisposable>
+            //   call ContentManager.ReadAsset<!!T>(string, Action<IDisposable>)
+            //   ret
+            var instrs = loadImplMethod.Body.Instructions;
+            instrs.Clear();
+            loadImplMethod.Body.ExceptionHandlers.Clear();
+
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset direct (bypassing DoesAssetExist + virtual Load)"));
+            instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));
+            instrs.Add(Instruction.Create(OpCodes.Ldnull));
+            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+
+            loadImplMethod.Body.InitLocals = true;
+            loadImplMethod.Body.MaxStackSize = 4;
+
+            Console.WriteLine($"  [-] REPLACED LoadImpl body: WriteLine(marker) → ReadAsset<!!T>(localizedAssetName, null) → ret");
+            return 1;
+        }
+        return 0;
+    }
+
+    /// <summary>
     /// Patch LocalizedContentManager.DoesAssetExist to always return true.
-    /// In WASM, File.Exists always returns false, so DoesAssetExist would
-    /// report all assets as missing. By returning true, we let the actual
-    /// OpenStream/Load path handle file access (via HttpTitleContainer).
+    /// DISABLED — causes stack overflow. See PatchLoadImplToCallReadAsset instead.
     /// </summary>
     static int PatchDoesAssetExist(AssemblyDefinition asm)
     {
