@@ -1,4 +1,4 @@
-name: FNA WASM Build
+name: FNA WASM Build (SDV)
 
 on:
   workflow_dispatch:
@@ -244,4 +244,3 @@ FNAPATCH
           path: /tmp/sdv-fna-src/
           retention-days: 7
 # trigger workflow rescan
-# cache bust
