@@ -80,19 +80,19 @@ jobs:
 
       - name: Download SDV DLL and dependencies
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "/tmp/sdv-extract/Stardew Valley"
           RELEASE_TAG="sdv-dlls-v1"
-          API="https://api.github.com/repos/\${{ github.repository }}/releases/tags/\${RELEASE_TAG}"
-          echo "Fetching release metadata for \${RELEASE_TAG}..."
-          ASSETS_JSON=$(curl -s -H "Authorization: token \${GH_TOKEN}" "\${API}")
-          SDV_DLL_URL=$(echo "\${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='StardewValley.dll'))")
-          DEPS_ZIP_URL=$(echo "\${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='sdv-deps.zip'))")
-          echo "Downloading StardewValley.dll from \${SDV_DLL_URL}..."
-          curl -sL -H "Authorization: token \${GH_TOKEN}" -H "Accept: application/octet-stream" "\${SDV_DLL_URL}" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-          echo "Downloading sdv-deps.zip from \${DEPS_ZIP_URL}..."
-          curl -sL -H "Authorization: token \${GH_TOKEN}" -H "Accept: application/octet-stream" "\${DEPS_ZIP_URL}" -o /tmp/sdv-deps.zip
+          API="https://api.github.com/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}"
+          echo "Fetching release metadata for ${RELEASE_TAG}..."
+          ASSETS_JSON=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${API}")
+          SDV_DLL_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='StardewValley.dll'))")
+          DEPS_ZIP_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='sdv-deps.zip'))")
+          echo "Downloading StardewValley.dll from ${SDV_DLL_URL}..."
+          curl -sL -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/octet-stream" "${SDV_DLL_URL}" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          echo "Downloading sdv-deps.zip from ${DEPS_ZIP_URL}..."
+          curl -sL -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/octet-stream" "${DEPS_ZIP_URL}" -o /tmp/sdv-deps.zip
           file "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           file /tmp/sdv-deps.zip
           unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
@@ -113,8 +113,8 @@ jobs:
         run: |
           BAD_REF=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+[^)]+\)\)' /tmp/sdv-fna-src/ | wc -l)
           BAD_NULL=$(grep -rE '\(\(\?\?\)[^)]+\)' /tmp/sdv-fna-src/ | wc -l)
-          echo "Broken (ref X) patterns: \${BAD_REF}"
-          echo "Broken ((??)X) patterns: \${BAD_NULL}"
+          echo "Broken (ref X) patterns: ${BAD_REF}"
+          echo "Broken ((??)X) patterns: ${BAD_NULL}"
 
       - name: Build SDV with FNA
         run: |
@@ -128,10 +128,10 @@ jobs:
         run: |
           mkdir -p /tmp/fnalibs
           STATICS_RELEASE="5ca6e290-3dbe-49dd-b7f8-647e3af0a709"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/SDL3.a" -O /tmp/fnalibs/SDL3.a || echo "SDL3 download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || echo "FNA3D download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/FAudio.a" -O /tmp/fnalibs/FAudio.a || echo "FAudio download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/SDL3.a" -O /tmp/fnalibs/SDL3.a || echo "SDL3 download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || echo "FNA3D download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FAudio.a" -O /tmp/fnalibs/FAudio.a || echo "FAudio download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
           ls -la /tmp/fnalibs/
 
       - name: Upload all artifacts
