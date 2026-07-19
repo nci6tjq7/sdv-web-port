@@ -13,10 +13,6 @@ const SDV = {
 
     async init() {
         console.log("[SDV] Initializing runtime...");
-        // Note: we no longer require crossOriginIsolated (SharedArrayBuffer).
-        // The -sOFFSCREENCANVAS_SUPPORT flag handles canvas transfer without
-        // requiring COOP/COEP headers. If threading is needed later, we can
-        // re-enable the SW-based COOP/COEP setup.
         if (!window.crossOriginIsolated) {
             console.log("[SDV] crossOriginIsolated=false (expected without COOP/COEP SW). Continuing anyway...");
         }
@@ -33,19 +29,57 @@ const SDV = {
 
         SDV.setupInput();
 
+        // Preload essential Content files via async fetch (works with COEP).
+        // Sync XMLHttpRequest can't read SW-wrapped responses in COEP pages.
+        // Solution: async fetch all files BEFORE starting .NET runtime,
+        // cache them in globalThis.__contentCache. fetchSync() reads from cache.
+        console.log("[SDV] Preloading Content files...");
+        globalThis.__contentCache = new Map();
+        try {
+            // Fetch the file manifest
+            const manifestResp = await fetch('/deps/Content/ContentHashes.json');
+            if (manifestResp.ok) {
+                const manifest = await manifestResp.json();
+                console.log("[SDV] Got Content manifest");
+            }
+        } catch (e) {
+            console.warn("[SDV] No Content manifest, will fetch on demand");
+        }
+
+        // Preload critical files for title screen
+        const criticalFiles = [
+            'Content/XACT/FarmerSounds.xgs',
+            'Content/XACT/FarmerSounds.xwb',
+            'Content/Data/BigCraftables.xnb',
+            'Content/Data/CraftingRecipes.xnb',
+            'Content/Data/NPCDispositions.xnb',
+            'Content/Data/ObjectInformation.xnb',
+            'Content/Fonts/smallFont.xnb',
+            'Content/LooseSprites/Cursors.xnb',
+            'Content/LooseSprites/clouds.xnb',
+            'Content/LooseSprites/titleButtons.xnb',
+            'Content/Menus/TitleMenu.xnb',
+        ];
+
+        for (const file of criticalFiles) {
+            try {
+                const resp = await fetch('/deps/' + file);
+                if (resp.ok) {
+                    const data = new Uint8Array(await resp.arrayBuffer());
+                    globalThis.__contentCache.set('/deps/' + file, data);
+                    console.log(`[SDV] Preloaded: ${file} (${data.length} bytes)`);
+                }
+            } catch (e) {
+                console.warn(`[SDV] Failed to preload: ${file}`);
+            }
+        }
+        console.log(`[SDV] Preloaded ${globalThis.__contentCache.size} files`);
+
         console.log("[SDV] Loading .NET runtime...");
         try {
             const { dotnet } = await import('./_framework/dotnet.js');
             console.log("[SDV] dotnet.js loaded, creating instance...");
 
-            // With -sOFFSCREENCANVAS_SUPPORT in EmccExtraLDFlags (csproj),
-            // emscripten's SDL3 video driver automatically transfers the canvas
-            // to the deputy worker. No manual canvas transfer hack needed.
-            //
-            // With -sMIN_WEBGL_VERSION=2, emscripten creates WebGL 2.0 context
-            // (= OpenGL ES 3.0), which FNA3D's ES3 auto-detection requires.
-            //
-            // Reference: celeste-wasm pattern (MercuryWorkshop/celeste-wasm)
             console.log("[SDV] Creating .NET runtime instance...");
             dotnetInstance = await dotnet.create();
             console.log("[SDV] .NET runtime loaded");
@@ -113,24 +147,30 @@ const SDV = {
         console.log("[C#]", msg);
     },
 
-    // Synchronous HTTP fetch for Content files.
-    // Used by HttpTitleContainer.OpenStream via JS interop.
-    // XMLHttpRequest in synchronous mode is blocking but doesn't deadlock
-    // the WASM single thread (unlike HttpClient.GetAsync().GetAwaiter().GetResult()).
+    // Synchronous fetch for Content files.
+    // First checks the preload cache (populated via async fetch before runtime start).
+    // If not in cache, falls back to sync XHR (may fail in COEP pages).
     fetchSync(url) {
+        // Check cache first
+        if (globalThis.__contentCache && globalThis.__contentCache.has(url)) {
+            console.log('[SDV] fetchSync cache hit:', url);
+            return globalThis.__contentCache.get(url);
+        }
+        // Fall back to sync XHR (may fail in COEP pages)
         try {
             const xhr = new XMLHttpRequest();
-            xhr.open('GET', url, false); // false = synchronous
-            // Note: cannot set responseType='arraybuffer' for sync requests from document.
-            // Instead, overrideMimeType to get raw bytes via responseText.
+            xhr.open('GET', url, false);
             xhr.overrideMimeType('text/plain; charset=x-user-defined');
             xhr.send();
             if (xhr.status === 200) {
-                // Convert responseText to Uint8Array (binary string → bytes)
                 const text = xhr.responseText;
                 const bytes = new Uint8Array(text.length);
                 for (let i = 0; i < text.length; i++) {
                     bytes[i] = text.charCodeAt(i) & 0xff;
+                }
+                // Cache for future use
+                if (globalThis.__contentCache) {
+                    globalThis.__contentCache.set(url, bytes);
                 }
                 return bytes;
             }
