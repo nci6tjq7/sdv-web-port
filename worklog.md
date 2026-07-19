@@ -2525,3 +2525,50 @@ Files modified in this session:
 - scripts/patch-fna-titlecontainer/Program.cs (stack-balanced File.Exists)
 - scripts/patch-sdv-noemit/Program.cs (stack-balanced File.Exists +
   PatchContentHashParserReadAllText + diagnostic method listing)
+
+---
+Task ID: phase13-content-loading-breakthrough
+Agent: main
+Task: Debug and fix BigCraftables ContentLoadException using CDP tools
+
+Work Log:
+- Used agent-browser with CDP to inspect browser console
+- Found URL resolution bug: `/deps/...` resolved to domain root, not subpath
+- Fixed URL resolution using `document.baseURI` for relative URL construction
+- Fixed SW race condition: wait for `navigator.serviceWorker.ready` before starting runtime
+- Decompiled SDV DLL using ilspycmd to understand LocalizedContentManager.LoadImpl
+- Found root cause: DoesAssetExist checks a manifest loaded from ContentHashes.json
+  via File.ReadAllText (which fails in WASM → manifest stays empty → Load fails)
+- Attempted to fix manifest loading via ParseFromFile body replacement
+  (replaced File.ReadAllText → TitleContainer.GetManifestJson JS interop)
+  - ParseFromFile was NEVER called (File.Exists patch might be broken)
+- Tried patching DoesAssetExist to always return true
+  - Caused StackOverflow (Mono WASM treats `call` on virtual methods as `callvirt`)
+- FINAL FIX: Patch LoadImpl to call base.ReadAsset directly instead of base.Load
+  - Bypasses DoesAssetExist (no manifest check needed)
+  - Bypasses virtual Load dispatch (no stack overflow)
+  - ReadAsset calls OpenStream directly (HTTP fetch)
+  - Fixed MissingMethodException by using DefaultAssemblyResolver to properly
+    resolve ContentManager type and import ReadAsset method reference
+  - Fixed TypeLoadException for System.Console by searching module's existing
+    type references instead of constructing manually
+
+SW Issues Fixed:
+- GitHub Pages does NOT support _headers files (Netlify/Cloudflare feature only)
+- The deploy-pages.yml workflow was generating a _headers file with COOP+COEP
+  but NOT CORP → COEP violation → runtime couldn't load wasm files
+- Reverted SW to v8 approach (response.body stream, COOP+COEP+CORP on ALL requests)
+- arrayBuffer() approach (v9) caused hangs on 50MB+ wasm files
+- Skipping _framework/ (v10-v11) caused COEP violations
+
+Stage Summary:
+- ✅ BigCraftables loads successfully via ReadAsset → OpenStream → HTTP fetch
+- ✅ Multiple content files loading (Strings, Data, etc.)
+- ✅ Game enters the main game loop (Game.Run → RunLoop → RunPlatformMainLoop)
+- ❌ New error: DllNotFoundException: __Native (SDL3 native library P/Invoke)
+- This is a MASSIVE milestone — SDV is actually RUNNING in the browser!
+
+Next Steps:
+- Fix __Native DllNotFoundException (native library P/Invoke table setup)
+- This might require WasmBuildNative configuration changes or r58Playz runtime patches
+- Screenshot saved to download/sdv-progress.png
