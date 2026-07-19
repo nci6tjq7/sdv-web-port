@@ -171,46 +171,21 @@ jobs:
           dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
           ls -la "Stardew Valley.dll"
 
-      - name: Patch FNA ContentManager File.Exists (HTTP Content loading)
+      - name: Patch FNA for HTTP Content loading (Cecil: File.Exists + TitleContainer redirect)
         run: |
-          # FNA's TitleContainer.OpenStream is already patched at SOURCE LEVEL
-          # (in fna-wasm-build workflow via scripts/FnaTitleContainer.cs).
-          # We only need to patch File.Exists in ContentManager to return true,
-          # because FNA's CheckRawExtensions uses File.Exists before calling OpenStream.
-          # In WASM, File.Exists always returns false for HTTP-served files.
+          # Use the Mono.Cecil patcher tool (scripts/patch-fna-titlecontainer).
+          # This patches:
+          # 1. TitleContainer.OpenStream → HttpTitleContainer.OpenStream (cross-assembly)
+          # 2. ContentManager File.Exists → true (bypass file existence check)
+          # 3. TitleContainer.Location property (already in source, will skip)
+          dotnet build scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj -c Release -o /tmp/patch-fna-tc
+          cd src/SdvWebPort.FnaRuntime
+          dotnet build -c Release
+          SHIM_DLL="${{ github.workspace }}/src/SdvWebPort.FnaRuntime/bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
           FNA_DLL="${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll"
-          echo "Patching File.Exists in FNA ContentManager: $FNA_DLL"
-          python3 << 'PYEOF'
-          from Mono.Cecil import *
-          from Mono.Cecil.Cil import *
-
-          asm = AssemblyDefinition.ReadAssembly("$FNA_DLL")
-          cm = None
-          for t in asm.MainModule.Types:
-              if t.FullName == "Microsoft.Xna.Framework.Content.ContentManager":
-                  cm = t
-                  break
-          if cm is None:
-              print("ContentManager not found!")
-              exit(1)
-
-          patched = 0
-          for method in cm.Methods:
-              if method.Body is None:
-                  continue
-              for instr in method.Body.Instructions:
-                  if instr.OpCode == OpCodes.Call and isinstance(instr.Operand, MethodReference):
-                      mr = instr.Operand
-                      if mr.Name == "Exists" and mr.DeclaringType is not None and mr.DeclaringType.FullName == "System.IO.File":
-                          instr.OpCode = OpCodes.Ldc_I4_1
-                          instr.Operand = None
-                          patched += 1
-                          print(f"  Patched File.Exists in {method.Name}")
-
-          print(f"Total: {patched} File.Exists -> true")
-          asm.Write("$FNA_DLL")
-          print("Done!")
-          PYEOF
+          echo "Patching: $FNA_DLL"
+          dotnet /tmp/patch-fna-tc/patch-fna-titlecontainer.dll "$FNA_DLL" "$SHIM_DLL"
+          ls -la "$FNA_DLL"
 
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
