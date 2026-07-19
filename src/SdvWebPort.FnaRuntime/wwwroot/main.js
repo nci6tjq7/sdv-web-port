@@ -17,6 +17,15 @@ const SDV = {
             console.log("[SDV] crossOriginIsolated=false (expected without COOP/COEP SW). Continuing anyway...");
         }
 
+        // Compute base path for Content/ requests.
+        // The site is hosted at a subpath (e.g. /sdv-web-port/), so absolute
+        // paths like "/deps/..." would resolve to the domain root, returning 404.
+        // We use document.baseURI which respects the <base> tag and works on
+        // both root-hosted and subpath-hosted deployments.
+        const baseURI = document.baseURI.replace(/[^/]*$/, '');
+        SDV.depsBase = baseURI + 'deps/';
+        console.log("[SDV] depsBase:", SDV.depsBase);
+
         canvas = document.getElementById('canvas');
         if (!canvas) {
             console.error("[SDV] Canvas element not found!");
@@ -37,7 +46,7 @@ const SDV = {
         globalThis.__contentCache = new Map();
         try {
             // Fetch the file manifest
-            const manifestResp = await fetch('/deps/Content/ContentHashes.json');
+            const manifestResp = await fetch(SDV.depsBase + 'Content/ContentHashes.json');
             if (manifestResp.ok) {
                 const manifest = await manifestResp.json();
                 console.log("[SDV] Got Content manifest");
@@ -46,7 +55,11 @@ const SDV = {
             console.warn("[SDV] No Content manifest, will fetch on demand");
         }
 
-        // Preload critical files for title screen
+        // Preload critical files for title screen.
+        // NOTE: SDV/FNA expects lowercase filenames (e.g. smallFont.xnb), but
+        // the actual game ships them with mixed case (SmallFont.xnb). On
+        // case-sensitive filesystems (Linux/GitHub Pages), this matters.
+        // We try lowercase first, then uppercase first letter as fallback.
         const criticalFiles = [
             'Content/XACT/FarmerSounds.xgs',
             'Content/XACT/FarmerSounds.xwb',
@@ -63,17 +76,32 @@ const SDV = {
 
         for (const file of criticalFiles) {
             try {
-                const resp = await fetch('/deps/' + file);
+                // Try the requested path first
+                let resp = await fetch(SDV.depsBase + file);
+                // If 404, try case-insensitive variants
+                if (!resp.ok) {
+                    // Try with first letter of basename capitalized
+                    const parts = file.split('/');
+                    const last = parts.pop();
+                    const cap = last.charAt(0).toUpperCase() + last.slice(1);
+                    const variant = parts.join('/') + '/' + cap;
+                    resp = await fetch(SDV.depsBase + variant);
+                }
                 if (resp.ok) {
                     const data = new Uint8Array(await resp.arrayBuffer());
-                    globalThis.__contentCache.set('/deps/' + file, data);
+                    // Cache under BOTH the requested path and the actual URL
+                    // so fetchSync can find it regardless of which key it uses
+                    globalThis.__contentCache.set(file, data);
+                    globalThis.__contentCache.set(SDV.depsBase + file, data);
                     console.log(`[SDV] Preloaded: ${file} (${data.length} bytes)`);
+                } else {
+                    console.warn(`[SDV] Preload miss: ${file} (status=${resp.status})`);
                 }
             } catch (e) {
-                console.warn(`[SDV] Failed to preload: ${file}`);
+                console.warn(`[SDV] Failed to preload: ${file}`, e.message);
             }
         }
-        console.log(`[SDV] Preloaded ${globalThis.__contentCache.size} files`);
+        console.log(`[SDV] Preloaded ${globalThis.__contentCache.size} entries`);
 
         console.log("[SDV] Loading .NET runtime...");
         try {
@@ -151,15 +179,40 @@ const SDV = {
     // First checks the preload cache (populated via async fetch before runtime start).
     // If not in cache, falls back to sync XHR (may fail in COEP pages).
     fetchSync(url) {
-        // Check cache first
-        if (globalThis.__contentCache && globalThis.__contentCache.has(url)) {
-            console.log('[SDV] fetchSync cache hit:', url);
-            return globalThis.__contentCache.get(url);
+        // Normalize URL: C# passes "/deps/..." (absolute), but the site is at
+        // a subpath. Convert to the proper depsBase-relative URL.
+        let normalized = url;
+        if (url.startsWith('/deps/')) {
+            normalized = SDV.depsBase + url.substring('/deps/'.length);
+        } else if (url.startsWith('deps/')) {
+            normalized = SDV.depsBase + url.substring('deps/'.length);
+        } else if (url.startsWith('/')) {
+            normalized = SDV.depsBase + url.substring(1);
+        }
+        // Also derive the path-only key for cache lookup
+        const pathKey = url.startsWith('/deps/') ? url.substring('/deps/'.length)
+                     : url.startsWith('deps/')  ? url.substring('deps/'.length)
+                     : url;
+
+        // Check cache by all possible keys
+        if (globalThis.__contentCache) {
+            if (globalThis.__contentCache.has(normalized)) {
+                console.log('[SDV] fetchSync cache hit (normalized):', normalized);
+                return globalThis.__contentCache.get(normalized);
+            }
+            if (globalThis.__contentCache.has(pathKey)) {
+                console.log('[SDV] fetchSync cache hit (pathKey):', pathKey);
+                return globalThis.__contentCache.get(pathKey);
+            }
+            if (globalThis.__contentCache.has(url)) {
+                console.log('[SDV] fetchSync cache hit (raw):', url);
+                return globalThis.__contentCache.get(url);
+            }
         }
         // Fall back to sync XHR (may fail in COEP pages)
         try {
             const xhr = new XMLHttpRequest();
-            xhr.open('GET', url, false);
+            xhr.open('GET', normalized, false);
             xhr.overrideMimeType('text/plain; charset=x-user-defined');
             xhr.send();
             if (xhr.status === 200) {
@@ -168,16 +221,18 @@ const SDV = {
                 for (let i = 0; i < text.length; i++) {
                     bytes[i] = text.charCodeAt(i) & 0xff;
                 }
-                // Cache for future use
+                // Cache for future use under all keys
                 if (globalThis.__contentCache) {
+                    globalThis.__contentCache.set(normalized, bytes);
+                    globalThis.__contentCache.set(pathKey, bytes);
                     globalThis.__contentCache.set(url, bytes);
                 }
                 return bytes;
             }
-            console.warn('[SDV] fetchSync failed:', url, 'status:', xhr.status);
+            console.warn('[SDV] fetchSync failed:', normalized, 'status:', xhr.status);
             return null;
         } catch (e) {
-            console.warn('[SDV] fetchSync error:', url, e.message);
+            console.warn('[SDV] fetchSync error:', normalized, e.message);
             return null;
         }
     },
