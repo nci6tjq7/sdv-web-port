@@ -90,9 +90,23 @@
         <canvas id="canvas" class="canvas" width="1280" height="720"></canvas>
         <div id="error-log"></div>
     </div>
-    <!-- No Service Worker — we don't need COOP/COEP for the title screen.
-         SW was intercepting sync XMLHttpRequest requests and returning 404.
-         If threading (SharedArrayBuffer) is needed later, re-enable SW. -->
+    <!-- Service Worker for COOP/COEP headers (required for SharedArrayBuffer/threads).
+         SW skips /deps/ requests so sync XMLHttpRequest can fetch Content files directly. -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('./coop-coep-sw.js').then(function(reg) {
+                    if (!navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.ready.then(function() {
+                            window.location.reload();
+                        });
+                    }
+                }).catch(function(e) {
+                    console.error('[SDV] SW registration failed:', e);
+                });
+            });
+        }
+    </script>
     <!-- Microsoft.NET.Sdk.WebAssembly generates dotnet.js -->
     <script type="module" src="main.js"></script>
 </body>

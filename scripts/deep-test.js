@@ -29,7 +29,7 @@ const path = require('path');
   });
 
   console.log('=== Loading page ===');
-  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=' + Date.now(), {
+  await page.goto('https://nci6tjq7.github.io/sdv-web-port/?v=1784437568' + Date.now(), {
     waitUntil: 'domcontentloaded', timeout: 120000
   });
 

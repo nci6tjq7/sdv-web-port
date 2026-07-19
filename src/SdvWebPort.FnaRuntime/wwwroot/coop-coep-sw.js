@@ -7,7 +7,7 @@
 // 3. Opaque responses (status === 0) passed through unchanged
 // 4. Bump CACHE_NAME to force SW update on existing clients
 
-const CACHE_NAME = 'sdv-coop-coep-v4';
+const CACHE_NAME = 'sdv-coop-coep-v5';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
@@ -45,6 +45,13 @@ self.addEventListener('fetch', (event) => {
     // CRITICAL: .NET runtime issues modulepreload requests with cache='only-if-cached'
     // and mode='no-cors'. Without this guard, the fetch handler crashes.
     if (req.cache === 'only-if-cached' && req.mode !== 'same-origin') {
+        return;
+    }
+
+    // CRITICAL: Skip /deps/ requests! Sync XMLHttpRequest (used by
+    // TitleContainer.OpenStream to fetch Content files) cannot read
+    // SW-wrapped responses. Let these requests go directly to the network.
+    if (req.url.includes('/deps/')) {
         return;
     }
 
