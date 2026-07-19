@@ -13,8 +13,47 @@ const SDV = {
 
     async init() {
         console.log("[SDV] Initializing runtime...");
-        if (!window.crossOriginIsolated) {
-            console.log("[SDV] crossOriginIsolated=false (expected without COOP/COEP SW). Continuing anyway...");
+
+        // CRITICAL: Wait for Service Worker to be active before proceeding.
+        // The .NET WASM runtime (threaded mode) requires SharedArrayBuffer,
+        // which requires COOP/COEP headers. On GitHub Pages, these headers
+        // are injected by our Service Worker (coop-coep-sw.js).
+        //
+        // Race condition: main.js (ES module) can execute before the SW
+        // is active. If we start the .NET runtime before COOP/COEP is set,
+        // dotnet.create() will fail with "SharedArrayBuffer is not enabled".
+        //
+        // Fix: wait for navigator.serviceWorker.ready, then check
+        // crossOriginIsolated. If still false after SW ready, reload the
+        // page (the SW will intercept the reload and add COOP/COEP headers).
+        if ('serviceWorker' in navigator) {
+            console.log("[SDV] Waiting for Service Worker to be ready...");
+            try {
+                await navigator.serviceWorker.ready;
+                console.log("[SDV] Service Worker is ready.");
+            } catch (e) {
+                console.warn("[SDV] SW ready failed:", e.message);
+            }
+
+            if (!window.crossOriginIsolated) {
+                console.log("[SDV] crossOriginIsolated=false after SW ready. Reloading page to activate COOP/COEP...");
+                // Give the SW time to claim the page
+                await new Promise(r => setTimeout(r, 500));
+                if (!navigator.serviceWorker.controller) {
+                    // SW registered but not controlling this page yet.
+                    // A reload will let it intercept the navigation request.
+                    window.location.reload();
+                    return; // Stop init — page will reload
+                }
+                // SW is controlling but crossOriginIsolated is still false.
+                // This shouldn't happen — but if it does, continue anyway
+                // (the runtime will fail, but at least we'll see the error).
+                console.warn("[SDV] SW is controller but crossOriginIsolated still false. Continuing anyway...");
+            } else {
+                console.log("[SDV] crossOriginIsolated=true. COOP/COEP headers are active.");
+            }
+        } else {
+            console.warn("[SDV] No Service Worker support. Threads will fail.");
         }
 
         // Compute base path for Content/ requests.
@@ -44,12 +83,16 @@ const SDV = {
         // cache them in globalThis.__contentCache. fetchSync() reads from cache.
         console.log("[SDV] Preloading Content files...");
         globalThis.__contentCache = new Map();
+        globalThis.__manifestJson = null;
         try {
-            // Fetch the file manifest
+            // Fetch the ContentHashes.json manifest and store as string.
+            // SDV's ContentHashParser.ParseFromFile calls File.ReadAllText to load
+            // this file, which fails in WASM. We preload it here and expose via
+            // globalThis.SDV.getManifestJson() for the patched ParseFromFile to use.
             const manifestResp = await fetch(SDV.depsBase + 'Content/ContentHashes.json');
             if (manifestResp.ok) {
-                const manifest = await manifestResp.json();
-                console.log("[SDV] Got Content manifest");
+                globalThis.__manifestJson = await manifestResp.text();
+                console.log("[SDV] Got Content manifest (" + globalThis.__manifestJson.length + " chars)");
             }
         } catch (e) {
             console.warn("[SDV] No Content manifest, will fetch on demand");
@@ -173,6 +216,14 @@ const SDV = {
 
     log(msg) {
         console.log("[C#]", msg);
+    },
+
+    // Returns the preloaded ContentHashes.json manifest as a string.
+    // Called by the patched ContentHashParser.ParseFromFile via JS interop.
+    // Returns null if the manifest wasn't preloaded.
+    getManifestJson() {
+        console.log('[SDV] getManifestJson called, manifest=' + (globalThis.__manifestJson ? globalThis.__manifestJson.length + ' chars' : 'null'));
+        return globalThis.__manifestJson;
     },
 
     // Synchronous fetch for Content files.

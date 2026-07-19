@@ -101,6 +101,26 @@ namespace Microsoft.Xna.Framework
             return handle.AddrOfPinnedObject();
         }
 
+        /// <summary>
+        /// Returns the preloaded ContentHashes.json manifest as a string.
+        /// The manifest is fetched by main.js during init and stored in
+        /// globalThis.__manifestJson. This method retrieves it via JS interop.
+        ///
+        /// Used by the patched ContentHashParser.ParseFromFile (the entire
+        /// method body is replaced by the SDV patcher to call this method
+        /// instead of File.ReadAllText).
+        /// </summary>
+        public static string GetManifestJson()
+        {
+            Console.WriteLine("[TitleContainer] GetManifestJson CALLED");
+            string json = GetManifestJsonJS();
+            Console.WriteLine("[TitleContainer] GetManifestJson returned: " + (json == null ? "null" : json.Length + " chars"));
+            return json;
+        }
+
+        [JSImport("globalThis.SDV.getManifestJson")]
+        private static partial string GetManifestJsonJS();
+
         [JSImport("globalThis.SDV.fetchSync")]
         private static partial byte[] FetchSync(string url);
     }

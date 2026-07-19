@@ -243,20 +243,31 @@ class Program
     }
 
     /// <summary>
-    /// Patch ContentHashParser.ParseFromFile to use TitleContainer.ReadAllText
-    /// (HTTP fetch) instead of File.ReadAllText (which fails in WASM).
+    /// Replace ContentHashParser.ParseFromFile's ENTIRE body with custom IL
+    /// that calls TitleContainer.ReadAllText instead of File.ReadAllText.
     ///
     /// SDV's LocalizedContentManager loads a manifest of all asset file paths
     /// from ContentHashes.json. DoesAssetExist checks this manifest before
     /// attempting to load any asset. Without the manifest, every Load fails
     /// with "Could not load X asset!".
     ///
-    /// The manifest is loaded via:
-    ///   ContentHashParser.ParseFromFile(path) → File.ReadAllText(path) → CHJsonParser.ParseJson(text)
+    /// Original ParseFromFile IL:
+    ///   ldarg.0
+    ///   call File.ReadAllText(string) → string
+    ///   call CHJsonParser.ParseJson(string) → object
+    ///   isinst Dictionary<string, object>
+    ///   ret
     ///
-    /// In WASM, File.ReadAllText throws (no filesystem access). We redirect
-    /// File.ReadAllText → TitleContainer.ReadAllText, which uses the same
-    /// HTTP fetch mechanism as TitleContainer.OpenStream.
+    /// Patched IL (replace File.ReadAllText with TitleContainer.ReadAllText):
+    ///   ldarg.0
+    ///   call TitleContainer.ReadAllText(string) → string
+    ///   call CHJsonParser.ParseJson(string) → object
+    ///   isinst Dictionary<string, object>
+    ///   ret
+    ///
+    /// We REPLACE THE ENTIRE BODY rather than redirecting individual calls,
+    /// because this is more reliable (no need to search for File.ReadAllText
+    /// call sites, no risk of missing one, and we control the exact IL).
     /// </summary>
     static int PatchContentHashParserReadAllText(AssemblyDefinition asm)
     {
@@ -276,9 +287,9 @@ class Program
                 continue;
             }
 
+            Console.WriteLine($"  [i] Found ParseFromFile: {parseFromFileMethod.Body.Instructions.Count} instructions");
+
             // Find TitleContainer type reference in this module's referenced assemblies.
-            // SDV references MonoGame.Framework (which is the FNA facade with type forwarders).
-            // We search module.GetTypeReferences() for any reference to TitleContainer.
             TypeReference titleContainerRef = null;
             foreach (var tr in module.GetTypeReferences())
             {
@@ -292,58 +303,86 @@ class Program
             if (titleContainerRef == null)
             {
                 Console.WriteLine("  [!] Microsoft.Xna.Framework.TitleContainer not found in type references");
-                Console.WriteLine("  [i] Available type references containing 'TitleContainer' or 'Microsoft.Xna.Framework':");
-                int shown = 0;
-                foreach (var tr in module.GetTypeReferences())
-                {
-                    if (tr.FullName.Contains("TitleContainer") || (tr.FullName.StartsWith("Microsoft.Xna.Framework") && shown < 10))
-                    {
-                        Console.WriteLine($"      - {tr.FullName} (from {tr.Scope})");
-                        shown++;
-                    }
-                }
                 continue;
             }
 
             Console.WriteLine($"  [i] Found TitleContainer reference: {titleContainerRef.FullName} (from {titleContainerRef.Scope})");
 
-            // We can't resolve TitleContainer (MonoGame.Framework assembly not in search path),
-            // and that's OK — we don't need to resolve it. We just need to construct a
-            // MethodReference pointing to TitleContainer.ReadAllText(string) → string.
-            // At runtime, .NET will resolve the type via the FNA-loaded assembly.
-            var stringType = module.TypeSystem.String;
-            var readAllTextRef = new MethodReference("ReadAllText", stringType, titleContainerRef)
+            // Find CHJsonParser.ParseJson method reference (already used in the original body).
+            MethodReference parseJsonRef = null;
+            foreach (var instr in parseFromFileMethod.Body.Instructions)
             {
-                HasThis = false,  // static method
-            };
-            readAllTextRef.Parameters.Add(new ParameterDefinition(stringType));
-
-            Console.WriteLine($"  [i] Constructed MethodReference: TitleContainer.ReadAllText(string) → string");
-
-            // Now find all `call File.ReadAllText(string)` instructions in ParseFromFile
-            // and replace with `call TitleContainer.ReadAllText(string)`
-            int patched = 0;
-            var instrs = parseFromFileMethod.Body.Instructions;
-            for (int i = 0; i < instrs.Count; i++)
-            {
-                var instr = instrs[i];
-                if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr)
+                if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr &&
+                    mr.Name == "ParseJson" && mr.DeclaringType?.FullName == "ContentManifest.CHJsonParser")
                 {
-                    if (mr.Name == "ReadAllText" && mr.DeclaringType?.FullName == "System.IO.File")
-                    {
-                        instr.Operand = readAllTextRef;
-                        patched++;
-                        Console.WriteLine($"  [-] Redirected File.ReadAllText → TitleContainer.ReadAllText in ParseFromFile");
-                    }
+                    parseJsonRef = mr;
+                    break;
                 }
             }
 
-            if (patched == 0)
+            if (parseJsonRef == null)
             {
-                Console.WriteLine("  [!] No File.ReadAllText calls found in ParseFromFile");
+                Console.WriteLine("  [!] CHJsonParser.ParseJson not found in ParseFromFile body");
+                continue;
             }
 
-            return patched > 0 ? 1 : 0;
+            Console.WriteLine($"  [i] Found CHJsonParser.ParseJson reference");
+
+            // Find Dictionary<string, object> type reference (used in isinst instruction).
+            TypeReference dictTypeRef = null;
+            foreach (var instr in parseFromFileMethod.Body.Instructions)
+            {
+                if (instr.OpCode == OpCodes.Isinst && instr.Operand is TypeReference tr &&
+                    tr.FullName.StartsWith("System.Collections.Generic.Dictionary"))
+                {
+                    dictTypeRef = tr;
+                    break;
+                }
+            }
+
+            if (dictTypeRef == null)
+            {
+                Console.WriteLine("  [!] Dictionary<string, object> type reference not found");
+                continue;
+            }
+
+            Console.WriteLine($"  [i] Found Dictionary type reference: {dictTypeRef.FullName}");
+
+            // Construct MethodReference for TitleContainer.GetManifestJson() → string
+            // This is a parameterless static method that returns the preloaded
+            // ContentHashes.json string from JS (globalThis.__manifestJson).
+            var stringType = module.TypeSystem.String;
+            var getManifestJsonRef = new MethodReference("GetManifestJson", stringType, titleContainerRef)
+            {
+                HasThis = false,  // static method
+            };
+            // No parameters — parameterless method
+
+            Console.WriteLine($"  [i] Constructed MethodReference: TitleContainer.GetManifestJson() → string");
+
+            // REPLACE THE ENTIRE METHOD BODY with:
+            //   call TitleContainer.GetManifestJson  // → string (ignores ldarg.0 path)
+            //   call CHJsonParser.ParseJson          // → object
+            //   isinst Dictionary<string,object>     // cast
+            //   ret
+            //
+            // Note: we intentionally DON'T use ldarg.0 (the path parameter) because
+            // GetManifestJson() takes no arguments — it returns the preloaded manifest.
+            // The path argument is ignored (the manifest is always at Content/ContentHashes.json).
+            var instrs = parseFromFileMethod.Body.Instructions;
+            instrs.Clear();
+            parseFromFileMethod.Body.ExceptionHandlers.Clear();
+
+            instrs.Add(Instruction.Create(OpCodes.Call, getManifestJsonRef));
+            instrs.Add(Instruction.Create(OpCodes.Call, parseJsonRef));
+            instrs.Add(Instruction.Create(OpCodes.Isinst, dictTypeRef));
+            instrs.Add(Instruction.Create(OpCodes.Ret));
+
+            parseFromFileMethod.Body.InitLocals = true;
+            parseFromFileMethod.Body.MaxStackSize = 2;
+
+            Console.WriteLine($"  [-] REPLACED ParseFromFile body: GetManifestJson() → CHJsonParser.ParseJson → isinst → ret");
+            return 1;
         }
         return 0;
     }
