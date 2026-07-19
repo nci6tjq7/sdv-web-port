@@ -22,8 +22,21 @@ class Program
         // Read into memory first to avoid file handle issues when writing back
         // (Cecil tries to re-read embedded resources from the original file during write,
         // which fails if we're writing to the same path).
+        // Use a custom assembly resolver that includes the input file's directory,
+        // so Cecil can resolve referenced assemblies (MonoGame.Framework, FNA, etc.)
+        // when constructing method references and writing metadata.
+        var resolver = new DefaultAssemblyResolver();
+        var inputDir = Path.GetDirectoryName(inputPath);
+        if (!string.IsNullOrEmpty(inputDir))
+        {
+            resolver.AddSearchDirectory(inputDir);
+            Console.WriteLine($"[+] Assembly search directory: {inputDir}");
+        }
         var asmBytes = File.ReadAllBytes(inputPath);
-        var asm = AssemblyDefinition.ReadAssembly(new MemoryStream(asmBytes));
+        var asm = AssemblyDefinition.ReadAssembly(new MemoryStream(asmBytes), new ReaderParameters
+        {
+            AssemblyResolver = resolver,
+        });
 
         int methodsNopped = 0;
 
@@ -518,27 +531,54 @@ class Program
                 return 0;
             }
 
-            // Construct MethodReference for ContentManager.ReadAsset<!!T>(string, Action<IDisposable>) → !!T
-            // We need the generic instantiation: ReadAsset<!!T> where !!T is the method's generic parameter
-            var actionType = new TypeReference("System", "Action`1", module, module.TypeSystem.CoreLibrary);
-            var idisposableType = new TypeReference("System", "IDisposable", module, module.TypeSystem.CoreLibrary);
-            var actionOfIDisposable = new GenericInstanceType(actionType);
-            actionOfIDisposable.GenericArguments.Add(idisposableType);
+            Console.WriteLine($"  [i] Found ContentManager reference: {contentManagerRef.FullName} (from {contentManagerRef.Scope})");
 
-            // The return type is !!T — the method's own generic parameter
-            var tParam = loadImplMethod.GenericParameters[0];
-
-            var readAssetRef = new MethodReference("ReadAsset", tParam, contentManagerRef)
+            // Resolve the ContentManager type to find the ReadAsset method definition.
+            // With the assembly resolver configured, Cecil can follow type forwarders
+            // from MonoGame.Framework to FNA and find the actual method.
+            TypeDefinition contentManagerDef = null;
+            try
             {
-                HasThis = true,  // instance method
-            };
-            readAssetRef.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
-            readAssetRef.Parameters.Add(new ParameterDefinition(actionOfIDisposable));
-            // Make it a generic instance method with !!T as the type argument
-            var readAssetGeneric = new GenericInstanceMethod(readAssetRef);
+                contentManagerDef = contentManagerRef.Resolve();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Could not resolve ContentManager: {ex.Message}");
+                return 0;
+            }
+
+            if (contentManagerDef == null)
+            {
+                Console.WriteLine("  [!] ContentManager.Resolve() returned null");
+                return 0;
+            }
+
+            // Find the ReadAsset method in ContentManager
+            var readAssetDef = contentManagerDef.Methods.FirstOrDefault(m =>
+                m.Name == "ReadAsset" && m.HasGenericParameters && m.Parameters.Count == 2);
+
+            if (readAssetDef == null)
+            {
+                Console.WriteLine("  [!] ReadAsset method not found in ContentManager!");
+                Console.WriteLine("  [i] Available methods in ContentManager:");
+                foreach (var m in contentManagerDef.Methods)
+                {
+                    Console.WriteLine($"      - {m.Name}({m.Parameters.Count} params, generic={m.HasGenericParameters})");
+                }
+                return 0;
+            }
+
+            Console.WriteLine($"  [i] Found ReadAsset: {readAssetDef.FullName} (generic params: {readAssetDef.GenericParameters.Count})");
+
+            // Import the method into the SDV module (this handles type forwarders correctly)
+            var readAssetImported = module.ImportReference(readAssetDef);
+
+            // Create a generic instance method: ReadAsset<!!T> where !!T is LoadImpl's generic param
+            var tParam = loadImplMethod.GenericParameters[0];
+            var readAssetGeneric = new GenericInstanceMethod(readAssetImported);
             readAssetGeneric.GenericArguments.Add(tParam);
 
-            Console.WriteLine($"  [i] Constructed MethodReference: ContentManager.ReadAsset<!!T>(string, Action<IDisposable>) → !!T");
+            Console.WriteLine($"  [i] Created generic instance: ReadAsset<{tParam}>");
 
             // Find Console.WriteLine(string) method reference.
             // We search the module's existing type references for System.Console
