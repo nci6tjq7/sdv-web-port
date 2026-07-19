@@ -2382,3 +2382,50 @@ Concerns flagged:
 - Only 1 code review has ever been done on this project (Phase 2.6/2.75 health
   check). 50+ commits since are unreviewed. The retrospective itself was not
   peer-reviewed; treat its assessments with appropriate skepticism.
+
+---
+Task ID: phase11-subpath-bug-found
+Agent: main
+Task: Browser-test the latest deployment (commit 6ca89b4) and verify Content loading
+
+Work Log:
+- Loaded agent-browser skill and opened https://nci6tjq7.github.io/sdv-web-port/
+- Read browser console: saw "Preloaded 0 files" and "fetchSync failed: 404" for FarmerSounds.xgs
+- BUT: curl from local terminal showed the same URL returning 200
+- Investigated: ran `agent-browser eval "fetch('/deps/Content/XACT/FarmerSounds.xgs').then(r => console.log(r.url, r.status))"` in the browser context
+- Found the resolved URL was `https://nci6tjq7.github.io/deps/Content/XACT/FarmerSounds.xgs` (DOMAIN ROOT) not `https://nci6tjq7.github.io/sdv-web-port/deps/...` (SUBPATH)
+
+ROOT CAUSE:
+- main.js uses absolute path `/deps/...` which the browser resolves relative to the domain root
+- The site is hosted at the subpath `/sdv-web-port/` on GitHub Pages
+- So `/deps/...` resolves to `https://nci6tjq7.github.io/deps/...` which returns 404
+- The CORRECT URL would be `https://nci6tjq7.github.io/sdv-web-port/deps/...`
+- This bug has been present in EVERY previous deployment — all "Content loading failed" tests
+  were actually failing because of the wrong URL, not because of COEP/SW/CORS issues
+
+ADDITIONAL FINDING (case sensitivity):
+- The game's content.zip uses MixedCase filenames (SmallFont.xnb, TitleButtons.xnb, etc.)
+- SDV/FNA requests lowercase filenames (smallFont.xnb, titleButtons.xnb)
+- On case-sensitive filesystems (Linux/GitHub Pages), these are DIFFERENT files
+- Verified by checking content.zip: contains SmallFont.xnb but NOT smallFont.xnb
+- Some files like FarmerSounds.xgs, BigCraftables.xnb match exactly
+
+FIX APPLIED (commit e39dc87):
+- main.js: compute `SDV.depsBase = document.baseURI + 'deps/'` for relative URL resolution
+- fetchSync(): normalize `/deps/...` absolute URLs to `depsBase + path` relative URLs
+- Cache stores under multiple keys (normalized URL, path-only, raw) for lookup robustness
+- Preload also tries capitalized basename as case-insensitive fallback
+- Verified locally with eval: fetch using relative URL returns 200, not 404
+
+Stage Summary:
+- Bug IDENTIFIED: wrong URL resolution caused ALL Content fetches to 404
+- Fix COMMITTED (e39dc87) and PUSHED
+- CI triggered: fna-wasm-runtime workflow in_progress
+- Next: wait for CI to complete (~5-10 min), then browser-test again
+- This should finally get SDV past ContentLoadException and into actual game logic
+
+Next Steps:
+- Wait for e39dc87 deployment
+- Browser-test: verify "Preloaded N entries" > 0 and "fetchSync cache hit" appears
+- If still 404: check case-sensitivity of remaining missing files
+- If preloads succeed: watch for next error (likely audio or font loading)

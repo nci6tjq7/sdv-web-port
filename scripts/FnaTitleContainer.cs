@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
@@ -14,7 +15,15 @@ namespace Microsoft.Xna.Framework
 
         public static Stream OpenStream(string name)
         {
+            // Log the call stack so we can see WHO is calling OpenStream.
+            // This helps diagnose cases where OpenStream is unexpectedly NOT called.
             Console.WriteLine("[TitleContainer] OpenStream: " + name);
+            var st = new StackTrace();
+            for (int i = 1; i < Math.Min(4, st.FrameCount); i++)
+            {
+                var f = st.GetFrame(i);
+                Console.WriteLine("[TitleContainer]   #" + i + ": " + f.GetMethod().DeclaringType?.FullName + "::" + f.GetMethod().Name);
+            }
             string safeName = name.Replace('\\', '/');
             string url = "/deps/" + safeName.TrimStart('/');
             Console.WriteLine("[TitleContainer] Fetching: " + url);
@@ -28,7 +37,8 @@ namespace Microsoft.Xna.Framework
             }
             catch (Exception ex)
             {
-                Console.WriteLine("[TitleContainer] ERROR: " + ex.Message);
+                Console.WriteLine("[TitleContainer] ERROR: " + ex.GetType().Name + ": " + ex.Message);
+                Console.WriteLine("[TitleContainer] Stack: " + ex.StackTrace);
                 throw;
             }
         }

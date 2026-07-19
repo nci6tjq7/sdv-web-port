@@ -88,6 +88,15 @@ class Program
         // Also patch ALL File.Exists calls in ContentManager to return true.
         // In WASM, File.Exists always returns false for HTTP-served files.
         // This affects CheckRawExtensions AND any other method that checks file existence.
+        //
+        // CRITICAL: We must preserve stack balance!
+        // Original IL: ldarg fileName; call File.Exists(string) → bool
+        //   stack effect: -1 string, +1 bool = 0 net
+        // Buggy patch:  ldarg fileName; ldc.i4.1
+        //   stack effect: +1 string, +1 bool = +2 net (ORPHAN string on stack!)
+        //   → causes InvalidProgramException or weird behavior in callers
+        // Fixed patch:  ldarg fileName; pop; ldc.i4.1
+        //   stack effect: +1 string, -1 string, +1 bool = +1 net (matches bool return)
         var contentManagerType = fnaAsm.MainModule.Types.FirstOrDefault(t => t.FullName == "Microsoft.Xna.Framework.Content.ContentManager");
         if (contentManagerType != null)
         {
@@ -95,19 +104,26 @@ class Program
             foreach (var method in contentManagerType.Methods)
             {
                 if (method.Body == null) continue;
-                foreach (var instr in method.Body.Instructions)
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
                 {
+                    var instr = instrs[i];
                     if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr && mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
                     {
-                        instr.OpCode = OpCodes.Ldc_I4_1; // push true
+                        // Replace `call File.Exists` with `pop` (consumes the string arg)
+                        instr.OpCode = OpCodes.Pop;
                         instr.Operand = null;
+                        // Insert `ldc.i4.1` after (pushes true as the bool result)
+                        var ldcInstr = Instruction.Create(OpCodes.Ldc_I4_1);
+                        instrs.Insert(i + 1, ldcInstr);
                         totalPatched++;
+                        i++; // Skip the newly inserted instruction
                     }
                 }
             }
             if (totalPatched > 0)
             {
-                Console.WriteLine($"[+] Patched ContentManager: {totalPatched} File.Exists → true (all methods)");
+                Console.WriteLine($"[+] Patched ContentManager: {totalPatched} File.Exists → true (all methods, stack-balanced)");
             }
         }
 

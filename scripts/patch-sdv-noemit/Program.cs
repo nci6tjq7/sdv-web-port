@@ -161,19 +161,37 @@ class Program
             int fileExistsPatched = 0;
             int fileOpenReadPatched = 0;
 
+            Console.WriteLine($"  [i] LocalizedContentManager methods: {targetType.Methods.Count}");
             foreach (var method in targetType.Methods)
             {
                 if (method.Body == null) continue;
-                foreach (var instr in method.Body.Instructions)
+                int methodExists = 0, methodOpenRead = 0;
+                var instrs = method.Body.Instructions;
+                for (int i = 0; i < instrs.Count; i++)
                 {
+                    var instr = instrs[i];
                     if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr)
                     {
-                        // File.Exists → return true
+                        // File.Exists → return true (with stack balance!)
+                        // Original: ldarg fileName; call File.Exists(string) → bool
+                        //   stack effect: -1 string, +1 bool = 0
+                        // Buggy:     ldarg fileName; ldc.i4.1
+                        //   stack effect: +1 string, +1 bool = +2 (IMBALANCED!)
+                        // Fixed:     ldarg fileName; pop; ldc.i4.1
+                        //   stack effect: +1 string, -1 string, +1 bool = +1 (matches bool return)
                         if (mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
                         {
-                            instr.OpCode = OpCodes.Ldc_I4_1;
+                            // Replace the `call File.Exists` instruction with `pop`
+                            // (this consumes the string argument that was loaded for File.Exists)
+                            instr.OpCode = OpCodes.Pop;
                             instr.Operand = null;
+                            // Insert a new `ldc.i4.1` instruction AFTER the pop
+                            // (this pushes the bool result true)
+                            var ldcInstr = Instruction.Create(OpCodes.Ldc_I4_1);
+                            instrs.Insert(i + 1, ldcInstr);
                             fileExistsPatched++;
+                            methodExists++;
+                            i++; // Skip the newly inserted instruction
                         }
                         // File.OpenRead → HttpTitleContainer.OpenStream
                         if (mr.Name == "OpenRead" && mr.DeclaringType?.FullName == "System.IO.File")
@@ -182,7 +200,7 @@ class Program
                             {
                                 instr.Operand = httpOpenStream;
                                 fileOpenReadPatched++;
-                                Console.WriteLine($"  [-] Redirected File.OpenRead → HttpTitleContainer.OpenStream in {method.Name}");
+                                methodOpenRead++;
                             }
                             else
                             {
@@ -191,9 +209,13 @@ class Program
                         }
                     }
                 }
+                if (methodExists > 0 || methodOpenRead > 0)
+                {
+                    Console.WriteLine($"  [-] {method.Name}: {methodExists} File.Exists→true, {methodOpenRead} File.OpenRead→OpenStream");
+                }
             }
 
-            Console.WriteLine($"  [-] Patched {fileExistsPatched} File.Exists → true, {fileOpenReadPatched} File.OpenRead → HttpTitleContainer.OpenStream");
+            Console.WriteLine($"  [-] Total: {fileExistsPatched} File.Exists → true (with pop), {fileOpenReadPatched} File.OpenRead → HttpTitleContainer.OpenStream");
             return (fileExistsPatched + fileOpenReadPatched) > 0 ? 1 : 0;
         }
         return 0;
