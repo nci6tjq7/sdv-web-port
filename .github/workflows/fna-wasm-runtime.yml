@@ -171,7 +171,7 @@ jobs:
           dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
           ls -la "Stardew Valley.dll"
 
-      - name: Patch FNA for HTTP Content loading (Cecil: File.Exists + TitleContainer redirect)
+      - name: Patch FNA for HTTP Content loading
         run: |
           # Use the Mono.Cecil patcher tool (scripts/patch-fna-titlecontainer).
           # This patches:
