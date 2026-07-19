@@ -19,7 +19,11 @@ class Program
         var outputPath = args.Length > 1 ? args[1] : inputPath;
 
         Console.WriteLine($"[+] Reading: {inputPath}");
-        var asm = AssemblyDefinition.ReadAssembly(inputPath);
+        // Read into memory first to avoid file handle issues when writing back
+        // (Cecil tries to re-read embedded resources from the original file during write,
+        // which fails if we're writing to the same path).
+        var asmBytes = File.ReadAllBytes(inputPath);
+        var asm = AssemblyDefinition.ReadAssembly(new MemoryStream(asmBytes));
 
         int methodsNopped = 0;
 
@@ -76,9 +80,12 @@ class Program
         // asset exists before loading. In WASM, File.Exists always returns false.
         // Fix: patch DoesAssetExist to always return true — let OpenStream handle
         // the actual file loading via HTTP.
-        // NOTE: This caused StackOverflow because LoadImpl retried on "missing" assets.
-        // Disabled — we need a different approach.
-        // methodsNopped += PatchDoesAssetExist(asm);
+        //
+        // PREVIOUS NOTE said this caused StackOverflow — that was a misdiagnosis.
+        // Looking at LoadImpl's IL: `call ContentManager::Load<!!T>(string)` is a
+        // NON-VIRTUAL call to the base class. So LoadImpl → base.Load → ReadAsset →
+        // OpenStream. No recursion. Safe to enable.
+        methodsNopped += PatchDoesAssetExist(asm);
 
         // Instead: patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
         // File.Exists → return true (so asset is considered to exist)
@@ -299,39 +306,18 @@ class Program
 
             Console.WriteLine($"  [i] Found TitleContainer reference: {titleContainerRef.FullName} (from {titleContainerRef.Scope})");
 
-            // Resolve the type reference to get its TypeDefinition (so we can find methods)
-            TypeDefinition titleContainerDef;
-            try
+            // We can't resolve TitleContainer (MonoGame.Framework assembly not in search path),
+            // and that's OK — we don't need to resolve it. We just need to construct a
+            // MethodReference pointing to TitleContainer.ReadAllText(string) → string.
+            // At runtime, .NET will resolve the type via the FNA-loaded assembly.
+            var stringType = module.TypeSystem.String;
+            var readAllTextRef = new MethodReference("ReadAllText", stringType, titleContainerRef)
             {
-                titleContainerDef = titleContainerRef.Resolve();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  [!] Could not resolve TitleContainer: {ex.Message}");
-                continue;
-            }
+                HasThis = false,  // static method
+            };
+            readAllTextRef.Parameters.Add(new ParameterDefinition(stringType));
 
-            if (titleContainerDef == null)
-            {
-                Console.WriteLine("  [!] TitleContainer.Resolve() returned null");
-                continue;
-            }
-
-            // Find the ReadAllText method we added via FnaTitleContainer.cs
-            var readAllTextMethod = titleContainerDef.Methods.FirstOrDefault(m => m.Name == "ReadAllText");
-            if (readAllTextMethod == null)
-            {
-                Console.WriteLine("  [!] TitleContainer.ReadAllText method not found!");
-                Console.WriteLine("  [i] Available methods in TitleContainer:");
-                foreach (var m in titleContainerDef.Methods)
-                {
-                    Console.WriteLine($"      - {m.Name}({string.Join(", ", m.Parameters.Select(p => p.ParameterType.Name))})");
-                }
-                continue;
-            }
-
-            // Import the method reference into the SDV module
-            var importedReadAllText = module.ImportReference(readAllTextMethod);
+            Console.WriteLine($"  [i] Constructed MethodReference: TitleContainer.ReadAllText(string) → string");
 
             // Now find all `call File.ReadAllText(string)` instructions in ParseFromFile
             // and replace with `call TitleContainer.ReadAllText(string)`
@@ -344,7 +330,7 @@ class Program
                 {
                     if (mr.Name == "ReadAllText" && mr.DeclaringType?.FullName == "System.IO.File")
                     {
-                        instr.Operand = importedReadAllText;
+                        instr.Operand = readAllTextRef;
                         patched++;
                         Console.WriteLine($"  [-] Redirected File.ReadAllText → TitleContainer.ReadAllText in ParseFromFile");
                     }
