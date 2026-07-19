@@ -7,7 +7,7 @@
 // 3. Opaque responses (status === 0) passed through unchanged
 // 4. Bump CACHE_NAME to force SW update on existing clients
 
-const CACHE_NAME = 'sdv-coop-coep-v5';
+const CACHE_NAME = 'sdv-coop-coep-v6';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
@@ -48,10 +48,24 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // CRITICAL: Skip /deps/ requests! Sync XMLHttpRequest (used by
-    // TitleContainer.OpenStream to fetch Content files) cannot read
-    // SW-wrapped responses. Let these requests go directly to the network.
+    // CRITICAL: For /deps/ requests, add ONLY CORP header (not COOP/COEP).
+    // Sync XMLHttpRequest can read responses with CORP header, but cannot
+    // read responses wrapped with new Response() (which COOP/COEP requires).
+    // By adding only CORP via a header manipulation, we satisfy COEP without
+    // breaking sync XHR.
     if (req.url.includes('/deps/')) {
+        event.respondWith(
+            fetch(req).then((response) => {
+                // Clone and add only CORP header
+                const newHeaders = new Headers(response.headers);
+                newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
+                return new Response(response.body, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: newHeaders,
+                });
+            })
+        );
         return;
     }
 
