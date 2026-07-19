@@ -80,9 +80,10 @@ class Program
         // Disabled — we need a different approach.
         // methodsNopped += PatchDoesAssetExist(asm);
 
-        // Instead: patch all File.Exists calls in LocalizedContentManager to return true.
-        // This is more targeted — only affects file existence checks within this class.
-        methodsNopped += PatchFileExistsInLocalizedContentManager(asm);
+        // Instead: patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
+        // File.Exists → return true (so asset is considered to exist)
+        // File.OpenRead → redirect to HttpTitleContainer.OpenStream (fetch via HTTP)
+        methodsNopped += PatchFileOperationsInLocalizedContentManager(asm);
 
         Console.WriteLine($"[+] Methods patched: {methodsNopped}");
 
@@ -117,12 +118,11 @@ class Program
     }
 
     /// <summary>
-    /// Patch all File.Exists calls in LocalizedContentManager to return true.
-    /// In WASM, File.Exists always returns false for HTTP-served files.
-    /// By replacing 'call File.Exists' with 'ldc.i4.1' (true), we ensure
-    /// the code always proceeds to OpenStream which fetches via HTTP.
+    /// Patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
+    /// - File.Exists → return true (file is considered to exist)
+    /// - File.OpenRead → redirect to HttpTitleContainer.OpenStream (HTTP fetch)
     /// </summary>
-    static int PatchFileExistsInLocalizedContentManager(AssemblyDefinition asm)
+    static int PatchFileOperationsInLocalizedContentManager(AssemblyDefinition asm)
     {
         foreach (var module in asm.Modules)
         {
@@ -146,34 +146,55 @@ class Program
 
             if (targetType == null)
             {
-                Console.WriteLine("  [!] LocalizedContentManager type not found for File.Exists patch");
+                Console.WriteLine("  [!] LocalizedContentManager type not found");
                 return 0;
             }
 
-            int patched = 0;
+            // Find HttpTitleContainer.OpenStream method reference
+            var httpTitleType = module.GetType("Microsoft.Xna.Framework.HttpTitleContainer");
+            MethodReference httpOpenStream = null;
+            if (httpTitleType != null)
+            {
+                httpOpenStream = httpTitleType.Methods.FirstOrDefault(m => m.Name == "OpenStream");
+            }
+
+            int fileExistsPatched = 0;
+            int fileOpenReadPatched = 0;
+
             foreach (var method in targetType.Methods)
             {
                 if (method.Body == null) continue;
                 foreach (var instr in method.Body.Instructions)
                 {
-                    if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr && mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
+                    if (instr.OpCode == OpCodes.Call && instr.Operand is MethodReference mr)
                     {
-                        instr.OpCode = OpCodes.Ldc_I4_1; // push true
-                        instr.Operand = null;
-                        patched++;
+                        // File.Exists → return true
+                        if (mr.Name == "Exists" && mr.DeclaringType?.FullName == "System.IO.File")
+                        {
+                            instr.OpCode = OpCodes.Ldc_I4_1;
+                            instr.Operand = null;
+                            fileExistsPatched++;
+                        }
+                        // File.OpenRead → HttpTitleContainer.OpenStream
+                        if (mr.Name == "OpenRead" && mr.DeclaringType?.FullName == "System.IO.File")
+                        {
+                            if (httpOpenStream != null)
+                            {
+                                instr.Operand = httpOpenStream;
+                                fileOpenReadPatched++;
+                                Console.WriteLine($"  [-] Redirected File.OpenRead → HttpTitleContainer.OpenStream in {method.Name}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"  [!] HttpTitleContainer.OpenStream not found — cannot redirect File.OpenRead");
+                            }
+                        }
                     }
                 }
             }
 
-            if (patched > 0)
-            {
-                Console.WriteLine($"  [-] Patched {patched} File.Exists → true in LocalizedContentManager");
-            }
-            else
-            {
-                Console.WriteLine("  [!] No File.Exists calls found in LocalizedContentManager");
-            }
-            return patched > 0 ? 1 : 0;
+            Console.WriteLine($"  [-] Patched {fileExistsPatched} File.Exists → true, {fileOpenReadPatched} File.OpenRead → HttpTitleContainer.OpenStream");
+            return (fileExistsPatched + fileOpenReadPatched) > 0 ? 1 : 0;
         }
         return 0;
     }
