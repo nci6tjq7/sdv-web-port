@@ -35,6 +35,8 @@ namespace Microsoft.Xna.Framework
         /// </summary>
         public static Stream OpenStream(string name)
         {
+            Console.WriteLine($"[HttpTitleContainer] OpenStream CALLED with: {name}");
+
             string safeName = name.Replace('\\', '/');
 
             string url;
@@ -51,13 +53,11 @@ namespace Microsoft.Xna.Framework
 
             try
             {
-                // Use JS interop to call synchronous XMLHttpRequest.
-                // This is blocking (like File.OpenRead) but doesn't deadlock
-                // because XMLHttpRequest runs in the browser's native network stack.
                 byte[] data = FetchSync(url);
-                if (data == null)
+                Console.WriteLine($"[HttpTitleContainer] FetchSync returned: {(data == null ? "null" : data.Length + " bytes")}");
+                if (data == null || data.Length == 0)
                 {
-                    throw new FileNotFoundException($"HTTP fetch failed: {url}", url);
+                    throw new FileNotFoundException($"HTTP fetch returned empty: {url}", url);
                 }
                 Console.WriteLine($"[HttpTitleContainer] Got {data.Length} bytes for {url}");
                 return new MemoryStream(data);
