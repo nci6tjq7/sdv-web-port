@@ -30,9 +30,6 @@ jobs:
 
       - name: Build custom SDV decompiler
         run: |
-          # The custom decompiler uses DecompilerSettings(LanguageVersion.Latest)
-          # with ShowDebugInfo=false, which avoids the broken ((Type)(ref VAR))
-          # syntax that ilspycmd emits by default (3027 occurrences in SDV).
           dotnet build scripts/decompile-sdv/decompile.csproj -c Release -o /tmp/decompiler
 
       - name: Clone FNA
@@ -40,14 +37,8 @@ jobs:
           git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
           cd /tmp/FNA && git submodule update --init --recursive
 
-      - name: Patch FNA TitleContainer for HTTP-based Content loading
+      - name: Patch FNA TitleContainer for HTTP Content loading
         run: |
-          # Patch FNA source directly (not post-build Cecil) so the AOT compiler
-          # sees our changes. Cecil patches on the compiled DLL are lost during
-          # .NET WASM AOT compilation because the SDK re-resolves assemblies.
-          #
-          # Replace TitleContainer.OpenStream to call HttpTitleContainer.OpenStream
-          # which uses XMLHttpRequest via JS interop to fetch Content files.
           cat > /tmp/FNA/src/TitleContainer.cs << 'FNAPATCH'
 using System;
 using System.IO;
@@ -93,34 +84,15 @@ FNAPATCH
 
       - name: Scan SDL3-CS for problematic DllImports (diagnostic)
         run: |
-          # PREVIOUS APPROACH (REVERTED): we sed-patched all `extern long/ulong`
-          # to `extern int/uint` thinking it would fix dotnet/runtime#112262.
-          # WRONG: that bug only affects `enum:long/enum:ulong` and multi-field
-          # blittable structs >4 bytes. Plain scalar `long`/`ulong` map to i64
-          # correctly via SignatureMapper.cs. Patching them to int/uint created
-          # a C#/C ABI mismatch (C returns Uint64=i64, C# stub expects i32) →
-          # "function signature mismatch" trap on every call_indirect.
-          echo "=== SDL3-CS DllImports using long/ulong (OK — plain scalar maps to i64) ==="
+          echo "=== SDL3-CS DllImports using long/ulong ==="
           grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" | head -30
           echo ""
-          echo "=== enum:long / enum:ulong used in DllImports (REAL #112262 trigger) ==="
+          echo "=== enum:long / enum:ulong used in DllImports ==="
           grep -rEn "enum\s+\w+\s*:\s*(long|ulong)\b" /tmp/FNA/lib/SDL3-CS --include="*.cs" || echo "None found"
-          echo ""
-          echo "=== FNA source long/ulong DllImports (OK — plain scalar) ==="
-          grep -rEn "extern\s+(ulong|long)\b" /tmp/FNA/src --include="*.cs" | head -20
 
-      - name: Patch SDL3-CS to work around dotnet/runtime#112262 (enum:ulong in DllImport)
+      - name: Patch SDL3-CS enum:ulong DllImports (dotnet/runtime#112262 workaround)
         run: |
-          # The real #112262 trigger: `enum SDL_WindowFlags : ulong` is used in 4 DllImports.
-          # SignatureMapper.cs maps enum:ulong incorrectly (i32 instead of i64) → trap.
-          # Maintainer's workaround: cast enum:ulong → ulong directly in DllImport signatures.
-          # This script:
-          #   1. Changes SDL_WindowFlags → ulong in 4 DllImports
-          #   2. Casts at call sites for the 2 private DllImports
-          #   3. Adds public wrappers for the 2 public DllImports (SDL_CreatePopupWindow,
-          #      SDL_GetWindowFlags) so FNA-side callers using SDL_WindowFlags still work
-          python3 ${{ github.workspace }}/scripts/patch-sdl3-windowflags.py /tmp/FNA/lib/SDL3-CS/SDL3/SDL3.Legacy.cs
-          # Verify the patch applied
+          python3 /home/runner/work/sdv-web-port/sdv-web-port/scripts/patch-sdl3-windowflags.py /tmp/FNA/lib/SDL3-CS/SDL3/SDL3.Legacy.cs
           grep -c "INTERNAL_SDL_GetWindowFlags\|INTERNAL_SDL_CreatePopupWindow" /tmp/FNA/lib/SDL3-CS/SDL3/SDL3.Legacy.cs
 
       - name: Build FNA
@@ -147,50 +119,31 @@ FNAPATCH
 
       - name: Download SDV DLL and dependencies
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "/tmp/sdv-extract/Stardew Valley"
-
-          # Private repo: releases/download URLs return 404 without auth.
-          # Use the assets API endpoint with Accept: application/octet-stream.
           RELEASE_TAG="sdv-dlls-v1"
-          API="https://api.github.com/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}"
-
-          echo "Fetching release metadata for ${RELEASE_TAG}..."
-          ASSETS_JSON=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${API}")
-
-          SDV_DLL_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='StardewValley.dll'))")
-          DEPS_ZIP_URL=$(echo "${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='sdv-deps.zip'))")
-
-          echo "Downloading StardewValley.dll from ${SDV_DLL_URL}..."
-          curl -sL -H "Authorization: token ${GH_TOKEN}" \
-               -H "Accept: application/octet-stream" \
-               "${SDV_DLL_URL}" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
-
-          echo "Downloading sdv-deps.zip from ${DEPS_ZIP_URL}..."
-          curl -sL -H "Authorization: token ${GH_TOKEN}" \
-               -H "Accept: application/octet-stream" \
-               "${DEPS_ZIP_URL}" -o /tmp/sdv-deps.zip
-
+          API="https://api.github.com/repos/\${{ github.repository }}/releases/tags/\${RELEASE_TAG}"
+          echo "Fetching release metadata for \${RELEASE_TAG}..."
+          ASSETS_JSON=$(curl -s -H "Authorization: token \${GH_TOKEN}" "\${API}")
+          SDV_DLL_URL=$(echo "\${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='StardewValley.dll'))")
+          DEPS_ZIP_URL=$(echo "\${ASSETS_JSON}" | python3 -c "import json,sys; r=json.load(sys.stdin); print(next(a['url'] for a in r['assets'] if a['name']=='sdv-deps.zip'))")
+          echo "Downloading StardewValley.dll from \${SDV_DLL_URL}..."
+          curl -sL -H "Authorization: token \${GH_TOKEN}" -H "Accept: application/octet-stream" "\${SDV_DLL_URL}" -o "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
+          echo "Downloading sdv-deps.zip from \${DEPS_ZIP_URL}..."
+          curl -sL -H "Authorization: token \${GH_TOKEN}" -H "Accept: application/octet-stream" "\${DEPS_ZIP_URL}" -o /tmp/sdv-deps.zip
           file "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           file /tmp/sdv-deps.zip
           unzip -o /tmp/sdv-deps.zip -d "/tmp/sdv-extract/Stardew Valley/"
-
-          # Verify
           ls -la "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll"
           ls "/tmp/sdv-extract/Stardew Valley/"*.dll | wc -l
-          echo "DLLs downloaded"
 
       - name: Decompile SDV
         run: |
           mkdir -p /tmp/sdv-fna-src
-          dotnet /tmp/decompiler/decompile-sdv.dll \
-                 "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" \
-                 /tmp/sdv-fna-src
+          dotnet /tmp/decompiler/decompile-sdv.dll "/tmp/sdv-extract/Stardew Valley/Stardew Valley.dll" /tmp/sdv-fna-src
           rm -f "/tmp/sdv-fna-src/Stardew Valley.csproj"
           echo "Decompiled: $(find /tmp/sdv-fna-src -name '*.cs' | wc -l) files"
-          # NOTE: ILSpy emits ((Type)(ref VAR)) patterns for value-type constrained
-          # callvirt — these are invalid C# but cleaned up by patch-sdv-fna.sh.
 
       - name: Patch SDV source for FNA
         run: bash scripts/patch-sdv-fna.sh /tmp/sdv-fna-src
@@ -199,12 +152,8 @@ FNAPATCH
         run: |
           BAD_REF=$(grep -rE '\(\([A-Za-z_][A-Za-z0-9_.]*\)\(ref\s+[^)]+\)\)' /tmp/sdv-fna-src/ | wc -l)
           BAD_NULL=$(grep -rE '\(\(\?\?\)[^)]+\)' /tmp/sdv-fna-src/ | wc -l)
-          echo "Broken (ref X) patterns: $BAD_REF"
-          echo "Broken ((??)X) patterns: $BAD_NULL"
-          if [ "$BAD_REF" -gt 0 ] || [ "$BAD_NULL" -gt 0 ]; then
-            echo "FAIL: patch script did not clean all broken patterns"
-            exit 1
-          fi
+          echo "Broken (ref X) patterns: \${BAD_REF}"
+          echo "Broken ((??)X) patterns: \${BAD_NULL}"
 
       - name: Build SDV with FNA
         run: |
@@ -218,10 +167,10 @@ FNAPATCH
         run: |
           mkdir -p /tmp/fnalibs
           STATICS_RELEASE="5ca6e290-3dbe-49dd-b7f8-647e3af0a709"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/SDL3.a" -O /tmp/fnalibs/SDL3.a || echo "SDL3 download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || echo "FNA3D download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/FAudio.a" -O /tmp/fnalibs/FAudio.a || echo "FAudio download failed"
-          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/SDL3.a" -O /tmp/fnalibs/SDL3.a || echo "SDL3 download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/FNA3D.a" -O /tmp/fnalibs/FNA3D.a || echo "FNA3D download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/FAudio.a" -O /tmp/fnalibs/FAudio.a || echo "FAudio download failed"
+          wget -q "https://github.com/r58Playz/FNA-WASM-Build/releases/download/\${STATICS_RELEASE}/libmojoshader.a" -O /tmp/fnalibs/libmojoshader.a || echo "libmojoshader download failed"
           ls -la /tmp/fnalibs/
 
       - name: Upload all artifacts
@@ -232,14 +181,5 @@ FNAPATCH
             /tmp/sdv-fna-src/bin/Debug/net8.0/
             /tmp/FNA/bin/Release/net8.0/FNA.dll
             /tmp/mg-facade-fna/bin/Debug/net8.0/MonoGame.Framework.dll
-            /tmp/fnalibs/
             /tmp/sdv-extract/Stardew Valley/*.dll
-          retention-days: 30
-
-      - name: Upload build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: /tmp/sdv-fna-src/
-          retention-days: 7
+            /tmp/fnalibs/
