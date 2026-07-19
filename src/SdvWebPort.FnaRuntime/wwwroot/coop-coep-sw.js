@@ -7,7 +7,7 @@
 // 3. Opaque responses (status === 0) passed through unchanged
 // 4. Bump CACHE_NAME to force SW update on existing clients
 
-const CACHE_NAME = 'sdv-coop-coep-v6';
+const CACHE_NAME = 'sdv-coop-coep-v7';
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
@@ -48,24 +48,16 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // CRITICAL: For /deps/ requests, add ONLY CORP header (not COOP/COEP).
-    // Sync XMLHttpRequest can read responses with CORP header, but cannot
-    // read responses wrapped with new Response() (which COOP/COEP requires).
-    // By adding only CORP via a header manipulation, we satisfy COEP without
-    // breaking sync XHR.
+    // CRITICAL: /deps/ requests must NOT be intercepted by SW.
+    // Sync XMLHttpRequest (used by TitleContainer.OpenStream) bypasses SW's
+    // respondWith entirely — it goes directly to the network. But COEP=require-corp
+    // blocks responses without CORP header. GitHub Pages doesn't set CORP on
+    // static files, so we need the _headers file (added in deploy workflow)
+    // to set CORP on /deps/ responses at the server level.
+    //
+    // By returning early (not calling respondWith), SW lets the request go
+    // to the network. The _headers file ensures CORP is set.
     if (req.url.includes('/deps/')) {
-        event.respondWith(
-            fetch(req).then((response) => {
-                // Clone and add only CORP header
-                const newHeaders = new Headers(response.headers);
-                newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
-                return new Response(response.body, {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: newHeaders,
-                });
-            })
-        );
         return;
     }
 
