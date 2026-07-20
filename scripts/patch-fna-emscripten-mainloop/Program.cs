@@ -11,10 +11,8 @@ class Program
         if (args.Length < 1)
         {
             Console.WriteLine("Usage: patch-fna-emscripten-mainloop <FNA.dll>");
-            Console.WriteLine("  Patches SDL3_FNAPlatform.RunPlatformMainLoop to block forever");
-            Console.WriteLine("  instead of calling [DllImport(\"__Native\")] emscripten_set_main_loop.");
-            Console.WriteLine("  JS side (main.js) drives the game loop via requestAnimationFrame,");
-            Console.WriteLine("  calling SDL3_FNAPlatform.RunOneFrame() each frame.");
+            Console.WriteLine("  Patches SDL3_FNAPlatform.RunPlatformMainLoop to use JS interop");
+            Console.WriteLine("  instead of [DllImport(\"__Native\")] emscripten_set_main_loop.");
             return 1;
         }
 
@@ -59,6 +57,7 @@ class Program
         var stringType = module.TypeSystem.String;
         var voidType = module.TypeSystem.Void;
         var int32Type = module.TypeSystem.Int32;
+        var boolType = module.TypeSystem.Boolean;
 
         // Find Console.WriteLine
         TypeReference consoleType = null;
@@ -94,70 +93,60 @@ class Program
         {
             threadType = new TypeReference("System.Threading", "Thread", module, module.TypeSystem.CoreLibrary);
         }
-        // Thread.Sleep(int milliseconds)
         var sleepRef = new MethodReference("Sleep", voidType, threadType)
         {
             HasThis = false,
         };
         sleepRef.Parameters.Add(new ParameterDefinition(int32Type));
 
-        // Find Timeout.InfiniteTimeSpan (Timeout is System.Threading.Timeout)
-        TypeReference timeoutType = null;
-        foreach (var tr in module.GetTypeReferences())
-        {
-            if (tr.FullName == "System.Threading.Timeout")
-            {
-                timeoutType = tr;
-                break;
-            }
-        }
-        if (timeoutType == null)
-        {
-            timeoutType = new TypeReference("System.Threading", "Timeout", module, module.TypeSystem.CoreLibrary);
-        }
-        // Timeout.InfiniteTimeSpan is a static property of type TimeSpan
-        // We use Thread.Sleep(int) with -1 instead (Timeout.Infinite)
-        // Thread.Sleep(Timeout.Infinite) = Thread.Sleep(-1)
-
-        // Replace RunPlatformMainLoop body with:
-        //   Console.WriteLine("[PATCH] RunPlatformMainLoop — blocking, JS drives loop");
-        //   emscriptenGame = game;
-        //   while (true) { Thread.Sleep(1000); }
+        // === APPROACH ===
+        // We can't easily add JSImport methods via Cecil (they need source generators).
+        // Instead, we use a simpler approach:
         //
-        // This blocks the C# main thread forever. JS (main.js) sets up
-        // requestAnimationFrame loop and calls SDL3_FNAPlatform.RunOneFrame()
-        // (or a new RunOneFrameJS method) each frame.
+        // Replace RunPlatformMainLoop body to:
+        // 1. Set emscriptenGame = game
+        // 2. Block forever with Thread.Sleep(Timeout.Infinite) = Thread.Sleep(-1)
+        //
+        // The JS side (main.js) calls SDL3_FNAPlatform.RunOneFrameJS() via
+        // getAssemblyExports each requestAnimationFrame.
+        //
+        // Since WasmEnableThreads=true, the C# main thread (deputy worker) blocks
+        // in Thread.Sleep, but the JS main thread can still call into C#.
+        //
+        // The getAssemblyExports issue we saw might be because Thread.Sleep(1000)
+        // with a loop holds the runtime lock. Thread.Sleep(-1) (Infinite) might
+        // release it properly. Let's try that.
         var instrs = runMainLoopMethod.Body.Instructions;
         instrs.Clear();
         runMainLoopMethod.Body.ExceptionHandlers.Clear();
 
         // ldstr; call Console.WriteLine
-        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — blocking C# thread, JS drives loop via requestAnimationFrame"));
+        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — setting emscriptenGame, blocking with Thread.Sleep(-1)"));
         instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
 
         // ldarg.0; stsfld emscriptenGame
         instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
         instrs.Add(Instruction.Create(OpCodes.Stsfld, gameField));
 
-        // Loop: Thread.Sleep(1000); jmp Loop
-        var loopLabel = Instruction.Create(OpCodes.Nop);
-        instrs.Add(loopLabel);
-        instrs.Add(Instruction.Create(OpCodes.Ldc_I4, 1000));  // 1000 ms
+        // Thread.Sleep(-1) — Timeout.Infinite
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_M1));  // -1
         instrs.Add(Instruction.Create(OpCodes.Call, sleepRef));
-        instrs.Add(Instruction.Create(OpCodes.Br_S, loopLabel));
-        // No ret — infinite loop
+
+        // ret (will never reach due to infinite sleep, but IL requires it)
+        instrs.Add(Instruction.Create(OpCodes.Ret));
 
         runMainLoopMethod.Body.InitLocals = true;
         runMainLoopMethod.Body.MaxStackSize = 2;
 
-        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (infinite Thread.Sleep loop)");
+        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (Thread.Sleep(-1))");
 
         // Add a new public static method RunOneFrameJS that JS can call.
-        // Check if it already exists
         var runOneFrameJsMethod = platformType.Methods.FirstOrDefault(m => m.Name == "RunOneFrameJS");
         if (runOneFrameJsMethod != null)
         {
-            Console.WriteLine("[i] RunOneFrameJS already exists, skipping");
+            Console.WriteLine("[i] RunOneFrameJS already exists, replacing body");
+            runOneFrameJsMethod.Body.Instructions.Clear();
+            runOneFrameJsMethod.Body.ExceptionHandlers.Clear();
         }
         else
         {
@@ -165,30 +154,30 @@ class Program
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
                 voidType);
             runOneFrameJsMethod.Body = new MethodBody(runOneFrameJsMethod);
-
-            // Body:
-            //   ldsfld emscriptenGame
-            //   brfalse ret
-            //   ldsfld emscriptenGame
-            //   callvirt Game.RunOneFrame()
-            //   ret
-            var gameType = gameField.FieldType;
-            var runOneFrameRef = new MethodReference("RunOneFrame", voidType, gameType)
-            {
-                HasThis = true,
-            };
-            var newInstrs = runOneFrameJsMethod.Body.Instructions;
-            var retInstr = Instruction.Create(OpCodes.Ret);
-            newInstrs.Add(Instruction.Create(OpCodes.Ldsfld, gameField));
-            newInstrs.Add(Instruction.Create(OpCodes.Brfalse_S, retInstr));
-            newInstrs.Add(Instruction.Create(OpCodes.Ldsfld, gameField));
-            newInstrs.Add(Instruction.Create(OpCodes.Callvirt, runOneFrameRef));
-            newInstrs.Add(retInstr);
-            runOneFrameJsMethod.Body.InitLocals = true;
-            runOneFrameJsMethod.Body.MaxStackSize = 2;
             platformType.Methods.Add(runOneFrameJsMethod);
-            Console.WriteLine("[+] Added RunOneFrameJS method");
         }
+
+        // Body:
+        //   ldsfld emscriptenGame
+        //   brfalse ret
+        //   ldsfld emscriptenGame
+        //   callvirt Game.RunOneFrame()
+        //   ret
+        var gameType = gameField.FieldType;
+        var runOneFrameRef = new MethodReference("RunOneFrame", voidType, gameType)
+        {
+            HasThis = true,
+        };
+        var newInstrs = runOneFrameJsMethod.Body.Instructions;
+        var retInstr = Instruction.Create(OpCodes.Ret);
+        newInstrs.Add(Instruction.Create(OpCodes.Ldsfld, gameField));
+        newInstrs.Add(Instruction.Create(OpCodes.Brfalse_S, retInstr));
+        newInstrs.Add(Instruction.Create(OpCodes.Ldsfld, gameField));
+        newInstrs.Add(Instruction.Create(OpCodes.Callvirt, runOneFrameRef));
+        newInstrs.Add(retInstr);
+        runOneFrameJsMethod.Body.InitLocals = true;
+        runOneFrameJsMethod.Body.MaxStackSize = 2;
+        Console.WriteLine("[+] Added RunOneFrameJS method");
 
         // Save
         var tempPath = fnaPath + ".tmp";
