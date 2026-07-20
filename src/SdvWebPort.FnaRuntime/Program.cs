@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: no-block RunPlatformMainLoop + no-Dispose + no-Thread.Sleep (8a76fab)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: set RunApplication=false + no-Dispose (616b0e9)");
 
         try
         {
