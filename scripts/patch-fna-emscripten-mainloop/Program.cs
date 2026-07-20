@@ -47,6 +47,22 @@ class Program
         }
         Console.WriteLine($"[i] Found RunPlatformMainLoop: {runMainLoopMethod.Body.Instructions.Count} instructions");
 
+        // Also find and patch Game.RunLoop to return immediately (skip while loop and OnExiting)
+        // Game.RunLoop is in Microsoft.Xna.Framework.Game
+        var gameType = module.Types.FirstOrDefault(t => t.FullName == "Microsoft.Xna.Framework.Game");
+        if (gameType == null)
+        {
+            Console.WriteLine("[!] Game type not found!");
+            return 1;
+        }
+        var runLoopMethod = gameType.Methods.FirstOrDefault(m => m.Name == "RunLoop");
+        if (runLoopMethod == null || runLoopMethod.Body == null)
+        {
+            Console.WriteLine("[!] RunLoop method not found!");
+            return 1;
+        }
+        Console.WriteLine($"[i] Found RunLoop: {runLoopMethod.Body.Instructions.Count} instructions");
+
         var gameField = platformType.Fields.FirstOrDefault(f => f.Name == "emscriptenGame");
         if (gameField == null)
         {
@@ -100,41 +116,34 @@ class Program
         sleepRef.Parameters.Add(new ParameterDefinition(int32Type));
 
         // === APPROACH ===
-        // Don't block. Return immediately from RunPlatformMainLoop.
-        // Also set RunApplication = false so the while loop in RunLoop is skipped.
+        // Patch BOTH RunPlatformMainLoop AND RunLoop:
+        // - RunPlatformMainLoop: set emscriptenGame, return (no block)
+        // - RunLoop: return immediately (skip while loop AND OnExiting)
         //
         // FNA's RunLoop:
         //   if (NeedsPlatformMainLoop()) { RunPlatformMainLoop(this); }
         //   while (RunApplication) { Tick(); }
-        //   OnExiting(...);
+        //   OnExiting(this, EventArgs.Empty);
         //
-        // If RunPlatformMainLoop returns and RunApplication is true, the while
-        // loop blocks the C# thread. By setting RunApplication = false, the
-        // while loop is skipped, RunLoop returns, Run() returns, Program.Main
-        // returns (with Dispose NOP'd), runMain returns to JS.
+        // If we only patch RunPlatformMainLoop, RunLoop continues to while loop
+        // and OnExiting. OnExiting fires SDV's GameRunner.Exiting event which
+        // calls Process.GetCurrentProcess() → PlatformNotSupportedException.
         //
-        // JS then drives frames via requestAnimationFrame → RunOneFrame().
-        // RunOneFrame calls Tick() directly (and DoInitialize if not done).
+        // Fix: Patch RunLoop to return immediately after RunPlatformMainLoop.
+        // Actually, just replace RunLoop's body with just `ret`.
+
+        // === Patch RunPlatformMainLoop: set emscriptenGame, return ===
         var instrs = runMainLoopMethod.Body.Instructions;
         instrs.Clear();
         runMainLoopMethod.Body.ExceptionHandlers.Clear();
 
         // ldstr; call Console.WriteLine
-        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — setting emscriptenGame, RunApplication=false, returning"));
+        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — setting emscriptenGame, returning"));
         instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
 
         // ldarg.0; stsfld emscriptenGame
         instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
         instrs.Add(Instruction.Create(OpCodes.Stsfld, gameField));
-
-        // Set RunApplication = false (it's an internal instance bool field on Game)
-        var gameType = gameField.FieldType;
-        var runAppField = new FieldReference("RunApplication", boolType, gameType);
-
-        // ldarg.0 (game); ldc.i4.0 (false); stfld RunApplication (instance field)
-        instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
-        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
-        instrs.Add(Instruction.Create(OpCodes.Stfld, runAppField));
 
         // ret
         instrs.Add(Instruction.Create(OpCodes.Ret));
@@ -142,7 +151,17 @@ class Program
         runMainLoopMethod.Body.InitLocals = true;
         runMainLoopMethod.Body.MaxStackSize = 2;
 
-        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (set RunApplication=false, return)");
+        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (set emscriptenGame, return)");
+
+        // === Patch RunLoop: just ret (skip everything) ===
+        var runLoopInstrs = runLoopMethod.Body.Instructions;
+        runLoopInstrs.Clear();
+        runLoopMethod.Body.ExceptionHandlers.Clear();
+        runLoopInstrs.Add(Instruction.Create(OpCodes.Ret));
+        runLoopMethod.Body.InitLocals = true;
+        runLoopMethod.Body.MaxStackSize = 1;
+
+        Console.WriteLine("[+] Replaced RunLoop body (just ret — skip while loop and OnExiting)");
 
         // Add a new public static method RunOneFrameJS that JS can call.
         var runOneFrameJsMethod = platformType.Methods.FirstOrDefault(m => m.Name == "RunOneFrameJS");
