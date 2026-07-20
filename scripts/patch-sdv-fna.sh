@@ -216,7 +216,7 @@ cat > "$SRC_DIR/StardewValley.csproj" << CSPROJ
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="/tmp/FNA/FNA.Core.csproj" />
-    <Reference Include="MonoGame.Framework"><HintPath>/tmp/mg-facade-fna/bin/Debug/net8.0/MonoGame.Framework.dll</HintPath></Reference>
+    <Reference Include="MonoGame.Framework"><HintPath>/tmp/mg-facade-fna/bin/Debug/net8.0/MonoGame.Framework.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="xTile"><HintPath>$SDV_DIR/xTile.dll</HintPath></Reference>
     <Reference Include="StardewValley.GameData"><HintPath>$SDV_DIR/StardewValley.GameData.dll</HintPath></Reference>
     <Reference Include="Lidgren.Network"><HintPath>$SDV_DIR/Lidgren.Network.dll</HintPath></Reference>

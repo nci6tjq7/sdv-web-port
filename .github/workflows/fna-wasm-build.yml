@@ -64,7 +64,7 @@ jobs:
           mkdir -p /tmp/mg-facade-fna /tmp/extract-fna-types
           cat > /tmp/mg-facade-fna/MonoGame.Framework.csproj << 'EOF'
           <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><AssemblyName>MonoGame.Framework</AssemblyName><OutputType>Library</OutputType><TargetFramework>net8.0</TargetFramework><Version>3.6.0.862</Version></PropertyGroup>
+            <PropertyGroup><AssemblyName>MonoGame.Framework</AssemblyName><OutputType>Library</OutputType><TargetFramework>net8.0</TargetFramework><Version>3.8.0.1641</Version></PropertyGroup>
             <ItemGroup><ProjectReference Include="/tmp/FNA/FNA.Core.csproj" /></ItemGroup>
           </Project>
           EOF
