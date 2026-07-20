@@ -2572,3 +2572,49 @@ Next Steps:
 - Fix __Native DllNotFoundException (native library P/Invoke table setup)
 - This might require WasmBuildNative configuration changes or r58Playz runtime patches
 - Screenshot saved to download/sdv-progress.png
+
+---
+Task ID: phase14-csharp-driven-main-loop
+Agent: main
+Task: Fix __Native DllNotFoundException and get SDV game loop running
+
+Work Log:
+- Identified root cause: FNA's RunPlatformMainLoop uses [DllImport("__Native")]
+  to call emscripten_set_main_loop, which fails in .NET WASM
+- Tried multiple approaches:
+  1. WasmShellAdditionalPInvokeLibrary __Native — didn't fix (still DllNotFound)
+  2. JSExport RunOneFrame + getAssemblyExports — exports empty, promise hung
+  3. JSImport setMainLoopCallback — callback registered but "Cannot call
+     synchronous C# methods" (threading limitation)
+  4. FINAL: C#-driven loop — RunPlatformMainLoop runs infinite loop:
+     while(emscriptenGame != null) { RunOneFrame(); Thread.Sleep(0); }
+
+- Also patched:
+  - Game.RunLoop to call RunPlatformMainLoop then ret (skip while + OnExiting)
+  - OnExiting was causing PlatformNotSupportedException (Process.GetCurrentProcess)
+
+Stage Summary:
+- ✅ runMain returns 0 (no FATAL, no exceptions)
+- ✅ "[PATCH] RunPlatformMainLoop — C# driven loop" appears in console
+- ✅ Game enters the main loop, RunOneFrame is called
+- ✅ Content loads (LooseSprites/birds, Concessions, TitleButtons, etc.)
+- ✅ No errors in browser console
+- ❌ Canvas is all black (0 non-black pixels in 1280x720)
+- The game IS running but not rendering to the canvas
+
+Hypothesis for black canvas:
+- Canvas was transferred to deputy worker via celeste-wasm sed patch
+- WebGL context might not be set up correctly on the worker
+- OR: the game is still in LoadContent phase (hasn't reached Draw yet)
+- OR: FNA3D OpenGL driver isn't rendering to the transferred canvas
+
+Files:
+- /home/z/my-project/download/sdv-canvas.png — screenshot of canvas (all black)
+- /home/z/my-project/download/sdv-csharp-loop.png — browser screenshot
+
+Next Steps:
+- Check if FNA3D/GraphicsDevice was initialized (look for "FNA3D Driver: OpenGL" log)
+- The console was truncated (1000 lines) — need to check earlier logs
+- May need to verify canvas transfer is working (OffscreenCanvas on worker)
+- Consider: the repeated loading of TitleButtons.xnb suggests LoadImpl doesn't
+  cache results — may need to fix the LoadImpl patch to store in loadedAssets
