@@ -164,6 +164,11 @@ jobs:
           # (not needed for the title screen demo).
           dotnet build scripts/patch-sdv-noemit/patch-sdv-noemit.csproj -c Release -o /tmp/patch-sdv-noemit
           cd "download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0"
+          echo "=== Files in SDV build output ==="
+          ls -la *.dll 2>/dev/null | head -30
+          echo "=== Checking for MonoGame.Framework.dll ==="
+          find . -name "MonoGame.Framework.dll" 2>/dev/null
+          find ../../.. -name "MonoGame.Framework.dll" 2>/dev/null | head -5
           cp "Stardew Valley.dll" "Stardew Valley.orig.dll"
           dotnet /tmp/patch-sdv-noemit/patch-sdv-noemit.dll "Stardew Valley.orig.dll" "Stardew Valley.dll"
           ls -la "Stardew Valley.dll"
