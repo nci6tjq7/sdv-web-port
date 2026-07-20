@@ -126,4 +126,16 @@
     <NativeLibrary Include="$(MSBuildThisFileDirectory)native\libmojoshader.a" />
   </ItemGroup>
 
+  <!--
+    CRITICAL: Register __Native as a P/Invoke library.
+    FNA's SDL3_FNAPlatform.RunPlatformMainLoop uses [DllImport("__Native")]
+    to call emscripten_set_main_loop / emscripten_cancel_main_loop.
+    Without this registration, the .NET WASM runtime throws DllNotFoundException
+    when these P/Invokes are invoked.
+    Pattern from celeste-wasm (MercuryWorkshop/celeste-wasm).
+  -->
+  <ItemGroup>
+    <WasmShellAdditionalPInvokeLibrary Include="__Native" />
+  </ItemGroup>
+
 </Project>
