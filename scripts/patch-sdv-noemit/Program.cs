@@ -565,12 +565,20 @@ class Program
 
             Console.WriteLine($"  [i] Found ContentManager reference: {contentManagerRef.FullName} (from {contentManagerRef.Scope})");
 
-            // DISABLED: Caching requires ContentManager.Resolve() which needs
-            // MonoGame.Framework.dll to be resolvable by Cecil. In CI, this
-            // assembly isn't always in the search path, causing Write() to fail.
-            // The no-cache version works fine (game runs, just with repeated loading).
-            // TODO: Re-enable caching by constructing TryGetValue/set_Item manually.
-            TypeDefinition contentManagerDef = null; // Never resolve — always use no-cache fallback
+            // Resolve the ContentManager type to find the ReadAsset method definition.
+            // With the assembly resolver configured, Cecil can follow type forwarders
+            // from MonoGame.Framework to FNA and find the actual method.
+            // If Resolve() fails (assembly not in search path), fall back to no-cache.
+            TypeDefinition contentManagerDef = null;
+            try
+            {
+                contentManagerDef = contentManagerRef.Resolve();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Could not resolve ContentManager: {ex.Message}");
+                Console.WriteLine("  [!] Falling back to no-cache LoadImpl (ReadAsset only)");
+            }
 
             if (contentManagerDef == null)
             {

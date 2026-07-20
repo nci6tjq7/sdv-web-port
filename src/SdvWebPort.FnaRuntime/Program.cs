@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +resolver parent dirs (49f6034)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +Resolve() re-enabled + MG 3.6 (9e46144)");
 
         try
         {
