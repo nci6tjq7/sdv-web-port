@@ -100,45 +100,37 @@ class Program
         sleepRef.Parameters.Add(new ParameterDefinition(int32Type));
 
         // === APPROACH ===
-        // We can't easily add JSImport methods via Cecil (they need source generators).
-        // Instead, we use a simpler approach:
+        // Don't block. Return immediately from RunPlatformMainLoop.
+        // Game.Run() will return, SDV's Program.Main will hit finally { Dispose() },
+        // and return to our wrapper which blocks in Thread.Sleep(Infinite).
         //
-        // Replace RunPlatformMainLoop body to:
-        // 1. Set emscriptenGame = game
-        // 2. Block forever with Thread.Sleep(Timeout.Infinite) = Thread.Sleep(-1)
+        // The game will be disposed, but emscriptenGame field still holds a ref.
+        // JS will call RunOneFrameJS which checks for null and calls RunOneFrame.
+        // RunOneFrame on a disposed game throws ObjectDisposedException, but
+        // we'll handle that in RunOneFrameJS.
         //
-        // The JS side (main.js) calls SDL3_FNAPlatform.RunOneFrameJS() via
-        // getAssemblyExports each requestAnimationFrame.
-        //
-        // Since WasmEnableThreads=true, the C# main thread (deputy worker) blocks
-        // in Thread.Sleep, but the JS main thread can still call into C#.
-        //
-        // The getAssemblyExports issue we saw might be because Thread.Sleep(1000)
-        // with a loop holds the runtime lock. Thread.Sleep(-1) (Infinite) might
-        // release it properly. Let's try that.
+        // Actually, the disposed game won't render. We need to prevent dispose.
+        // The cleanest way: also patch SDV's Program.Main to NOP the Dispose call.
+        // For now, just return and see what happens.
         var instrs = runMainLoopMethod.Body.Instructions;
         instrs.Clear();
         runMainLoopMethod.Body.ExceptionHandlers.Clear();
 
         // ldstr; call Console.WriteLine
-        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — setting emscriptenGame, blocking with Thread.Sleep(-1)"));
+        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — setting emscriptenGame, returning immediately (no block)"));
         instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
 
         // ldarg.0; stsfld emscriptenGame
         instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
         instrs.Add(Instruction.Create(OpCodes.Stsfld, gameField));
 
-        // Thread.Sleep(-1) — Timeout.Infinite
-        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_M1));  // -1
-        instrs.Add(Instruction.Create(OpCodes.Call, sleepRef));
-
-        // ret (will never reach due to infinite sleep, but IL requires it)
+        // ret
         instrs.Add(Instruction.Create(OpCodes.Ret));
 
         runMainLoopMethod.Body.InitLocals = true;
         runMainLoopMethod.Body.MaxStackSize = 2;
 
-        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (Thread.Sleep(-1))");
+        Console.WriteLine("[+] Replaced RunPlatformMainLoop body (return immediately)");
 
         // Add a new public static method RunOneFrameJS that JS can call.
         var runOneFrameJsMethod = platformType.Methods.FirstOrDefault(m => m.Name == "RunOneFrameJS");

@@ -168,6 +168,10 @@ const SDV = {
             SDV.setMainLoop();
 
             console.log("[SDV] Invoking runMain...");
+            // runMain now returns immediately (RunPlatformMainLoop returns,
+            // Game.Run() returns, Program.Main returns — no dispose, no block).
+            // Runtime stays alive via dotnet.create(). JS drives frames via
+            // requestAnimationFrame → Program.RunOneFrame().
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
             console.log("[SDV] runMain returned:", exitCode);
         } catch (e) {

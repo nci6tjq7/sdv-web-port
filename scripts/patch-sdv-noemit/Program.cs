@@ -107,6 +107,13 @@ class Program
         // This is the nuclear option — skip the manifest check entirely.
         methodsNopped += PatchLoadImplToCallReadAsset(asm);
 
+        // NEW FIX: Patch SDV's Program.Main to remove the finally { Dispose() } block.
+        // When RunPlatformMainLoop returns immediately (instead of blocking), Game.Run()
+        // returns, and Program.Main's finally block disposes the game runner.
+        // This destroys the game before JS can drive frames via RunOneFrame.
+        // Fix: NOP the Dispose call so the game stays alive.
+        methodsNopped += PatchProgramMainRemoveDispose(asm);
+
         // Instead: patch all File.Exists AND File.OpenRead calls in LocalizedContentManager.
         // File.Exists → return true (so asset is considered to exist)
         // File.OpenRead → redirect to HttpTitleContainer.OpenStream (fetch via HTTP)
@@ -632,6 +639,78 @@ class Program
 
             Console.WriteLine($"  [-] REPLACED LoadImpl body: WriteLine(marker) → ReadAsset<!!T>(localizedAssetName, null) → ret");
             return 1;
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Patch SDV's Program.Main to NOP the Dispose call in the finally block.
+    ///
+    /// SDV's Program.Main IL:
+    ///   .try {
+    ///     IL_0031: ldloc.0
+    ///     IL_0032: stsfld GameRunner::instance
+    ///     IL_0037: ldloc.0
+    ///     IL_0038: callvirt Game::Run()
+    ///     IL_003d: leave.s IL_0049
+    ///   } finally {
+    ///     IL_003f: ldloc.0
+    ///     IL_0040: brfalse.s IL_0048
+    ///     IL_0042: ldloc.0
+    ///     IL_0043: callvirt IDisposable::Dispose()  ← NOP this
+    ///     IL_0048: endfinally
+    ///   }
+    ///   IL_0049: ret
+    ///
+    /// When RunPlatformMainLoop returns immediately (patched to not block),
+    /// Game.Run() returns, and the finally block disposes the game runner.
+    /// This destroys the game before JS can drive frames via RunOneFrame.
+    /// Fix: Replace `callvirt IDisposable::Dispose()` with `pop` (consume
+    /// the ldloc.0 on stack) so Dispose is never called.
+    /// </summary>
+    static int PatchProgramMainRemoveDispose(AssemblyDefinition asm)
+    {
+        foreach (var module in asm.Modules)
+        {
+            var programType = module.GetType("StardewValley.Program");
+            if (programType == null)
+            {
+                Console.WriteLine("  [!] StardewValley.Program type not found");
+                continue;
+            }
+
+            var mainMethod = programType.Methods.FirstOrDefault(m => m.Name == "Main");
+            if (mainMethod == null || mainMethod.Body == null)
+            {
+                Console.WriteLine("  [!] Program.Main method not found");
+                continue;
+            }
+
+            Console.WriteLine($"  [i] Found Program.Main: {mainMethod.Body.Instructions.Count} instructions, {mainMethod.Body.ExceptionHandlers.Count} handlers");
+
+            // Find the Dispose call in the finally handler
+            int patched = 0;
+            var instrs = mainMethod.Body.Instructions;
+            for (int i = 0; i < instrs.Count; i++)
+            {
+                var instr = instrs[i];
+                if (instr.OpCode == OpCodes.Callvirt && instr.Operand is MethodReference mr &&
+                    mr.Name == "Dispose" && mr.DeclaringType?.FullName == "System.IDisposable")
+                {
+                    // Replace `callvirt Dispose()` with `pop` (consume the object on stack)
+                    instr.OpCode = OpCodes.Pop;
+                    instr.Operand = null;
+                    patched++;
+                    Console.WriteLine($"  [-] NOP'd IDisposable.Dispose() in Program.Main finally block (replaced with pop)");
+                }
+            }
+
+            if (patched == 0)
+            {
+                Console.WriteLine("  [!] No IDisposable.Dispose() calls found in Program.Main");
+            }
+
+            return patched > 0 ? 1 : 0;
         }
         return 0;
     }

@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +RunPlatformMainLoop Thread.Sleep(-1) + JSExport RunOneFrame (b836143)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: no-block RunPlatformMainLoop + no-Dispose + no-Thread.Sleep (8a76fab)");
 
         try
         {
@@ -47,8 +47,7 @@ public static partial class Program
             OnError(ex.ToString());
         }
 
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Main returned, keeping alive...");
-        Thread.Sleep(Timeout.Infinite);
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Main returned — runtime stays alive via dotnet.create()");
         return 0;
     }
 
