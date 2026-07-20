@@ -184,6 +184,19 @@ jobs:
           dotnet /tmp/patch-fna-tc/patch-fna-titlecontainer.dll "$FNA_DLL" "$SHIM_DLL"
           ls -la "$FNA_DLL"
 
+      - name: Patch FNA RunPlatformMainLoop to use JS main loop (bypass __Native P/Invoke)
+        run: |
+          # FNA's SDL3_FNAPlatform.RunPlatformMainLoop uses [DllImport("__Native")]
+          # to call emscripten_set_main_loop. In .NET WASM, this throws
+          # DllNotFoundException: __Native.
+          # Fix: Replace RunPlatformMainLoop body with an infinite Thread.Sleep loop.
+          # JS side (main.js) drives the game loop via requestAnimationFrame,
+          # calling SDL3_FNAPlatform.RunOneFrameJS() each frame.
+          dotnet build scripts/patch-fna-emscripten-mainloop/patch-fna-emscripten-mainloop.csproj -c Release -o /tmp/patch-fna-ml
+          FNA_DLL="${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll"
+          dotnet /tmp/patch-fna-ml/patch-fna-emscripten-mainloop.dll "$FNA_DLL"
+          ls -la "$FNA_DLL"
+
       - name: Build WASM runtime (no restore - use patched packages)
         run: |
           cd src/SdvWebPort.FnaRuntime

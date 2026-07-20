@@ -153,7 +153,20 @@ const SDV = {
 
             console.log("[SDV] Creating .NET runtime instance...");
             dotnetInstance = await dotnet.create();
+            globalThis.__dotnetInstance = dotnetInstance;
             console.log("[SDV] .NET runtime loaded");
+
+            // Start the JS main loop BEFORE calling runMain.
+            // runMain will call Game.Run() → RunPlatformMainLoop, which now
+            // blocks forever (infinite Thread.Sleep loop). The JS main loop
+            // drives the game via requestAnimationFrame, calling
+            // SDL3_FNAPlatform.RunOneFrameJS() each frame.
+            //
+            // Since WasmEnableThreads=true, runMain runs on a deputy worker
+            // and does NOT block the JS main thread.
+            console.log("[SDV] Starting JS main loop...");
+            SDV.setMainLoop();
+
             console.log("[SDV] Invoking runMain...");
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
             console.log("[SDV] runMain returned:", exitCode);
@@ -224,6 +237,60 @@ const SDV = {
     getManifestJson() {
         console.log('[SDV] getManifestJson called, manifest=' + (globalThis.__manifestJson ? globalThis.__manifestJson.length + ' chars' : 'null'));
         return globalThis.__manifestJson;
+    },
+
+    // Sets up the main game loop using requestAnimationFrame.
+    // Called after dotnet.create() but before runMain().
+    // Replaces the original [DllImport("__Native")] emscripten_set_main_loop
+    // which fails with DllNotFoundException in WASM.
+    //
+    // The loop calls Program.RunOneFrame() (exported via [JSExport]) every frame.
+    // Program.RunOneFrame() calls SDL3_FNAPlatform.RunOneFrameJS() which calls
+    // emscriptenGame.RunOneFrame().
+    setMainLoop() {
+        console.log('[SDV] setMainLoop called — starting requestAnimationFrame loop');
+        if (globalThis.__sdvMainLoopRunning) {
+            console.log('[SDV] Main loop already running');
+            return;
+        }
+        globalThis.__sdvMainLoopRunning = true;
+
+        let runOneFrame = null;
+        function bindRunOneFrame() {
+            try {
+                if (globalThis.__dotnetInstance && globalThis.__dotnetInstance.getAssemblyExports) {
+                    const exports = globalThis.__dotnetInstance.getAssemblyExports("SdvWebPort.FnaRuntime");
+                    if (exports && exports.Program && typeof exports.Program.RunOneFrame === 'function') {
+                        runOneFrame = exports.Program.RunOneFrame;
+                        console.log('[SDV] Bound Program.RunOneFrame via getAssemblyExports');
+                        return true;
+                    }
+                }
+            } catch (e) {
+                // Will retry next frame
+            }
+            return false;
+        }
+
+        let bindAttempts = 0;
+        function frame() {
+            try {
+                if (!runOneFrame) {
+                    bindAttempts++;
+                    if (bindAttempts % 60 === 0) {
+                        console.log('[SDV] Still trying to bind RunOneFrame (attempt ' + bindAttempts + ')');
+                    }
+                    bindRunOneFrame();
+                }
+                if (runOneFrame) {
+                    runOneFrame();
+                }
+            } catch (e) {
+                console.error('[SDV] Main loop error:', e);
+            }
+            requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
     },
 
     // Synchronous fetch for Content files.
