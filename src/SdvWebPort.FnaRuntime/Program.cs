@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +setMainLoopCallback JSImport (e28038b)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: C# driven loop (RunOneFrame + Sleep(0)) (5c8d0a5)");
 
         try
         {
@@ -37,14 +37,14 @@ public static partial class Program
             OnReady();
             Console.WriteLine("[SdvWebPort.FnaRuntime] JS notified");
 
-            // Register the RunOneFrame callback with JS BEFORE booting SDV.
-            // JS will call this callback via requestAnimationFrame each frame.
-            // This replaces FNA's emscripten_set_main_loop P/Invoke.
-            Console.WriteLine("[SdvWebPort.FnaRuntime] Registering RunOneFrame callback with JS...");
-            SetMainLoopCallback(RunOneFrameCallback);
-            Console.WriteLine("[SdvWebPort.FnaRuntime] Callback registered");
-
-            // Boot Stardew Valley
+            // Boot Stardew Valley.
+            // The patched RunPlatformMainLoop runs a C#-driven loop:
+            //   while(true) { emscriptenGame.RunOneFrame(); Thread.Sleep(0); }
+            // This blocks the deputy worker forever, running the game.
+            // No JS callback needed — the loop is entirely C#-driven.
+            // The canvas was transferred to the worker via celeste-wasm sed
+            // patch (transferredCanvasNames=[".canvas"]), so WebGL calls
+            // happen on the worker.
             Console.WriteLine("[SdvWebPort.FnaRuntime] Booting StardewValley.Program.Main...");
             StardewValley.Program.Main(args);
         }
@@ -63,31 +63,4 @@ public static partial class Program
 
     [JSImport("globalThis.SDV.error")]
     public static partial void OnError(string msg);
-
-    [JSImport("globalThis.SDV.setMainLoopCallback")]
-    public static partial void SetMainLoopCallback([JSMarshalAs<JSType.Function>] Action callback);
-
-    /// <summary>
-    /// Called by JS each requestAnimationFrame to run one frame of the game.
-    /// This method is registered as a callback via SetMainLoopCallback.
-    /// </summary>
-    public static void RunOneFrameCallback()
-    {
-        try
-        {
-            // Call SDL3_FNAPlatform.RunOneFrameJS via reflection
-            var fnaAsm = Array.Find(AppDomain.CurrentDomain.GetAssemblies(),
-                a => a.GetName().Name == "FNA");
-            if (fnaAsm == null) return;
-            var platformType = fnaAsm.GetType("Microsoft.Xna.Framework.SDL3_FNAPlatform");
-            if (platformType == null) return;
-            var method = platformType.GetMethod("RunOneFrameJS",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            method?.Invoke(null, null);
-        }
-        catch (Exception e)
-        {
-            Console.Error.WriteLine("[RunOneFrameCallback] Error: " + e);
-        }
-    }
 }

@@ -156,14 +156,13 @@ const SDV = {
             globalThis.__dotnetInstance = dotnetInstance;
             console.log("[SDV] .NET runtime loaded");
 
-            // C# Program.Main will call SDV.setMainLoopCallback(RunOneFrameCallback)
-            // during initialization. JS then drives requestAnimationFrame, calling
-            // the callback each frame. This replaces FNA's emscripten_set_main_loop.
+            // C# Program.Main will block in RunPlatformMainLoop which runs a
+            // C#-driven loop: while(true) { RunOneFrame(); Thread.Sleep(0); }
+            // No JS callback needed — the loop is entirely C#-driven.
+            // The canvas was transferred to the worker via celeste-wasm sed
+            // patch, so WebGL calls happen on the worker.
 
             console.log("[SDV] Invoking runMain...");
-            // runMain now returns immediately (RunLoop patched to ret).
-            // Runtime stays alive via dotnet.create(). JS drives frames via
-            // requestAnimationFrame → callback → RunOneFrameCallback → RunOneFrameJS.
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
             console.log("[SDV] runMain returned:", exitCode);
         } catch (e) {
