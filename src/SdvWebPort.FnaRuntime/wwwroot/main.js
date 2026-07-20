@@ -156,22 +156,14 @@ const SDV = {
             globalThis.__dotnetInstance = dotnetInstance;
             console.log("[SDV] .NET runtime loaded");
 
-            // Start the JS main loop BEFORE calling runMain.
-            // runMain will call Game.Run() → RunPlatformMainLoop, which now
-            // blocks forever (infinite Thread.Sleep loop). The JS main loop
-            // drives the game via requestAnimationFrame, calling
-            // SDL3_FNAPlatform.RunOneFrameJS() each frame.
-            //
-            // Since WasmEnableThreads=true, runMain runs on a deputy worker
-            // and does NOT block the JS main thread.
-            console.log("[SDV] Starting JS main loop...");
-            SDV.setMainLoop();
+            // C# Program.Main will call SDV.setMainLoopCallback(RunOneFrameCallback)
+            // during initialization. JS then drives requestAnimationFrame, calling
+            // the callback each frame. This replaces FNA's emscripten_set_main_loop.
 
             console.log("[SDV] Invoking runMain...");
-            // runMain now returns immediately (RunPlatformMainLoop returns,
-            // Game.Run() returns, Program.Main returns — no dispose, no block).
+            // runMain now returns immediately (RunLoop patched to ret).
             // Runtime stays alive via dotnet.create(). JS drives frames via
-            // requestAnimationFrame → Program.RunOneFrame().
+            // requestAnimationFrame → callback → RunOneFrameCallback → RunOneFrameJS.
             const exitCode = await dotnetInstance.runMain("SdvWebPort.FnaRuntime", []);
             console.log("[SDV] runMain returned:", exitCode);
         } catch (e) {
@@ -244,50 +236,25 @@ const SDV = {
     },
 
     // Sets up the main game loop using requestAnimationFrame.
-    // Called after dotnet.create() but before runMain().
+    // Called by C# (via JSImport) to register a RunOneFrame callback.
     // Replaces the original [DllImport("__Native")] emscripten_set_main_loop
     // which fails with DllNotFoundException in WASM.
     //
-    // The loop calls Program.RunOneFrame() (exported via [JSExport]) every frame.
-    // Program.RunOneFrame() calls SDL3_FNAPlatform.RunOneFrameJS() which calls
-    // emscriptenGame.RunOneFrame().
-    setMainLoop() {
-        console.log('[SDV] setMainLoop called — starting requestAnimationFrame loop');
+    // C# calls SDV.setMainLoopCallback(callback) which stores the callback.
+    // JS then drives requestAnimationFrame, calling the callback each frame.
+    setMainLoopCallback(cb) {
+        console.log('[SDV] setMainLoopCallback called with:', typeof cb);
+        globalThis.__sdvMainLoopCallback = cb;
         if (globalThis.__sdvMainLoopRunning) {
-            console.log('[SDV] Main loop already running');
+            console.log('[SDV] Main loop already running, just registered callback');
             return;
         }
         globalThis.__sdvMainLoopRunning = true;
 
-        let runOneFrame = null;
-        function bindRunOneFrame() {
-            try {
-                if (globalThis.__dotnetInstance && globalThis.__dotnetInstance.getAssemblyExports) {
-                    const exports = globalThis.__dotnetInstance.getAssemblyExports("SdvWebPort.FnaRuntime");
-                    if (exports && exports.Program && typeof exports.Program.RunOneFrame === 'function') {
-                        runOneFrame = exports.Program.RunOneFrame;
-                        console.log('[SDV] Bound Program.RunOneFrame via getAssemblyExports');
-                        return true;
-                    }
-                }
-            } catch (e) {
-                // Will retry next frame
-            }
-            return false;
-        }
-
-        let bindAttempts = 0;
         function frame() {
             try {
-                if (!runOneFrame) {
-                    bindAttempts++;
-                    if (bindAttempts % 60 === 0) {
-                        console.log('[SDV] Still trying to bind RunOneFrame (attempt ' + bindAttempts + ')');
-                    }
-                    bindRunOneFrame();
-                }
-                if (runOneFrame) {
-                    runOneFrame();
+                if (globalThis.__sdvMainLoopCallback) {
+                    globalThis.__sdvMainLoopCallback();
                 }
             } catch (e) {
                 console.error('[SDV] Main loop error:', e);
@@ -295,6 +262,12 @@ const SDV = {
             requestAnimationFrame(frame);
         }
         requestAnimationFrame(frame);
+    },
+
+    // Legacy setMainLoop (unused — kept for backwards compat).
+    // The new approach uses setMainLoopCallback which is called from C#.
+    setMainLoop() {
+        console.log('[SDV] setMainLoop called (legacy, no-op — using setMainLoopCallback)');
     },
 
     // Synchronous fetch for Content files.

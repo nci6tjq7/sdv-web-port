@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +RunLoop ret (skip OnExiting) (bb87001)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: +setMainLoopCallback JSImport (e28038b)");
 
         try
         {
@@ -36,6 +36,13 @@ public static partial class Program
             // Signal JS that we're ready
             OnReady();
             Console.WriteLine("[SdvWebPort.FnaRuntime] JS notified");
+
+            // Register the RunOneFrame callback with JS BEFORE booting SDV.
+            // JS will call this callback via requestAnimationFrame each frame.
+            // This replaces FNA's emscripten_set_main_loop P/Invoke.
+            Console.WriteLine("[SdvWebPort.FnaRuntime] Registering RunOneFrame callback with JS...");
+            SetMainLoopCallback(RunOneFrameCallback);
+            Console.WriteLine("[SdvWebPort.FnaRuntime] Callback registered");
 
             // Boot Stardew Valley
             Console.WriteLine("[SdvWebPort.FnaRuntime] Booting StardewValley.Program.Main...");
@@ -57,49 +64,30 @@ public static partial class Program
     [JSImport("globalThis.SDV.error")]
     public static partial void OnError(string msg);
 
+    [JSImport("globalThis.SDV.setMainLoopCallback")]
+    public static partial void SetMainLoopCallback([JSMarshalAs<JSType.Function>] Action callback);
+
     /// <summary>
-    /// Called by JS (via getAssemblyExports) each frame to run one frame of the game.
-    /// This is the JS-driven main loop, replacing FNA's emscripten_set_main_loop
-    /// P/Invoke which fails with DllNotFoundException: __Native in WASM.
-    ///
-    /// The patched SDL3_FNAPlatform.RunPlatformMainLoop sets emscriptenGame and
-    /// blocks forever (Thread.Sleep loop). JS calls this method via
-    /// dotnetInstance.getAssemblyExports("SdvWebPort.FnaRuntime").Program.RunOneFrame()
-    /// every requestAnimationFrame.
+    /// Called by JS each requestAnimationFrame to run one frame of the game.
+    /// This method is registered as a callback via SetMainLoopCallback.
     /// </summary>
-    [JSExport]
-    public static void RunOneFrame()
+    public static void RunOneFrameCallback()
     {
         try
         {
-            // Call SDL3_FNAPlatform.RunOneFrameJS which calls emscriptenGame.RunOneFrame()
-            // We use reflection to avoid a hard dependency on FNA internals at compile time.
-            // The patched FNA.dll has RunOneFrameJS as a public static method.
+            // Call SDL3_FNAPlatform.RunOneFrameJS via reflection
             var fnaAsm = Array.Find(AppDomain.CurrentDomain.GetAssemblies(),
                 a => a.GetName().Name == "FNA");
-            if (fnaAsm == null)
-            {
-                Console.Error.WriteLine("[Program.RunOneFrame] FNA assembly not found");
-                return;
-            }
+            if (fnaAsm == null) return;
             var platformType = fnaAsm.GetType("Microsoft.Xna.Framework.SDL3_FNAPlatform");
-            if (platformType == null)
-            {
-                Console.Error.WriteLine("[Program.RunOneFrame] SDL3_FNAPlatform type not found");
-                return;
-            }
+            if (platformType == null) return;
             var method = platformType.GetMethod("RunOneFrameJS",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            if (method == null)
-            {
-                Console.Error.WriteLine("[Program.RunOneFrame] RunOneFrameJS method not found");
-                return;
-            }
-            method.Invoke(null, null);
+            method?.Invoke(null, null);
         }
         catch (Exception e)
         {
-            Console.Error.WriteLine("[Program.RunOneFrame] Error: " + e);
+            Console.Error.WriteLine("[RunOneFrameCallback] Error: " + e);
         }
     }
 }
