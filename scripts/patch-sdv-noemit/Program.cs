@@ -519,6 +519,10 @@ class Program
 
             Console.WriteLine($"  [i] Found LoadImpl: {loadImplMethod.Body.Instructions.Count} instructions, {loadImplMethod.GenericParameters.Count} generic params");
 
+            // Type references needed for method body construction
+            var stringType = module.TypeSystem.String;
+            var voidType = module.TypeSystem.Void;
+
             // Find the ContentManager.ReadAsset method reference.
             // ReadAsset is: protected virtual T ReadAsset<T>(string assetName, Action<IDisposable> recordDisposableObject)
             // We need to find it in the module's type references.
@@ -543,6 +547,7 @@ class Program
             // Resolve the ContentManager type to find the ReadAsset method definition.
             // With the assembly resolver configured, Cecil can follow type forwarders
             // from MonoGame.Framework to FNA and find the actual method.
+            // If Resolve() fails (assembly not in search path), fall back to no-cache.
             TypeDefinition contentManagerDef = null;
             try
             {
@@ -551,13 +556,34 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"  [!] Could not resolve ContentManager: {ex.Message}");
-                return 0;
+                Console.WriteLine("  [!] Falling back to no-cache LoadImpl (ReadAsset only)");
             }
 
             if (contentManagerDef == null)
             {
-                Console.WriteLine("  [!] ContentManager.Resolve() returned null");
-                return 0;
+                // Fallback: no caching, just ReadAsset
+                var tParam0 = loadImplMethod.GenericParameters[0];
+                var readAssetRef0 = new MethodReference("ReadAsset", tParam0, contentManagerRef)
+                {
+                    HasThis = true,
+                };
+                readAssetRef0.Parameters.Add(new ParameterDefinition(stringType));
+                readAssetRef0.Parameters.Add(new ParameterDefinition(new TypeReference("System", "Action`1", module, module.TypeSystem.CoreLibrary)));
+                var readAssetGeneric0 = new GenericInstanceMethod(readAssetRef0);
+                readAssetGeneric0.GenericArguments.Add(tParam0);
+
+                var instrs0 = loadImplMethod.Body.Instructions;
+                instrs0.Clear();
+                loadImplMethod.Body.ExceptionHandlers.Clear();
+                instrs0.Add(Instruction.Create(OpCodes.Ldarg_0));
+                instrs0.Add(Instruction.Create(OpCodes.Ldarg_2));
+                instrs0.Add(Instruction.Create(OpCodes.Ldnull));
+                instrs0.Add(Instruction.Create(OpCodes.Call, readAssetGeneric0));
+                instrs0.Add(Instruction.Create(OpCodes.Ret));
+                loadImplMethod.Body.InitLocals = true;
+                loadImplMethod.Body.MaxStackSize = 4;
+                Console.WriteLine("  [-] REPLACED LoadImpl body (no cache fallback): ReadAsset only");
+                return 1;
             }
 
             // Find the ReadAsset method in ContentManager
@@ -606,8 +632,6 @@ class Program
                 consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
                 Console.WriteLine("  [!] System.Console not found in type refs, using fallback");
             }
-            var stringType = module.TypeSystem.String;
-            var voidType = module.TypeSystem.Void;
             var writeLineRef = new MethodReference("WriteLine", voidType, consoleType)
             {
                 HasThis = false,
