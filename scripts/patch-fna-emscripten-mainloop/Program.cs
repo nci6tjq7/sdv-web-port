@@ -167,7 +167,6 @@ class Program
         //   ldsfld emscriptenGame
         //   callvirt Game.RunOneFrame()
         //   ret
-        var gameType = gameField.FieldType;
         var runOneFrameRef = new MethodReference("RunOneFrame", voidType, gameType)
         {
             HasThis = true,
