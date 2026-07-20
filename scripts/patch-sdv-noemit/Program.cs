@@ -31,27 +31,6 @@ class Program
         {
             resolver.AddSearchDirectory(inputDir);
             Console.WriteLine($"[+] Assembly search directory: {inputDir}");
-            // Also add parent directories (artifact root may contain MonoGame.Framework.dll)
-            var parentDir = Path.GetDirectoryName(inputDir.TrimEnd('/'));
-            if (!string.IsNullOrEmpty(parentDir) && Directory.Exists(parentDir))
-            {
-                resolver.AddSearchDirectory(parentDir);
-                Console.WriteLine($"[+] Assembly search directory: {parentDir}");
-                // And grandparent (download/sdv-fna-build/)
-                var grandparentDir = Path.GetDirectoryName(parentDir.TrimEnd('/'));
-                if (!string.IsNullOrEmpty(grandparentDir) && Directory.Exists(grandparentDir))
-                {
-                    resolver.AddSearchDirectory(grandparentDir);
-                    Console.WriteLine($"[+] Assembly search directory: {grandparentDir}");
-                }
-            }
-        }
-
-        // Also add .NET runtime directories (for System.* assemblies)
-        var dotnetDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
-        if (!string.IsNullOrEmpty(dotnetDir))
-        {
-            resolver.AddSearchDirectory(dotnetDir);
         }
         var asmBytes = File.ReadAllBytes(inputPath);
         var asm = AssemblyDefinition.ReadAssembly(new MemoryStream(asmBytes), new ReaderParameters
@@ -540,10 +519,6 @@ class Program
 
             Console.WriteLine($"  [i] Found LoadImpl: {loadImplMethod.Body.Instructions.Count} instructions, {loadImplMethod.GenericParameters.Count} generic params");
 
-            // Type references needed for method body construction
-            var stringType = module.TypeSystem.String;
-            var voidType = module.TypeSystem.Void;
-
             // Find the ContentManager.ReadAsset method reference.
             // ReadAsset is: protected virtual T ReadAsset<T>(string assetName, Action<IDisposable> recordDisposableObject)
             // We need to find it in the module's type references.
@@ -568,7 +543,6 @@ class Program
             // Resolve the ContentManager type to find the ReadAsset method definition.
             // With the assembly resolver configured, Cecil can follow type forwarders
             // from MonoGame.Framework to FNA and find the actual method.
-            // If Resolve() fails (assembly not in search path), fall back to no-cache.
             TypeDefinition contentManagerDef = null;
             try
             {
@@ -577,34 +551,13 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"  [!] Could not resolve ContentManager: {ex.Message}");
-                Console.WriteLine("  [!] Falling back to no-cache LoadImpl (ReadAsset only)");
+                return 0;
             }
 
             if (contentManagerDef == null)
             {
-                // Fallback: no caching, just ReadAsset
-                var tParam0 = loadImplMethod.GenericParameters[0];
-                var readAssetRef0 = new MethodReference("ReadAsset", tParam0, contentManagerRef)
-                {
-                    HasThis = true,
-                };
-                readAssetRef0.Parameters.Add(new ParameterDefinition(stringType));
-                readAssetRef0.Parameters.Add(new ParameterDefinition(new TypeReference("System", "Action`1", module, module.TypeSystem.CoreLibrary)));
-                var readAssetGeneric0 = new GenericInstanceMethod(readAssetRef0);
-                readAssetGeneric0.GenericArguments.Add(tParam0);
-
-                var instrs0 = loadImplMethod.Body.Instructions;
-                instrs0.Clear();
-                loadImplMethod.Body.ExceptionHandlers.Clear();
-                instrs0.Add(Instruction.Create(OpCodes.Ldarg_0));
-                instrs0.Add(Instruction.Create(OpCodes.Ldarg_2));
-                instrs0.Add(Instruction.Create(OpCodes.Ldnull));
-                instrs0.Add(Instruction.Create(OpCodes.Call, readAssetGeneric0));
-                instrs0.Add(Instruction.Create(OpCodes.Ret));
-                loadImplMethod.Body.InitLocals = true;
-                loadImplMethod.Body.MaxStackSize = 4;
-                Console.WriteLine("  [-] REPLACED LoadImpl body (no cache fallback): ReadAsset only");
-                return 1;
+                Console.WriteLine("  [!] ContentManager.Resolve() returned null");
+                return 0;
             }
 
             // Find the ReadAsset method in ContentManager
@@ -653,155 +606,38 @@ class Program
                 consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
                 Console.WriteLine("  [!] System.Console not found in type refs, using fallback");
             }
+            var stringType = module.TypeSystem.String;
+            var voidType = module.TypeSystem.Void;
             var writeLineRef = new MethodReference("WriteLine", voidType, consoleType)
             {
                 HasThis = false,
             };
             writeLineRef.Parameters.Add(new ParameterDefinition(stringType));
 
-            // Find the loadedAssets field on ContentManager (private Dictionary<string, object>)
-            var loadedAssetsField = contentManagerDef.Fields.FirstOrDefault(f => f.Name == "loadedAssets");
-            if (loadedAssetsField == null)
-            {
-                Console.WriteLine("  [!] loadedAssets field not found on ContentManager");
-                // Continue without caching — just call ReadAsset directly
-            }
-            else
-            {
-                Console.WriteLine($"  [i] Found loadedAssets field: {loadedAssetsField.FieldType.FullName}");
-            }
-
-            // REPLACE THE ENTIRE METHOD BODY with caching logic:
-            //
-            // if (loadedAssets.TryGetValue(localizedAssetName, out var cached))
-            //     return (T)cached;
-            // var result = ReadAsset<T>(localizedAssetName, null);
-            // loadedAssets[localizedAssetName] = result;
-            // return result;
-            //
-            // IL:
-            //   ldarg.0                          // this
-            //   ldfld loadedAssets               // Dictionary<string, object>
-            //   ldarg.2                          // localizedAssetName
-            //   ldloca.s 0                       // &local0 (out object)
-            //   callvirt Dictionary.TryGetValue
-            //   brfalse NotCached
-            //   ldloc.0                          // cached object
-            //   castclass !!T                    // (T)cached  (or unbox.any for value types)
+            // REPLACE THE ENTIRE METHOD BODY with:
+            //   ldstr "[PATCH] LoadImpl → ReadAsset direct"
+            //   call Console.WriteLine
+            //   ldarg.0          // this
+            //   ldarg.2          // localizedAssetName (string)
+            //   ldnull           // null for Action<IDisposable>
+            //   call ContentManager.ReadAsset<!!T>(string, Action<IDisposable>)
             //   ret
-            // NotCached:
-            //   ldarg.0                          // this
-            //   ldarg.2                          // localizedAssetName
-            //   ldnull                           // null Action<IDisposable>
-            //   call ReadAsset<!!T>
-            //   stloc.1                          // result
-            //   ldarg.0
-            //   ldfld loadedAssets
-            //   ldarg.2
-            //   ldloc.1
-            //   box !!T                          // box if value type
-            //   callvirt Dictionary.set_Item
-            //   ldloc.1
-            //   ret
-
             var instrs = loadImplMethod.Body.Instructions;
             instrs.Clear();
             loadImplMethod.Body.ExceptionHandlers.Clear();
 
-            if (loadedAssetsField == null)
-            {
-                // Fallback: just call ReadAsset without caching
-                instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset (no cache)"));
-                instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
-                instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
-                instrs.Add(Instruction.Create(OpCodes.Ldarg_2));
-                instrs.Add(Instruction.Create(OpCodes.Ldnull));
-                instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
-                instrs.Add(Instruction.Create(OpCodes.Ret));
-                loadImplMethod.Body.InitLocals = true;
-                loadImplMethod.Body.MaxStackSize = 4;
-                Console.WriteLine("  [-] REPLACED LoadImpl body (no cache): ReadAsset only");
-                return 1;
-            }
-
-            // With caching
-            // Need: Dictionary.TryGetValue(string, out object) → bool
-            // And: Dictionary.set_Item(string, object) → void
-            var dictType = loadedAssetsField.FieldType;
-            // Find TryGetValue and set_Item methods on Dictionary<string, object>
-            // We can construct them manually
-            var objectType = new TypeReference("System", "Object", module, module.TypeSystem.CoreLibrary);
-            var boolRef2 = module.TypeSystem.Boolean;
-
-            // TryGetValue(string, out object) → bool
-            var tryGetValueRef = new MethodReference("TryGetValue", boolRef2, dictType)
-            {
-                HasThis = true,
-            };
-            tryGetValueRef.Parameters.Add(new ParameterDefinition(stringType));
-            var outParam = new ParameterDefinition(new ByReferenceType(objectType));
-            outParam.IsOut = true;
-            tryGetValueRef.Parameters.Add(outParam);
-
-            // set_Item(string, object) → void
-            var setItemRef = new MethodReference("set_Item", voidType, dictType)
-            {
-                HasThis = true,
-            };
-            setItemRef.Parameters.Add(new ParameterDefinition(stringType));
-            setItemRef.Parameters.Add(new ParameterDefinition(objectType));
-
-            // Declare locals:
-            // [0] object (cached value from TryGetValue)
-            // [1] !!T (result from ReadAsset)
-            var cachedObjVar = new VariableDefinition(objectType);
-            var resultVar = new VariableDefinition(tParam);
-            loadImplMethod.Body.Variables.Add(cachedObjVar);
-            loadImplMethod.Body.Variables.Add(resultVar);
-
-            // IL:
-            var notCachedLabel = Instruction.Create(OpCodes.Nop);
-
-            // Check cache: this.loadedAssets.TryGetValue(name, out cached)
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));       // this
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, loadedAssetsField));  // Dictionary
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));        // localizedAssetName
-            instrs.Add(Instruction.Create(OpCodes.Ldloca_S, cachedObjVar));   // &cached
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, tryGetValueRef)); // → bool
-            instrs.Add(Instruction.Create(OpCodes.Brfalse_S, notCachedLabel)); // if false, not cached
-
-            // Cached: return (T)cached
-            // For reference types: castclass !!T
-            // For value types: unbox.any !!T
-            // We don't know at IL time, so use castclass (works for both via type constraint)
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));       // cached object
-            instrs.Add(Instruction.Create(OpCodes.Unbox_Any, tParam));  // (T)cached — works for both
-            instrs.Add(Instruction.Create(OpCodes.Ret));
-
-            // NotCached: result = ReadAsset<T>(name, null)
-            instrs.Add(notCachedLabel);
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));       // this
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));        // localizedAssetName
-            instrs.Add(Instruction.Create(OpCodes.Ldnull));        // null
-            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric)); // → !!T
-            instrs.Add(Instruction.Create(OpCodes.Stloc_1));       // result = ...
-
-            // Cache: this.loadedAssets[name] = (object)result
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));       // this
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, loadedAssetsField));  // Dictionary
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));       // name
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));       // result
-            instrs.Add(Instruction.Create(OpCodes.Box, tParam));   // (object)result
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, setItemRef)); // set_Item
-
-            // return result
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset direct (bypassing DoesAssetExist + virtual Load)"));
+            instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));
+            instrs.Add(Instruction.Create(OpCodes.Ldnull));
+            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
             instrs.Add(Instruction.Create(OpCodes.Ret));
 
             loadImplMethod.Body.InitLocals = true;
             loadImplMethod.Body.MaxStackSize = 4;
 
-            Console.WriteLine("  [-] REPLACED LoadImpl body with caching: TryGetValue → ReadAsset → set_Item → ret");
+            Console.WriteLine($"  [-] REPLACED LoadImpl body: WriteLine(marker) → ReadAsset<!!T>(localizedAssetName, null) → ret");
             return 1;
         }
         return 0;
