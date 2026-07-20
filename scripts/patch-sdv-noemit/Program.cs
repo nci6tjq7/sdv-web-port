@@ -31,6 +31,20 @@ class Program
         {
             resolver.AddSearchDirectory(inputDir);
             Console.WriteLine($"[+] Assembly search directory: {inputDir}");
+            // Also add parent directories (artifact root may contain MonoGame.Framework.dll)
+            var parentDir = Path.GetDirectoryName(inputDir.TrimEnd('/'));
+            if (!string.IsNullOrEmpty(parentDir) && Directory.Exists(parentDir))
+            {
+                resolver.AddSearchDirectory(parentDir);
+                Console.WriteLine($"[+] Assembly search directory: {parentDir}");
+                // And grandparent (download/sdv-fna-build/)
+                var grandparentDir = Path.GetDirectoryName(parentDir.TrimEnd('/'));
+                if (!string.IsNullOrEmpty(grandparentDir) && Directory.Exists(grandparentDir))
+                {
+                    resolver.AddSearchDirectory(grandparentDir);
+                    Console.WriteLine($"[+] Assembly search directory: {grandparentDir}");
+                }
+            }
         }
         var asmBytes = File.ReadAllBytes(inputPath);
         var asm = AssemblyDefinition.ReadAssembly(new MemoryStream(asmBytes), new ReaderParameters
