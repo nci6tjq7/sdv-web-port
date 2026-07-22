@@ -137,14 +137,13 @@ jobs:
 
       - name: Patch FNA for HTTP Content loading
         run: |
-          # Use the Mono.Cecil patcher tool (scripts/patch-fna-titlecontainer).
-          # This patches:
-          # 1. TitleContainer.OpenStream → HttpTitleContainer.OpenStream (cross-assembly)
-          # 2. ContentManager File.Exists → true (bypass file existence check)
-          # 3. TitleContainer.Location property (already in source, will skip)
+          set -x
           dotnet build scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj -c Release -o /tmp/patch-fna-tc
           cd src/SdvWebPort.FnaRuntime
-          dotnet build -c Release
+          echo "=== Files in artifact dir ==="
+          ls -la ${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/*.dll 2>&1 | head -20
+          echo "=== dotnet build ==="
+          dotnet build -c Release 2>&1 || { echo "BUILD FAILED WITH EXIT CODE $?"; exit 1; }
           SHIM_DLL="${{ github.workspace }}/src/SdvWebPort.FnaRuntime/bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
           FNA_DLL="${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll"
           echo "Patching: $FNA_DLL"
