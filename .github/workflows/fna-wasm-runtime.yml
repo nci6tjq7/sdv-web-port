@@ -82,8 +82,10 @@ jobs:
           fi
           ls -la download/fnalibs/
 
-      - name: Restore NuGet packages
+      - name: Restore NuGet packages + install WASM workload
         run: |
+          # Install WASM workload (might be missing on updated runner)
+          dotnet workload install wasm-tools 2>/dev/null || true
           cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
           dotnet restore
 
