@@ -90,23 +90,6 @@
         <canvas id="canvas" class="canvas" width="1280" height="720"></canvas>
         <div id="error-log"></div>
     </div>
-    <!-- Service Worker for COOP/COEP headers (required for SharedArrayBuffer/threads).
-         SW adds CORP header to /deps/ responses for COEP compliance. -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('./coop-coep-sw.js').then(function(reg) {
-                    if (!navigator.serviceWorker.controller) {
-                        navigator.serviceWorker.ready.then(function() {
-                            window.location.reload();
-                        });
-                    }
-                }).catch(function(e) {
-                    console.error('[SDV] SW registration failed:', e);
-                });
-            });
-        }
-    </script>
     <!-- Microsoft.NET.Sdk.WebAssembly generates dotnet.js -->
     <script type="module" src="main.js"></script>
 </body>
