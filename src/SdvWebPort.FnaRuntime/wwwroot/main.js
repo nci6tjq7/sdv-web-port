@@ -14,7 +14,26 @@ const SDV = {
     async init() {
         console.log("[SDV] Initializing runtime...");
 
-        // No SW needed (single-threaded mode)
+        // CRITICAL: Wait for Service Worker to be active before proceeding.
+        // The .NET WASM runtime (threaded mode) requires SharedArrayBuffer,
+        // which requires COOP/COEP headers. On GitHub Pages, these headers
+        // are injected by our Service Worker (coop-coep-sw.js).
+        //
+        // Race condition: main.js (ES module) can execute before the SW
+        // is active. If we start the .NET runtime before COOP/COEP is set,
+        // dotnet.create() will fail with "SharedArrayBuffer is not enabled".
+        //
+        // Fix: wait for navigator.serviceWorker.ready, then check
+        // crossOriginIsolated. If still false after SW ready, reload the
+        // page (the SW will intercept the reload and add COOP/COEP headers).
+        if ('serviceWorker' in navigator) {
+            console.log("[SDV] Waiting for Service Worker to be ready...");
+            try {
+                await navigator.serviceWorker.ready;
+                console.log("[SDV] Service Worker is ready.");
+            } catch (e) {
+                console.warn("[SDV] SW ready failed:", e.message);
+            }
 
             if (!window.crossOriginIsolated) {
                 console.log("[SDV] crossOriginIsolated=false after SW ready. Reloading page to activate COOP/COEP...");

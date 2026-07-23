@@ -82,23 +82,48 @@ jobs:
           fi
           ls -la download/fnalibs/
 
-      - name: Restore + install WasmAppBuilder patch (single-threaded)
+      - name: Download and install patched .NET runtime from r58Playz (threaded)
         run: |
-          # 1. Restore NuGet packages (creates package cache)
-          cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
-          dotnet restore
-
-          # 2. Download r58Playz package (only need WasmAppBuilder.dll)
+          # Install patched runtime for threaded WASM support.
+          # r58Playz's runtime includes:
+          # 1. Microsoft.NETCore.App.Runtime.Mono.multithread.browser-wasm (threaded)
+          # 2. WasmAppBuilder.dll with PInvokeTableGenerator fix
           mkdir -p download/dotnet-patched
           RELEASE="37a2ca3d-6f0d-4d76-91f7-d23f0ca7121b"
           curl -sL "https://github.com/r58Playz/FNA-WASM-Build/releases/download/${RELEASE}/dotnet.zip" -o download/dotnet-patched/dotnet.zip
           cd download/dotnet-patched && unzip -q dotnet.zip
-          cd ${{ github.workspace }}
 
-          # 3. Replace WasmAppBuilder.dll AFTER restore (so it's not overwritten)
-          find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp download/dotnet-patched/tasks/net10.0/WasmAppBuilder.dll {} \; 2>/dev/null
-          find /home/runner/.nuget/packages -name "WasmAppBuilder.dll" -exec cp download/dotnet-patched/tasks/net10.0/WasmAppBuilder.dll {} \; 2>/dev/null
-          echo "Installed WasmAppBuilder.dll patch AFTER restore"
+          # 1. Replace WasmAppBuilder.dll
+          find /usr/share/dotnet/packs -name "WasmAppBuilder.dll" -exec cp tasks/net10.0/WasmAppBuilder.dll {} \;
+
+          # 2. Restore NuGet packages
+          cd ${{ github.workspace }}/src/SdvWebPort.FnaRuntime
+          dotnet restore 2>/dev/null || true
+
+          # 3. Replace native/ and lib/ directories
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
+            echo "Replacing native: $dir"
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+          done
+          find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
+            echo "Replacing lib: $dir"
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
+          done
+
+          # 4. Also replace SDK pack runtime
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+          done
+          find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
+            rm -rf "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
+          done
+
+          echo "=== Verify patched libmonosgen ==="
+          find /home/runner/.nuget -name "libmonosgen-2.0.a" -exec ls -la {} \; 2>/dev/null | head -3
 
       - name: Copy native libs to runtime project
         run: |
@@ -150,13 +175,14 @@ jobs:
 
       - name: Patch FNA for HTTP Content loading
         run: |
-          set -x
+          # Use the Mono.Cecil patcher tool (scripts/patch-fna-titlecontainer).
+          # This patches:
+          # 1. TitleContainer.OpenStream → HttpTitleContainer.OpenStream (cross-assembly)
+          # 2. ContentManager File.Exists → true (bypass file existence check)
+          # 3. TitleContainer.Location property (already in source, will skip)
           dotnet build scripts/patch-fna-titlecontainer/patch-fna-titlecontainer.csproj -c Release -o /tmp/patch-fna-tc
           cd src/SdvWebPort.FnaRuntime
-          echo "=== Files in artifact dir ==="
-          ls -la ${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/*.dll 2>&1 | head -20
-          echo "=== dotnet build --no-restore ==="
-          dotnet build -c Release --no-restore 2>&1 || { echo "BUILD FAILED WITH EXIT CODE $?"; exit 1; }
+          dotnet build -c Release
           SHIM_DLL="${{ github.workspace }}/src/SdvWebPort.FnaRuntime/bin/Release/net10.0/SdvWebPort.FnaRuntime.dll"
           FNA_DLL="${{ github.workspace }}/download/sdv-fna-build/sdv-fna-src/bin/Debug/net8.0/FNA.dll"
           echo "Patching: $FNA_DLL"
@@ -189,8 +215,24 @@ jobs:
           echo "=== WASM bundle size ==="
           du -sh /tmp/wasm-publish/wwwroot/
 
-      - name: Skip canvas transfer (single-threaded)
-        run: echo "No canvas transfer needed"
+      - name: Patch dotnet.native.js for canvas transfer (celeste-wasm 1-line sed)
+        run: |
+          # Celeste-wasm pattern (research-10): inject transferredCanvasNames=[".canvas"]
+          # right after 'var offscreenCanvases = {};' in dotnet.native.*.js.
+          # This tells emscripten's pthread bootstrap to automatically transfer
+          # the canvas element (matched by CSS class "canvas") to the deputy worker.
+          # The canvas must have class="canvas" in index.html (already set).
+          #
+          # This is much simpler than our previous 250-line patch-canvas-transfer.py
+          # and is the proven approach from celeste-wasm.
+          cd /tmp/wasm-publish/wwwroot/_framework
+          echo "=== Before patch ==="
+          grep -c "transferredCanvasNames" dotnet.native.*.js || echo "(not found)"
+          sed -i 's/var offscreenCanvases \?= \?{};/var offscreenCanvases={};if(globalThis.window\&\&!window.TRANSFERRED_CANVAS){transferredCanvasNames=[".canvas"];window.TRANSFERRED_CANVAS=true;}/' dotnet.native.*.js
+          echo "=== After patch ==="
+          grep -c "transferredCanvasNames" dotnet.native.*.js
+          echo "=== Verify ==="
+          grep -o "transferredCanvasNames=\[\".canvas\"\]" dotnet.native.*.js | head -1
 
       - name: Download SDV Content files (if available)
         env:

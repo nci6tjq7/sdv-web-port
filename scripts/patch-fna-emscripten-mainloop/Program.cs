@@ -132,13 +132,13 @@ class Program
         //   Loop:
         //     if (emscriptenGame == null) goto EndLoop
         //     emscriptenGame.RunOneFrame()
-        //     Thread.Sleep(0)  // yield to other threads/JS
+        //     Thread.Sleep(16)  // yield to other threads/JS
         //     goto Loop
         //   EndLoop:
         //     ret
         //
         // This blocks the C# main thread (deputy worker) forever,
-        // running RunOneFrame each iteration. Thread.Sleep(0) yields
+        // running RunOneFrame each iteration. Thread.Sleep(16) yields
         // so the worker doesn't monopolize the CPU.
         //
         // The canvas was transferred to the worker via the celeste-wasm
@@ -150,7 +150,7 @@ class Program
         runMainLoopMethod.Body.ExceptionHandlers.Clear();
 
         // ldstr; call Console.WriteLine
-        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — C# driven loop (RunOneFrame + Sleep(0))"));
+        instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] RunPlatformMainLoop — C# driven loop (RunOneFrame + Sleep(16))"));
         instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
 
         // ldarg.0; stsfld emscriptenGame
@@ -170,8 +170,8 @@ class Program
         instrs.Add(Instruction.Create(OpCodes.Ldsfld, gameField));
         instrs.Add(Instruction.Create(OpCodes.Callvirt, runOneFrameRef));
 
-        // Thread.Sleep(0)
-        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_0));
+        // Thread.Sleep(16)
+        instrs.Add(Instruction.Create(OpCodes.Ldc_I4_S, (sbyte)16));
         instrs.Add(Instruction.Create(OpCodes.Call, sleepRef));
 
         // goto Loop
