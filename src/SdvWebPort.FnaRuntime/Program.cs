@@ -22,7 +22,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley (FNA WASM, XMLHttpRequest Content loading)...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: SINGLE-THREADED clean (no r58Playz, no SW, no threads)");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: retry after syntax fix (91eb6cc)");
 
         try
         {
