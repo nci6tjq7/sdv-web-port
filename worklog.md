@@ -2618,3 +2618,30 @@ Next Steps:
 - May need to verify canvas transfer is working (OffscreenCanvas on worker)
 - Consider: the repeated loading of TitleButtons.xnb suggests LoadImpl doesn't
   cache results — may need to fix the LoadImpl patch to store in loadedAssets
+
+---
+Task ID: phase16-BREAKTHROUGH-RENDERING
+Agent: main
+Task: Fix black canvas — SDV IS NOW RENDERING!
+
+Work Log:
+- Identified root cause of CI failures: missing closing `");` in Program.cs
+  (C# syntax error from a sed command)
+- After fixing syntax, CI still failed because Runtime Build ran in parallel
+  with FNA WASM Build, downloading old artifact
+- Restored exact f89e53d configuration (known working threaded mode)
+- ONLY change: Thread.Sleep(0) → Thread.Sleep(16) in FNA patcher
+
+Stage Summary:
+- ✅ CI builds succeed (76540c4)
+- ✅ [PATCH] RunPlatformMainLoop — C# driven loop (RunOneFrame + Sleep(16))
+- ✅ Game loads content (BigCraftables, Objects, TitleButtons, etc.)
+- ✅ Main loop runs (RunOneFrame called each iteration)
+- ✅ CANVAS IS RENDERING! 100% non-black pixels (921600/921600)
+- ✅ Average RGB: (141, 154, 160) — blue/gray tones (likely title screen sky)
+- ⚠️ "memory access out of bounds" error from worker (non-fatal, game continues)
+- The game IS displaying something! This is the FIRST time we see actual pixels!
+
+Files:
+- /home/z/my-project/download/sdv-sleep16-test.png — canvas screenshot (rendering!)
+- /home/z/my-project/download/sdv-rendering.png — browser screenshot
