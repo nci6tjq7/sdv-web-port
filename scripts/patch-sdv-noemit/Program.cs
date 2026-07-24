@@ -687,25 +687,21 @@ class Program
             var loadedAssetsImported = module.ImportReference(loadedAssetsField);
 
             // Dictionary methods: ContainsKey(string) → bool, get_Item(string) → object, set_Item(string, object) → void
+            // Must import these from the dictType's module (they're declared in mscorlib/System.Collections)
             var dictType = loadedAssetsField.FieldType;
-            var boolType = module.TypeSystem.Boolean;
-            var objectType = new TypeReference("System", "Object", module, module.TypeSystem.CoreLibrary);
+            var dictDef = dictType.Resolve();
+            var containsKeyDef = dictDef.Methods.First(m => m.Name == "ContainsKey" && m.Parameters.Count == 1);
+            var getItemDef = dictDef.Methods.First(m => m.Name == "get_Item" && m.Parameters.Count == 1);
+            var setItemDef = dictDef.Methods.First(m => m.Name == "set_Item" && m.Parameters.Count == 2);
 
-            var containsKeyRef = new MethodReference("ContainsKey", boolType, dictType) { HasThis = true };
-            containsKeyRef.Parameters.Add(new ParameterDefinition(stringType));
+            var containsKeyRef = module.ImportReference(containsKeyDef);
+            var getItemRef = module.ImportReference(getItemDef);
+            var setItemRef = module.ImportReference(setItemDef);
 
-            var getItemRef = new MethodReference("get_Item", objectType, dictType) { HasThis = true };
-            getItemRef.Parameters.Add(new ParameterDefinition(stringType));
-
-            var setItemRef = new MethodReference("set_Item", voidType, dictType) { HasThis = true };
-            setItemRef.Parameters.Add(new ParameterDefinition(stringType));
-            setItemRef.Parameters.Add(new ParameterDefinition(objectType));
-
-            // String.Replace(char, char) → string
-            var charType = module.TypeSystem.Char;
-            var replaceRef = new MethodReference("Replace", stringType, stringType) { HasThis = true };
-            replaceRef.Parameters.Add(new ParameterDefinition(charType));
-            replaceRef.Parameters.Add(new ParameterDefinition(charType));
+            // String.Replace(char, char) → string — import from String type
+            var stringDef = stringType.Resolve();
+            var replaceDef = stringDef.Methods.First(m => m.Name == "Replace" && m.Parameters.Count == 2 && m.Parameters[0].ParameterType.Name == "Char");
+            var replaceRef = module.ImportReference(replaceDef);
 
             // Declare locals: [0] string key, [1] !!T result
             loadImplMethod.Body.Variables.Add(new VariableDefinition(stringType));  // [0] key
