@@ -49,7 +49,7 @@
   -->
   <PropertyGroup>
     <WasmBuildNative>true</WasmBuildNative>
-    <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc -sALLOW_MEMORY_GROWTH=1</EmccExtraLDFlags>
+    <EmccExtraLDFlags>-sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT -sWASMFS -sMAXIMUM_MEMORY=4294901760 -sMALLOC=mimalloc</EmccExtraLDFlags>
   </PropertyGroup>
 
   <!-- Backup: also set via RuntimeHostConfigurationOption with CORRECT switch name.
