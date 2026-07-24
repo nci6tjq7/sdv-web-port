@@ -104,22 +104,22 @@ jobs:
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
             echo "Replacing native: $dir"
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir" || echo "WARNING: native copy failed for $dir"
           done
           find /home/runner/.nuget/packages -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
             echo "Replacing lib: $dir"
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir" || echo "WARNING: lib copy failed for $dir"
           done
 
           # 4. Also replace SDK pack runtime
           find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/native" -type d 2>/dev/null | while read dir; do
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/native "$dir" || echo "WARNING: SDK native copy failed for $dir"
           done
           find /usr/share/dotnet/packs -path "*/runtimes/browser-wasm/lib" -type d 2>/dev/null | while read dir; do
             rm -rf "$dir"
-            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir"
+            cp -r ${{ github.workspace }}/download/dotnet-patched/runtimes/browser-wasm/lib "$dir" || echo "WARNING: SDK lib copy failed for $dir"
           done
 
           echo "=== Verify patched libmonosgen ==="
