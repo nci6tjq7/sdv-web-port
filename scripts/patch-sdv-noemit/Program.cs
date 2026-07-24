@@ -614,150 +614,30 @@ class Program
             };
             writeLineRef.Parameters.Add(new ParameterDefinition(stringType));
 
-            // REPLACE THE ENTIRE METHOD BODY with caching logic:
-            //
-            // string key = localizedAssetName.Replace('\\', '/');
-            // if (loadedAssets.ContainsKey(key)) return (T)loadedAssets[key];
-            // T result = ReadAsset<T>(localizedAssetName, null);
-            // loadedAssets[key] = result;
-            // return result;
-            //
-            // IL:
-            //   // key = localizedAssetName.Replace('\\', '/')
-            //   ldarg.2
-            //   ldc.i4.s 92        // '\\'
-            //   ldc.i4.s 47        // '/'
-            //   callvirt String.Replace(char, char) → string
-            //   stloc.0             // key
-            //   // if (loadedAssets.ContainsKey(key)) goto Cached
-            //   ldarg.0
-            //   ldfld loadedAssets
-            //   ldloc.0
-            //   callvirt Dictionary.ContainsKey(string) → bool
-            //   brfalse NotCached
-            //   // return (T)loadedAssets[key]
-            //   ldarg.0
-            //   ldfld loadedAssets
-            //   ldloc.0
-            //   callvirt Dictionary.get_Item(string) → object
-            //   unbox.any !!T
+            // REPLACE THE ENTIRE METHOD BODY with:
+            //   ldstr "[PATCH] LoadImpl → ReadAsset direct"
+            //   call Console.WriteLine
+            //   ldarg.0          // this
+            //   ldarg.2          // localizedAssetName (string)
+            //   ldnull           // null for Action<IDisposable>
+            //   call ContentManager.ReadAsset<!!T>(string, Action<IDisposable>)
             //   ret
-            // NotCached:
-            //   // result = ReadAsset<T>(localizedAssetName, null)
-            //   ldarg.0
-            //   ldarg.2
-            //   ldnull
-            //   call ReadAsset<!!T>(string, Action<IDisposable>) → !!T
-            //   stloc.1
-            //   // loadedAssets[key] = result
-            //   ldarg.0
-            //   ldfld loadedAssets
-            //   ldloc.0
-            //   ldloc.1
-            //   box !!T
-            //   callvirt Dictionary.set_Item(string, object)
-            //   // return result
-            //   ldloc.1
-            //   ret
-
-            // Find loadedAssets field on ContentManager
-            var loadedAssetsField = contentManagerDef.Fields.FirstOrDefault(f => f.Name == "loadedAssets");
-            if (loadedAssetsField == null)
-            {
-                Console.WriteLine("  [!] loadedAssets field not found, falling back to no-cache");
-                // Fallback: just call ReadAsset without caching
-                var instrs0 = loadImplMethod.Body.Instructions;
-                instrs0.Clear();
-                loadImplMethod.Body.ExceptionHandlers.Clear();
-                instrs0.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset (no cache)"));
-                instrs0.Add(Instruction.Create(OpCodes.Call, writeLineRef));
-                instrs0.Add(Instruction.Create(OpCodes.Ldarg_0));
-                instrs0.Add(Instruction.Create(OpCodes.Ldarg_2));
-                instrs0.Add(Instruction.Create(OpCodes.Ldnull));
-                instrs0.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
-                instrs0.Add(Instruction.Create(OpCodes.Ret));
-                loadImplMethod.Body.InitLocals = true;
-                loadImplMethod.Body.MaxStackSize = 4;
-                Console.WriteLine("  [-] REPLACED LoadImpl (no cache fallback)");
-                return 1;
-            }
-            Console.WriteLine($"  [i] Found loadedAssets: {loadedAssetsField.FieldType.FullName}");
-
-            // Import loadedAssets field into SDV module
-            var loadedAssetsImported = module.ImportReference(loadedAssetsField);
-
-            // Dictionary methods: ContainsKey(string) → bool, get_Item(string) → object, set_Item(string, object) → void
-            // Must import these from the dictType's module (they're declared in mscorlib/System.Collections)
-            var dictType = loadedAssetsField.FieldType;
-            var dictDef = dictType.Resolve();
-            var containsKeyDef = dictDef.Methods.First(m => m.Name == "ContainsKey" && m.Parameters.Count == 1);
-            var getItemDef = dictDef.Methods.First(m => m.Name == "get_Item" && m.Parameters.Count == 1);
-            var setItemDef = dictDef.Methods.First(m => m.Name == "set_Item" && m.Parameters.Count == 2);
-
-            var containsKeyRef = module.ImportReference(containsKeyDef);
-            var getItemRef = module.ImportReference(getItemDef);
-            var setItemRef = module.ImportReference(setItemDef);
-
-            // String.Replace(char, char) → string — import from String type
-            var stringDef = stringType.Resolve();
-            var replaceDef = stringDef.Methods.First(m => m.Name == "Replace" && m.Parameters.Count == 2 && m.Parameters[0].ParameterType.Name == "Char");
-            var replaceRef = module.ImportReference(replaceDef);
-
-            // Declare locals: [0] string key, [1] !!T result
-            loadImplMethod.Body.Variables.Add(new VariableDefinition(stringType));  // [0] key
-            loadImplMethod.Body.Variables.Add(new VariableDefinition(tParam));   // [1] result
-
             var instrs = loadImplMethod.Body.Instructions;
             instrs.Clear();
             loadImplMethod.Body.ExceptionHandlers.Clear();
 
-            // key = localizedAssetName.Replace('\\', '/')
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));        // localizedAssetName
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_S, (sbyte)'\\'));  // 92 = '\\'
-            instrs.Add(Instruction.Create(OpCodes.Ldc_I4_S, (sbyte)'/'));   // 47 = '/'
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, replaceRef));   // → string
-            instrs.Add(Instruction.Create(OpCodes.Stloc_0));               // key = ...
-
-            // if (loadedAssets.ContainsKey(key)) goto Cached
-            var notCachedLabel = Instruction.Create(OpCodes.Nop);
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));        // this
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, loadedAssetsImported));  // loadedAssets
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));       // key
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, containsKeyRef));  // → bool
-            instrs.Add(Instruction.Create(OpCodes.Brfalse_S, notCachedLabel));
-
-            // return (T)loadedAssets[key]
+            instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset direct (bypassing DoesAssetExist + virtual Load)"));
+            instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
             instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, loadedAssetsImported));
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, getItemRef));  // → object
-            instrs.Add(Instruction.Create(OpCodes.Unbox_Any, tParam));     // (T)object
-            instrs.Add(Instruction.Create(OpCodes.Ret));
-
-            // NotCached: result = ReadAsset<T>(name, null)
-            instrs.Add(notCachedLabel);
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));        // this
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));        // localizedAssetName
-            instrs.Add(Instruction.Create(OpCodes.Ldnull));         // null
-            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));  // → !!T
-            instrs.Add(Instruction.Create(OpCodes.Stloc_1));        // result = ...
-
-            // loadedAssets[key] = (object)result
-            instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
-            instrs.Add(Instruction.Create(OpCodes.Ldfld, loadedAssetsImported));
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_0));        // key
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));        // result
-            instrs.Add(Instruction.Create(OpCodes.Box, tParam));   // (object)result
-            instrs.Add(Instruction.Create(OpCodes.Callvirt, setItemRef));
-
-            // return result
-            instrs.Add(Instruction.Create(OpCodes.Ldloc_1));
+            instrs.Add(Instruction.Create(OpCodes.Ldarg_2));
+            instrs.Add(Instruction.Create(OpCodes.Ldnull));
+            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
             instrs.Add(Instruction.Create(OpCodes.Ret));
 
             loadImplMethod.Body.InitLocals = true;
             loadImplMethod.Body.MaxStackSize = 4;
 
-            Console.WriteLine("  [-] REPLACED LoadImpl with IL-level caching (ContainsKey → ReadAsset → set_Item)");
+            Console.WriteLine($"  [-] REPLACED LoadImpl body: WriteLine(marker) → ReadAsset<!!T>(localizedAssetName, null) → ret");
             return 1;
         }
         return 0;
