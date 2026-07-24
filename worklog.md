@@ -2703,3 +2703,41 @@ Next steps:
 2. Performance: 33 redundant loads could be eliminated with proper caching
 3. Audio: files loaded successfully, audio engine initialized, may be playing
 4. Input: keyboard/mouse handlers attached, untested
+
+---
+Task ID: phase20-restored-rendering
+Agent: main
+Task: Restore working SDV title screen rendering after IL cache failure
+
+Work Log:
+- IL-level caching (a7f16ef) failed: Dictionary method imports caused
+  crash on first BigCraftables load (LoadImpl crashed immediately)
+- Reverted SDV patcher to 96f0fe1 (known working, ReadAsset direct)
+- FNA pinned to 928617a (Jul 21, prevents FNA repo regression)
+- CI built and deployed successfully (80c343f)
+
+Rendering verification (3min after page load):
+- Canvas: 100% non-black pixels (738560/738560)
+- Average RGB: title screen colors confirmed:
+  * y=0: (22,33,62) — night sky border
+  * y=80: (232,238,243) — white clouds
+  * y=160: (255,215,137) — character skin
+  * y=240: (226,122,62) — orange sunset
+  * y=320: (249,177,99) — peach tones
+  * y=400: (24,143,249) — blue sky
+  * y=480: (67,185,241) — lighter blue
+  * y=560: (89,215,232) — water cyan
+
+Stats:
+- 855 console lines (verbose FNA logging)
+- 111 OpenStream calls, 78 unique files, 37 cache hits
+- 1 error: memory access out of bounds (non-fatal, game renders before crash)
+- RunPlatformMainLoop running with Sleep(16)
+
+Stage Summary:
+- ✅ SDV title screen RENDERING confirmed with 80c343f
+- ✅ FNA pinned to 928617a (deterministic builds)
+- ✅ CI pipeline stable (FNA WASM Build + Runtime Build + Deploy all succeed)
+- ⚠️ Memory error after ~100 frames (non-fatal, title screen visible before crash)
+- ⚠️ No asset caching (IL caching attempt failed, reverted to ReadAsset direct)
+- Future: need different caching approach (not IL-level Dictionary imports)
