@@ -32,10 +32,14 @@ jobs:
         run: |
           dotnet build scripts/decompile-sdv/decompile.csproj -c Release -o /tmp/decompiler
 
-      - name: Clone FNA
+      - name: Clone FNA (pinned commit — last known working with WASM rendering)
         run: |
-          git clone --depth 1 https://github.com/FNA-XNA/FNA.git /tmp/FNA
-          cd /tmp/FNA && git submodule update --init --recursive
+          # Pin FNA to commit 928617a (Jul 21, 2026) — the last commit before
+          # Jul 23-24 changes that caused black canvas regression.
+          # Commits e4ab693..627cad1 introduced GameComponent/MathHelper/CurveKey
+          # changes that broke WebGL rendering in WASM.
+          git clone https://github.com/FNA-XNA/FNA.git /tmp/FNA
+          cd /tmp/FNA && git checkout 928617a81365 && git submodule update --init --recursive
 
       - name: Patch FNA TitleContainer for HTTP Content loading
         run: |
