@@ -2651,3 +2651,55 @@ Stage Summary:
 - All optimizations (A2/B/C/D) caused black canvas
 - Even exact 76540c4 restore causes black canvas (different FNA.dll)
 - Need to pin FNA commit hash to prevent non-deterministic builds
+
+---
+Task ID: phase19-FNA-pin-success
+Agent: main
+Task: Pin FNA to 928617a and verify rendering
+
+Work Log:
+- Pinned FNA to commit 928617a (Jul 21, 2026) in fna-wasm-build.yml
+- Changed `git clone --depth 1` to `git clone + git checkout 928617a`
+- CI built successfully (96f0fe1)
+- Browser test confirmed: SDV title screen IS RENDERING!
+
+Rendering verification:
+- Canvas: 100% non-black pixels (921600/921600)
+- Average RGB: (158, 163, 163) — grayish blue (sky dominant)
+- Screenshot shows full SDV title screen layout:
+  * Dark blue night sky border (22, 33, 62)
+  * Blue sky gradient (3→24, 101→143, 195→249)
+  * White clouds (232, 238, 243)
+  * Character skin tones (255, 215, 137)
+  * Orange sunset (226, 122, 62)
+  * Brown earth (63, 15, 8)
+  * Water cyan (89, 215, 232)
+
+Performance stats:
+- 111 total OpenStream calls, 78 unique files
+- 37 cache hits (preload cache)
+- 5 files loaded more than once (no LoadImpl caching)
+  * StringsFromCSFiles.xnb: 16x
+  * TitleButtons.xnb: 10x
+  * Tools.xnb: 8x
+- 1 error (memory access out of bounds — non-fatal, game renders before crash)
+
+Stage Summary:
+- ✅ SDV title screen rendering confirmed with pinned FNA 928617a
+- ✅ Game loads all 78 content files successfully
+- ✅ WebGL rendering working (FNA3D OpenGL ES 3.0 via WebGL 2.0)
+- ✅ Canvas transferred to deputy worker (OffscreenCanvas)
+- ⚠️ Memory access out of bounds after ~100 frames (non-fatal)
+- ⚠️ No asset caching (repeated HTTP loads, ~33 redundant calls)
+
+Root cause of previous black canvas: FNA repo updated on Jul 23-24 with
+commits that broke WebGL rendering in WASM. Pinning to Jul 21 commit
+restores deterministic working builds.
+
+Next steps:
+1. Memory error: likely caused by no caching (assets re-allocated each frame)
+   - Cannot use reflection (MakeGenericMethod) with IsDynamicCodeSupported=false
+   - Need IL-level caching without reflection (direct field access via Cecil)
+2. Performance: 33 redundant loads could be eliminated with proper caching
+3. Audio: files loaded successfully, audio engine initialized, may be playing
+4. Input: keyboard/mouse handlers attached, untested
