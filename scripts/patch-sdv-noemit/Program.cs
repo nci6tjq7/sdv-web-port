@@ -519,125 +519,57 @@ class Program
 
             Console.WriteLine($"  [i] Found LoadImpl: {loadImplMethod.Body.Instructions.Count} instructions, {loadImplMethod.GenericParameters.Count} generic params");
 
-            // Find the ContentManager.ReadAsset method reference.
-            // ReadAsset is: protected virtual T ReadAsset<T>(string assetName, Action<IDisposable> recordDisposableObject)
-            // We need to find it in the module's type references.
-            TypeReference contentManagerRef = null;
-            foreach (var tr in module.GetTypeReferences())
+            // A2: Patch LoadImpl to call Program.LoadWithCache<!!T>(this, assetName).
+            // This adds caching (checks loadedAssets dict, stores result after load).
+            // No Resolve() needed — we construct the type/method reference manually.
+
+            // 1. Add assembly reference
+            var programAsmRef = module.AssemblyReferences.FirstOrDefault(a => a.Name == "SdvWebPort.FnaRuntime");
+            if (programAsmRef == null)
             {
-                if (tr.FullName == "Microsoft.Xna.Framework.Content.ContentManager")
-                {
-                    contentManagerRef = tr;
-                    break;
-                }
+                programAsmRef = new AssemblyNameReference("SdvWebPort.FnaRuntime", new Version(1, 0, 0, 0));
+                module.AssemblyReferences.Add(programAsmRef);
+                Console.WriteLine("  [i] Added assembly ref: SdvWebPort.FnaRuntime");
             }
 
-            if (contentManagerRef == null)
-            {
-                Console.WriteLine("  [!] ContentManager type reference not found");
-                return 0;
-            }
+            // 2. Construct type reference
+            var programTypeRef = new TypeReference("SdvWebPort.FnaRuntime", "Program", module, programAsmRef);
 
-            Console.WriteLine($"  [i] Found ContentManager reference: {contentManagerRef.FullName} (from {contentManagerRef.Scope})");
-
-            // Resolve the ContentManager type to find the ReadAsset method definition.
-            // With the assembly resolver configured, Cecil can follow type forwarders
-            // from MonoGame.Framework to FNA and find the actual method.
-            TypeDefinition contentManagerDef = null;
-            try
-            {
-                contentManagerDef = contentManagerRef.Resolve();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  [!] Could not resolve ContentManager: {ex.Message}");
-                return 0;
-            }
-
-            if (contentManagerDef == null)
-            {
-                Console.WriteLine("  [!] ContentManager.Resolve() returned null");
-                return 0;
-            }
-
-            // Find the ReadAsset method in ContentManager
-            var readAssetDef = contentManagerDef.Methods.FirstOrDefault(m =>
-                m.Name == "ReadAsset" && m.HasGenericParameters && m.Parameters.Count == 2);
-
-            if (readAssetDef == null)
-            {
-                Console.WriteLine("  [!] ReadAsset method not found in ContentManager!");
-                Console.WriteLine("  [i] Available methods in ContentManager:");
-                foreach (var m in contentManagerDef.Methods)
-                {
-                    Console.WriteLine($"      - {m.Name}({m.Parameters.Count} params, generic={m.HasGenericParameters})");
-                }
-                return 0;
-            }
-
-            Console.WriteLine($"  [i] Found ReadAsset: {readAssetDef.FullName} (generic params: {readAssetDef.GenericParameters.Count})");
-
-            // Import the method into the SDV module (this handles type forwarders correctly)
-            var readAssetImported = module.ImportReference(readAssetDef);
-
-            // Create a generic instance method: ReadAsset<!!T> where !!T is LoadImpl's generic param
+            // 3. Construct method reference with generic parameter
             var tParam = loadImplMethod.GenericParameters[0];
-            var readAssetGeneric = new GenericInstanceMethod(readAssetImported);
-            readAssetGeneric.GenericArguments.Add(tParam);
-
-            Console.WriteLine($"  [i] Created generic instance: ReadAsset<{tParam}>");
-
-            // Find Console.WriteLine(string) method reference.
-            // We search the module's existing type references for System.Console
-            // (constructing it manually with CoreLibrary scope doesn't work because
-            // Console might be in a different assembly than CoreLibrary).
-            TypeReference consoleType = null;
-            foreach (var tr in module.GetTypeReferences())
-            {
-                if (tr.FullName == "System.Console")
-                {
-                    consoleType = tr;
-                    break;
-                }
-            }
-            if (consoleType == null)
-            {
-                // Fallback: try constructing with System.Runtime scope
-                consoleType = new TypeReference("System", "Console", module, module.TypeSystem.CoreLibrary);
-                Console.WriteLine("  [!] System.Console not found in type refs, using fallback");
-            }
+            var objectType = new TypeReference("System", "Object", module, module.TypeSystem.CoreLibrary);
             var stringType = module.TypeSystem.String;
-            var voidType = module.TypeSystem.Void;
-            var writeLineRef = new MethodReference("WriteLine", voidType, consoleType)
+            var loadWithCacheRef = new MethodReference("LoadWithCache", objectType, programTypeRef)
             {
                 HasThis = false,
             };
-            writeLineRef.Parameters.Add(new ParameterDefinition(stringType));
+            var tMethodParam = new GenericParameter("T", loadWithCacheRef);
+            loadWithCacheRef.GenericParameters.Add(tMethodParam);
+            loadWithCacheRef.ReturnType = tMethodParam;
+            loadWithCacheRef.Parameters.Add(new ParameterDefinition(objectType));
+            loadWithCacheRef.Parameters.Add(new ParameterDefinition(stringType));
 
-            // REPLACE THE ENTIRE METHOD BODY with:
-            //   ldstr "[PATCH] LoadImpl → ReadAsset direct"
-            //   call Console.WriteLine
-            //   ldarg.0          // this
+            // 4. Create generic instance: LoadWithCache<!!T>
+            var loadWithCacheGeneric = new GenericInstanceMethod(loadWithCacheRef);
+            loadWithCacheGeneric.GenericArguments.Add(tParam);
+            Console.WriteLine($"  [i] Created: LoadWithCache<{tParam}>(object, string)");
+
+            // 5. Replace method body:
+            //   ldarg.0          // this (LocalizedContentManager)
             //   ldarg.2          // localizedAssetName (string)
-            //   ldnull           // null for Action<IDisposable>
-            //   call ContentManager.ReadAsset<!!T>(string, Action<IDisposable>)
+            //   call Program.LoadWithCache<!!T>(object, string)
             //   ret
             var instrs = loadImplMethod.Body.Instructions;
             instrs.Clear();
             loadImplMethod.Body.ExceptionHandlers.Clear();
-
-            instrs.Add(Instruction.Create(OpCodes.Ldstr, "[PATCH] LoadImpl → ReadAsset direct (bypassing DoesAssetExist + virtual Load)"));
-            instrs.Add(Instruction.Create(OpCodes.Call, writeLineRef));
             instrs.Add(Instruction.Create(OpCodes.Ldarg_0));
             instrs.Add(Instruction.Create(OpCodes.Ldarg_2));
-            instrs.Add(Instruction.Create(OpCodes.Ldnull));
-            instrs.Add(Instruction.Create(OpCodes.Call, readAssetGeneric));
+            instrs.Add(Instruction.Create(OpCodes.Call, loadWithCacheGeneric));
             instrs.Add(Instruction.Create(OpCodes.Ret));
-
             loadImplMethod.Body.InitLocals = true;
             loadImplMethod.Body.MaxStackSize = 4;
 
-            Console.WriteLine($"  [-] REPLACED LoadImpl body: WriteLine(marker) → ReadAsset<!!T>(localizedAssetName, null) → ret");
+            Console.WriteLine("  [-] REPLACED LoadImpl → LoadWithCache<!!T>(this, assetName)");
             return 1;
         }
         return 0;

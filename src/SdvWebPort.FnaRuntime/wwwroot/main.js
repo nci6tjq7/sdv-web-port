@@ -99,22 +99,18 @@ const SDV = {
         }
 
         // Preload critical files for title screen.
-        // NOTE: SDV/FNA expects lowercase filenames (e.g. smallFont.xnb), but
-        // the actual game ships them with mixed case (SmallFont.xnb). On
-        // case-sensitive filesystems (Linux/GitHub Pages), this matters.
-        // We try lowercase first, then uppercase first letter as fallback.
+        // File names verified against content.zip — use exact case.
         const criticalFiles = [
             'Content/XACT/FarmerSounds.xgs',
-            'Content/XACT/FarmerSounds.xwb',
+            'Content/XACT/Wave Bank.xwb',
+            'Content/XACT/Sound Bank.xsb',
             'Content/Data/BigCraftables.xnb',
             'Content/Data/CraftingRecipes.xnb',
-            'Content/Data/NPCDispositions.xnb',
-            'Content/Data/ObjectInformation.xnb',
-            'Content/Fonts/smallFont.xnb',
+            'Content/Data/Objects.xnb',
+            'Content/Fonts/SmallFont.xnb',
             'Content/LooseSprites/Cursors.xnb',
-            'Content/LooseSprites/clouds.xnb',
-            'Content/LooseSprites/titleButtons.xnb',
-            'Content/Menus/TitleMenu.xnb',
+            'Content/Minigames/Clouds.xnb',
+            'Content/Minigames/TitleButtons.xnb',
         ];
 
         for (const file of criticalFiles) {
