@@ -16,7 +16,7 @@ public static partial class Program
 
         Console.WriteLine("[SdvWebPort.FnaRuntime] Starting Stardew Valley...");
         Console.WriteLine($"[SdvWebPort.FnaRuntime] .NET version: {Environment.Version}");
-        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: A2+LoadWithCache+C+mem+B+logs+D+preload");
+        Console.WriteLine("[SdvWebPort.FnaRuntime] Build: ReadAsset-direct + B+logs + D+preload (fb451b4)");
 
         try
         {
